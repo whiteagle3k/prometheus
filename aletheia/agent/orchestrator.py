@@ -337,63 +337,97 @@ class AletheiaAgent:
 
         print("⚡ Handling simple task with direct execution...")
 
+        # Detect factual/scientific questions that need external validation
+        factual_indicators = [
+            # Scientific/technical questions
+            "что такое", "what is", "как работает", "how does", "как образуется", "how is formed",
+            "почему", "why", "объясни", "explain", "расскажи о", "tell me about",
+            "как происходит", "how happens", "процесс", "process", "механизм", "mechanism",
+            "chemical", "физический", "physical", "биологический", "biological",
+            "научный", "scientific", "теория", "theory", "закон", "law",
+            # Mathematical/computational
+            "формула", "formula", "алгоритм", "algorithm", "вычисление", "calculation",
+            # Historical/factual
+            "когда", "when", "где", "where", "кто", "who", "история", "history",
+            # Geography/world knowledge
+            "столица", "capital", "страна", "country", "город", "city"
+        ]
+        
+        is_factual_question = any(indicator in user_input.lower() for indicator in factual_indicators)
+        
         # For simple greetings, use minimal context to avoid contamination
         is_simple_greeting = any(greeting in user_input.lower() for greeting in [
             "привет", "hello", "hi", "как дела", "how are you", "ты кто", "who are you",
             "что умеешь", "what can you do", "как тебя зовут", "what's your name"
         ])
-        # Exclude questions that specifically need context
+        
+        # Context questions that specifically need memory
         needs_context = any(context_question in user_input.lower() for context_question in [
-            "как меня зовут", "what's my name", "who am i", "кто я", "меня зовут", "my name"
+            "как меня зовут", "what's my name", "who am i", "кто я", "меня зовут", "my name",
+            "помнишь", "remember", "знаешь моё имя", "do you know my name"
         ])
         
         is_simple_greeting = is_simple_greeting and not needs_context
 
+        # Build enhanced prompt with proper context handling
         if is_simple_greeting:
             # Use just the user input without additional context for clean responses
             enhanced_prompt = user_input
         else:
-            # Enable basic context for non-greeting interactions to remember names
+            # Enhanced context building for better memory handling
             enhanced_prompt = user_input
-            
-            # Build minimal conversation context
             conversation_context = ""
 
-            # Add user name if we know it
-            if self.conversation_context["user_name"]:
+            # Always add user name context if we know it and it's relevant
+            if self.conversation_context["user_name"] and (needs_context or not is_simple_greeting):
                 if self.conversation_context["last_user_language"] == "ru":
-                    conversation_context += f"\n\nПользователь: {self.conversation_context['user_name']}\n"
+                    # Make it very explicit for name questions
+                    if needs_context:
+                        conversation_context += f"\n\nВАЖНО: Пользователя зовут {self.conversation_context['user_name']}. Когда спрашивают 'как меня зовут', отвечай именем пользователя.\n"
+                    else:
+                        conversation_context += f"\n\nКонтекст: Пользователя зовут {self.conversation_context['user_name']}.\n"
                 else:
-                    conversation_context += f"\n\nUser: {self.conversation_context['user_name']}\n"
+                    if needs_context:
+                        conversation_context += f"\n\nIMPORTANT: The user's name is {self.conversation_context['user_name']}. When asked 'what's my name', answer with the user's name.\n"
+                    else:
+                        conversation_context += f"\n\nContext: The user's name is {self.conversation_context['user_name']}.\n"
 
-            # Add only the most recent interaction for basic context (if safe)
-            if self.task_history and len(self.task_history) > 0:
+            # Add relevant recent context for non-greetings
+            if self.task_history and len(self.task_history) > 0 and not is_simple_greeting:
                 last_task = self.task_history[-1]
                 last_response = last_task['result'].get('response', '')
                 
-                # Only include if response looks clean (no contamination markers)
+                # Only include if response looks clean and relevant
                 if last_response and len(last_response) < 200 and not any(marker in last_response.lower() for marker in [
                     "cv template", "theoretical", "follow up", "task:", "approach:", "аминь"
                 ]):
                     cleaned_response = self._clean_context_response(last_response)
                     if len(cleaned_response) > 10:  # Only if meaningful content remains
-                        conversation_context += f"\nПоследний обмен:\n"
-                        conversation_context += f"Пользователь: {last_task['user_input'][:50]}\n"
-                        conversation_context += f"Ассистент: {cleaned_response[:80]}\n"
+                        conversation_context += f"\nПредыдущий обмен:\n"
+                        conversation_context += f"Вопрос: {last_task['user_input'][:60]}\n"
+                        conversation_context += f"Ответ: {cleaned_response[:100]}\n"
 
-            # Combine user input with minimal context
+            # Combine user input with context - put context BEFORE the question for better understanding
             if conversation_context.strip():
-                enhanced_prompt = f"{user_input}{conversation_context}"
+                enhanced_prompt = f"{conversation_context.strip()}\n\nВопрос пользователя: {user_input}"
 
-        # Create task context
+        # Determine if we should route to external LLM for better accuracy
+        should_use_external = False
+        
+        if is_factual_question and len(user_input.split()) > 5:
+            # Complex factual questions should use external LLM for accuracy
+            should_use_external = True
+            print("🔬 Detected factual question - routing to external LLM for accuracy")
+        
+        # Create task context with proper routing
         task_context = TaskContext(
             prompt=enhanced_prompt,
-            max_tokens=500,  # Reduced to encourage more concise responses
-            requires_deep_reasoning=False,  # Don't auto-trigger external LLM
+            max_tokens=500,
+            requires_deep_reasoning=should_use_external,  # Route factual questions externally
             is_creative="create" in user_input.lower() or "write" in user_input.lower(),
             needs_latest_knowledge="latest" in user_input.lower() or "recent" in user_input.lower(),
-            # Only add context information for external LLM calls to avoid local contamination
-            conversation_context=self._build_context_summary() if not is_simple_greeting else None,
+            # Add context information for both local and external calls
+            conversation_context=self._build_context_summary(),
             user_name=self.conversation_context.get("user_name"),
             session_context={
                 "session_id": self.session_id,
@@ -404,14 +438,50 @@ class AletheiaAgent:
 
         # Execute task
         result = await self.router.execute_task(task_context)
+        
+        # Post-execution validation for local responses to factual questions
+        response_text = result.get("result", "")
+        route_used = result.get("route_used", "unknown")
+        
+        if is_factual_question and route_used == "local" and response_text:
+            confidence_issues = await self._validate_factual_response(user_input, response_text)
+            if confidence_issues:
+                print(f"⚠️  Detected potential accuracy issues: {', '.join(confidence_issues)}")
+                print("🔄 Re-routing to external LLM for validation...")
+                
+                # Re-route to external LLM with validation context
+                validation_context = TaskContext(
+                    prompt=f"Please provide an accurate answer to this question: {user_input}",
+                    max_tokens=600,
+                    requires_deep_reasoning=True,  # Force external routing
+                    conversation_context=self._build_context_summary(),
+                    user_name=self.conversation_context.get("user_name"),
+                    session_context=task_context.session_context
+                )
+                
+                validated_result = await self.router.execute_task(validation_context)
+                
+                return {
+                    "type": "simple_task",
+                    "response": validated_result.get("result", response_text),
+                    "execution_details": {
+                        "route_used": "external_validation",
+                        "execution_time": result.get("execution_time", 0) + validated_result.get("execution_time", 0),
+                        "estimated_cost": result.get("estimated_cost", 0) + validated_result.get("estimated_cost", 0),
+                        "validation_issues": confidence_issues,
+                        "original_response": response_text
+                    },
+                    "approach": "validated",
+                }
 
         return {
             "type": "simple_task",
-            "response": result.get("result", "No response generated"),
+            "response": response_text,
             "execution_details": {
-                "route_used": result.get("route_used"),
+                "route_used": route_used,
                 "execution_time": result.get("execution_time"),
                 "estimated_cost": result.get("estimated_cost", 0),
+                "factual_question": is_factual_question,
             },
             "approach": "direct",
         }
@@ -649,6 +719,63 @@ Focus on creating a cohesive response that feels like a complete answer to the o
             return response[:50] + "..." if len(response) > 50 else response
             
         return cleaned
+
+    async def _validate_factual_response(self, user_input: str, response_text: str) -> list[str]:
+        """Validate a factual response for obvious accuracy issues."""
+        issues = []
+        
+        response_lower = response_text.lower()
+        user_input_lower = user_input.lower()
+        
+        # Check for obvious scientific/factual errors
+        
+        # 1. Water vapor confusion (like the example in the dialog)
+        if "водяной пар" in user_input_lower or "water vapor" in user_input_lower:
+            if any(wrong in response_lower for wrong in ["водород", "hydrogen", "h2", "водских"]):
+                issues.append("confused_water_vapor_with_hydrogen")
+        
+        # 2. Basic chemistry errors
+        if any(chem in user_input_lower for chem in ["химический", "chemical", "молекула", "molecule"]):
+            if "водород" in response_lower and "планета" in response_lower:
+                issues.append("impossible_chemical_process")
+        
+        # 3. Self-contradictory statements
+        contradiction_pairs = [
+            (["газ", "gas"], ["твердый", "solid"]),
+            (["жидкость", "liquid"], ["газообразный", "gaseous"]),
+            (["образуется", "formed"], ["не существует", "doesn't exist"])
+        ]
+        
+        for positive_terms, negative_terms in contradiction_pairs:
+            has_positive = any(term in response_lower for term in positive_terms)
+            has_negative = any(term in response_lower for term in negative_terms)
+            if has_positive and has_negative:
+                issues.append("contradictory_statements")
+        
+        # 4. Vague or nonsensical responses
+        vague_indicators = [
+            "различных", "various", "много", "many", "может быть", "might be",
+            "иногда", "sometimes", "обычно", "usually"
+        ]
+        if len([word for word in vague_indicators if word in response_lower]) > 3:
+            issues.append("overly_vague_response")
+        
+        # 5. Response doesn't address the question
+        if "что такое" in user_input_lower or "what is" in user_input_lower:
+            # Should have definition-like content
+            if not any(def_word in response_lower for def_word in [
+                "это", "is", "представляет", "represents", "состоит", "consists"
+            ]):
+                issues.append("no_definition_provided")
+        
+        # 6. Too many technical terms that don't relate to the question
+        if len(response_text.split()) < 30:  # Short responses
+            technical_density = len([word for word in response_text.split() 
+                                   if len(word) > 8 and word.count('ый') == 0])
+            if technical_density > len(response_text.split()) * 0.4:
+                issues.append("overly_technical_without_explanation")
+        
+        return issues
 
 
 # Simple CLI interface for testing
