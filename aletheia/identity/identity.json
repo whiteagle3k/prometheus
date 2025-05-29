@@ -35,7 +35,12 @@
     "reference_detection": {
       "enabled": true,
       "pronouns": ["it", "that", "this", "them", "those", "это", "то", "такое", "их"],
-      "continuation_phrases": ["tell me more", "detail", "explain further", "расскажи подробнее", "детально", "больше"]
+      "continuation_phrases": [
+        "tell me more", "detail", "explain further", "расскажи подробнее", "детально", "больше",
+        "да, интересно", "yes, interesting", "интересно", "interesting", "продолжай", "continue",
+        "да, продолжай", "yes, continue", "да, расскажи", "yes, tell me", "хочу больше", "want more",
+        "можно подробнее", "can you elaborate", "поподробнее", "more details"
+      ]
     },
     "name_extraction": {
       "patterns": [
@@ -76,8 +81,9 @@
       "что умеешь", "what can you do", "как тебя зовут", "what's your name"
     ],
     "dismissive_phrases": [
-      "да", "нет", "yes", "no", "ok", "хорошо", "понятно", "спасибо", "thanks",
-      "да, я это и спрашиваю", "yes, that's what I'm asking", "конечно", "of course"
+      "нет", "no", "ok", "хорошо", "понятно", "спасибо", "thanks",
+      "да, я это и спрашиваю", "yes, that's what I'm asking", "конечно", "of course",
+      "просто да", "just yes", "только да", "only yes"
     ]
   },
   "validation_patterns": {

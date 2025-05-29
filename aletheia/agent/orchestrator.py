@@ -76,9 +76,8 @@ class AletheiaAgent:
         self.context.update_from_input(user_input)
 
         try:
-            # Step 1: Retrieve relevant memories - TEMPORARILY DISABLED
-            # relevant_memories = await self._retrieve_relevant_memories(user_input)
-            relevant_memories = []  # Disable memory retrieval to prevent contamination
+            # Step 1: Retrieve relevant memories for better context
+            relevant_memories = await self._retrieve_relevant_memories(user_input)
 
             # Step 2: Determine if task needs planning
             needs_planning = self.context.should_plan_task(user_input)
@@ -406,9 +405,8 @@ Focus on creating a cohesive response that feels like a complete answer to the o
         """Store the task experience in memory."""
 
         try:
-            # Temporarily disabled to prevent storing contaminated responses
-            print("🚫 Memory storage temporarily disabled to prevent contamination")
-            return
+            # Re-enabled memory storage now that conversation continuity is improved
+            print("💾 Storing conversation experience in memory...")
             
             # Create experience summary
             experience = f"Task: {user_input}\n"
@@ -430,6 +428,8 @@ Focus on creating a cohesive response that feels like a complete answer to the o
                     "approach": result.get("approach"),
                     "task_type": result.get("type"),
                     "user_input_length": len(user_input),
+                    "user_name": self.context.user_name,
+                    "language": self.context.last_user_language,
                 },
             )
 

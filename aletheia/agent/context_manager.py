@@ -93,7 +93,7 @@ class ConversationContext:
             else:
                 context_parts.append(f"User's name is {self.user_name}.")
         
-        # Add relevant conversation context
+        # Add relevant conversation context (especially important for external->local transitions)
         conversation_context = self._build_conversation_context()
         if conversation_context:
             context_parts.append(conversation_context)
@@ -317,14 +317,20 @@ class ConversationContext:
         # Check for planning indicators
         has_planning_keywords = any(indicator in user_lower for indicator in planning_indicators)
         
-        # Check if it's a dismissive phrase
-        is_dismissive = any(
-            re.search(r'\b' + re.escape(phrase) + r'\b', user_lower) 
-            for phrase in dismissive_phrases if len(phrase.split()) == 1
-        ) or any(
-            phrase in user_lower 
-            for phrase in dismissive_phrases if len(phrase.split()) > 1
-        )
+        # Check if it's a dismissive phrase (but not if it's also a continuation phrase)
+        continuation_phrases = self.conversation_config.get("reference_detection", {}).get("continuation_phrases", [])
+        is_continuation = any(phrase in user_lower for phrase in continuation_phrases)
+        
+        # Only consider dismissive if it's not a continuation
+        is_dismissive = False
+        if not is_continuation:
+            is_dismissive = any(
+                re.search(r'\b' + re.escape(phrase) + r'\b', user_lower) 
+                for phrase in dismissive_phrases if len(phrase.split()) == 1
+            ) or any(
+                phrase in user_lower 
+                for phrase in dismissive_phrases if len(phrase.split()) > 1
+            )
         
         # Very complex questions
         is_very_complex = len(user_input.split()) > 30
