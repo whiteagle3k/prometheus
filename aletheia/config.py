@@ -65,7 +65,7 @@ class AppSettings(BaseSettings):
         """Convert comma-separated keywords string to list."""
         return [keyword.strip() for keyword in self.deep_reasoning_keywords_str.split(",") if keyword.strip()]
 
-    def __post_init__(self) -> None:
+    def _init_paths_and_hardware(self) -> None:
         """Post-initialization setup."""
         # Create necessary directories
         self.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
@@ -83,4 +83,4 @@ class AppSettings(BaseSettings):
 
 # Global config instance
 config = AppSettings()
-config.__post_init__()
+config._init_paths_and_hardware()
