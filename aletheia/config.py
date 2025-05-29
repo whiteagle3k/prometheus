@@ -2,13 +2,13 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 # Set tokenizer parallelism to avoid warnings
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, computed_field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AppSettings(BaseSettings):
@@ -61,9 +61,9 @@ class AppSettings(BaseSettings):
 
     @computed_field
     @property
-    def deep_reasoning_keywords(self) -> List[str]:
+    def deep_reasoning_keywords(self) -> list[str]:
         """Convert comma-separated keywords string to list."""
-        return [keyword.strip() for keyword in self.deep_reasoning_keywords_str.split(',') if keyword.strip()]
+        return [keyword.strip() for keyword in self.deep_reasoning_keywords_str.split(",") if keyword.strip()]
 
     def __post_init__(self) -> None:
         """Post-initialization setup."""

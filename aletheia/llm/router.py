@@ -1,13 +1,13 @@
 """LLM routing logic for hybrid local/external model usage."""
 
 import asyncio
-from typing import Dict, Any, Optional, Union
-from enum import Enum
 from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Optional, Union
 
-from .local_llm import LocalLLM  
-from .external_llm import ExternalLLM, ExternalLLMManager
 from ..config import config
+from .external_llm import ExternalLLM, ExternalLLMManager
+from .local_llm import LocalLLM
 
 
 class RouteDecision(Enum):
@@ -35,7 +35,7 @@ class LLMRouter:
         """Initialize the router."""
         self.local_llm = LocalLLM()
         self.external_manager = ExternalLLMManager()
-        self._routing_stats: Dict[str, int] = {
+        self._routing_stats: dict[str, int] = {
             "local_routes": 0,
             "external_routes": 0,
             "routing_errors": 0,
@@ -62,12 +62,12 @@ class LLMRouter:
 
             # Both available - apply routing heuristics
             decision = await self._apply_routing_heuristics(task)
-            
+
             if decision == RouteDecision.LOCAL:
                 self._routing_stats["local_routes"] += 1
             else:
                 self._routing_stats["external_routes"] += 1
-                
+
             return decision
 
         except Exception as e:
@@ -81,7 +81,7 @@ class LLMRouter:
 
     async def _apply_routing_heuristics(self, task: TaskContext) -> RouteDecision:
         """Apply routing heuristics to make decision."""
-        
+
         # Estimate token count
         estimated_tokens = await self.local_llm.count_tokens(task.prompt)
         total_estimated_tokens = estimated_tokens + task.max_tokens
@@ -124,14 +124,14 @@ class LLMRouter:
         return RouteDecision.LOCAL
 
     async def get_llm_for_task(
-        self, 
+        self,
         task: TaskContext,
         force_route: Optional[RouteDecision] = None,
     ) -> Union[LocalLLM, ExternalLLM]:
         """Get the appropriate LLM instance for a task."""
-        
+
         route = force_route or await self.route_task(task)
-        
+
         if route == RouteDecision.LOCAL:
             return self.local_llm
         else:
@@ -146,15 +146,15 @@ class LLMRouter:
         task: TaskContext,
         system_prompt: Optional[str] = None,
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute a task with automatic routing."""
-        
+
         start_time = asyncio.get_event_loop().time()
-        
+
         # Get routing decision
         route = await self.route_task(task)
         llm = await self.get_llm_for_task(task, force_route=route)
-        
+
         # Execute the task
         try:
             result = await llm.generate(
@@ -163,24 +163,24 @@ class LLMRouter:
                 system_prompt=system_prompt,
                 **kwargs,
             )
-            
+
             # Handle empty or None results
             if not result or result.strip() == "":
                 result = "I apologize, but I wasn't able to generate a proper response. Please try rephrasing your question."
-            
+
             end_time = asyncio.get_event_loop().time()
-            
+
             # Estimate cost for external LLMs
             cost_estimate = 0.0
             if route == RouteDecision.EXTERNAL and isinstance(llm, ExternalLLM):
                 input_tokens = await llm.count_tokens(task.prompt)
                 output_tokens = await llm.count_tokens(result)
                 cost_estimate = llm.estimate_cost(input_tokens, output_tokens)
-            
+
             return {
                 "result": result,
                 "route_used": route.value,
-                "model_info": llm.get_model_info() if hasattr(llm, 'get_model_info') else {},
+                "model_info": llm.get_model_info() if hasattr(llm, "get_model_info") else {},
                 "execution_time": end_time - start_time,
                 "estimated_cost": cost_estimate,
                 "task_context": {
@@ -189,27 +189,27 @@ class LLMRouter:
                     "requires_deep_reasoning": task.requires_deep_reasoning,
                 },
             }
-            
+
         except Exception as e:
             end_time = asyncio.get_event_loop().time()
             return {
-                "result": f"Error generating response: {str(e)}",
+                "result": f"Error generating response: {e!s}",
                 "error": str(e),
                 "route_used": route.value,
                 "execution_time": end_time - start_time,
                 "estimated_cost": 0.0,
             }
 
-    def get_routing_stats(self) -> Dict[str, Any]:
+    def get_routing_stats(self) -> dict[str, Any]:
         """Get routing statistics."""
         total_routes = (
-            self._routing_stats["local_routes"] + 
+            self._routing_stats["local_routes"] +
             self._routing_stats["external_routes"]
         )
-        
+
         if total_routes == 0:
             return {**self._routing_stats, "local_percentage": 0, "external_percentage": 0}
-        
+
         return {
             **self._routing_stats,
             "total_routes": total_routes,
@@ -217,17 +217,17 @@ class LLMRouter:
             "external_percentage": (self._routing_stats["external_routes"] / total_routes) * 100,
         }
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         """Check health of local and external LLMs."""
         local_available = await self.local_llm.is_available()
         external_available = await self.external_manager.get_best_available() is not None
-        
+
         # Get available providers without triggering async calls
         available_providers = self.external_manager.list_available_providers()
-        
+
         return {
             "local_llm_available": local_available,
             "external_llm_available": external_available,
             "available_external_providers": [p.value for p in available_providers],
             "routing_stats": self.get_routing_stats(),
-        } 
+        }

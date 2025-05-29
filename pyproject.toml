@@ -27,6 +27,29 @@ ruff = "^0.1.8"
 mypy = "^1.7.0"
 black = "^23.11.0"
 
+[tool.black]
+line-length = 88
+target-version = ['py311']
+include = '\.pyi?$'
+exclude = '''
+(
+  /(
+      \.eggs         # exclude a few common directories in the
+    | \.git          # root of the project
+    | \.hg
+    | \.mypy_cache
+    | \.tox
+    | \.venv
+    | _build
+    | buck-out
+    | build
+    | dist
+    | models
+    | data
+  )/
+)
+'''
+
 [tool.ruff]
 line-length = 88
 target-version = "py311"

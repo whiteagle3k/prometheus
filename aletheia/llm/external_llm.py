@@ -1,8 +1,8 @@
 """External LLM implementations for Claude and GPT-4."""
 
-import asyncio
-from typing import Optional, Dict, Any, AsyncGenerator, Union
+from collections.abc import AsyncGenerator
 from enum import Enum
+from typing import Any, Optional
 
 try:
     import anthropic
@@ -33,7 +33,7 @@ class ExternalLLM:
         self.provider = provider
         self._anthropic_client: Optional[anthropic.AsyncAnthropic] = None
         self._openai_client: Optional[openai.AsyncOpenAI] = None
-        
+
         self._setup_clients()
 
     def _setup_clients(self) -> None:
@@ -50,10 +50,10 @@ class ExternalLLM:
             except Exception:
                 # Silently skip anthropic setup if there are compatibility issues
                 pass
-        
+
         if config.openai_api_key and openai:
             try:
-                # Suppress warnings for compatibility issues  
+                # Suppress warnings for compatibility issues
                 import warnings
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
@@ -97,14 +97,14 @@ class ExternalLLM:
             raise RuntimeError("Claude client not available. Check ANTHROPIC_API_KEY.")
 
         messages = [{"role": "user", "content": prompt}]
-        
+
         request_kwargs = {
             "model": kwargs.get("model", "claude-3-opus-20240229"),
             "max_tokens": max_tokens,
             "temperature": temperature,
             "messages": messages,
         }
-        
+
         if system_prompt:
             request_kwargs["system"] = system_prompt
 
@@ -179,7 +179,7 @@ class ExternalLLM:
             raise RuntimeError("Claude client not available. Check ANTHROPIC_API_KEY.")
 
         messages = [{"role": "user", "content": prompt}]
-        
+
         request_kwargs = {
             "model": kwargs.get("model", "claude-3-opus-20240229"),
             "max_tokens": max_tokens,
@@ -187,7 +187,7 @@ class ExternalLLM:
             "messages": messages,
             "stream": True,
         }
-        
+
         if system_prompt:
             request_kwargs["system"] = system_prompt
 
@@ -237,7 +237,7 @@ class ExternalLLM:
             # Claude: roughly 3.5 chars per token
             return len(text) // 3.5
         elif self.provider == ExternalProvider.GPT4:
-            # GPT-4: roughly 4 chars per token  
+            # GPT-4: roughly 4 chars per token
             return len(text) // 4
         else:
             return len(text) // 4  # Default estimate
@@ -260,7 +260,7 @@ class ExternalLLM:
         else:
             return False
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """Get information about the external model."""
         # Check availability synchronously without asyncio.run()
         available = False
@@ -268,25 +268,25 @@ class ExternalLLM:
             available = self._anthropic_client is not None
         elif self.provider == ExternalProvider.GPT4:
             available = self._openai_client is not None
-        
+
         info = {
             "provider": self.provider.value,
             "available": available,
             "context_size": self.get_context_size(),
         }
-        
+
         if self.provider == ExternalProvider.CLAUDE:
             info["default_model"] = "claude-3-opus-20240229"
             info["client_available"] = self._anthropic_client is not None
         elif self.provider == ExternalProvider.GPT4:
             info["default_model"] = "gpt-4"
             info["client_available"] = self._openai_client is not None
-            
+
         return info
 
     def estimate_cost(
-        self, 
-        input_tokens: int, 
+        self,
+        input_tokens: int,
         output_tokens: int,
         model: Optional[str] = None,
     ) -> float:
@@ -299,7 +299,7 @@ class ExternalLLM:
         elif self.provider == ExternalProvider.GPT4:
             # GPT-4 pricing (as of 2024)
             input_cost = input_tokens * 0.00003    # $30 per 1M input tokens
-            output_cost = output_tokens * 0.00006  # $60 per 1M output tokens  
+            output_cost = output_tokens * 0.00006  # $60 per 1M output tokens
             return input_cost + output_cost
         else:
             return 0.0
@@ -310,7 +310,7 @@ class ExternalLLMManager:
 
     def __init__(self) -> None:
         """Initialize the manager."""
-        self.providers: Dict[ExternalProvider, ExternalLLM] = {}
+        self.providers: dict[ExternalProvider, ExternalLLM] = {}
         self._setup_providers()
 
     def _setup_providers(self) -> None:
@@ -366,4 +366,4 @@ class ExternalLLMManager:
                 available.append(provider)
             elif provider == ExternalProvider.GPT4 and llm._openai_client is not None:
                 available.append(provider)
-        return available 
+        return available

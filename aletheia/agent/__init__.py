@@ -1,1 +1,1 @@
-"""Agent components for Aletheia.""" 
+"""Agent components for Aletheia."""

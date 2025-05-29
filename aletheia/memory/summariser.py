@@ -1,11 +1,11 @@
 """Memory summarization and compression pipeline."""
 
 import asyncio
-from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
+from typing import Any, Optional
 
-from .vector_store import VectorStore
 from ..config import config
+from .vector_store import VectorStore
 
 
 class MemorySummariser:
@@ -21,20 +21,20 @@ class MemorySummariser:
         return memory_count >= config.memory_summarization_threshold
 
     async def get_memories_for_summarization(
-        self, 
+        self,
         days_back: int = 7,
         max_entries: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get recent memories that should be summarized."""
         # Get all memories from the last N days
         cutoff_date = datetime.now() - timedelta(days=days_back)
-        
+
         # Search for recent memories
         memories = await self.vector_store.search_memories(
             query="recent experiences and learnings",
             n_results=max_entries,
         )
-        
+
         # Filter by date
         recent_memories = []
         for memory in memories:
@@ -47,20 +47,20 @@ class MemorySummariser:
                 except ValueError:
                     # Skip memories with invalid timestamps
                     continue
-        
+
         return recent_memories
 
-    def create_summary_prompt(self, memories: List[Dict[str, Any]]) -> str:
+    def create_summary_prompt(self, memories: list[dict[str, Any]]) -> str:
         """Create a prompt for summarizing memories."""
         memories_text = "\n\n".join([
             f"Memory {i+1} ({mem['metadata'].get('timestamp', 'Unknown time')}):\n{mem['content']}"
             for i, mem in enumerate(memories)
         ])
-        
+
         return f"""Please analyze and summarize the following agent memories and experiences.
 Extract the key learnings, patterns, and insights. Focus on:
 1. Important decisions and their outcomes
-2. Successful strategies and approaches  
+2. Successful strategies and approaches
 3. Common failure modes and how to avoid them
 4. Emerging patterns in tasks and solutions
 5. Key knowledge gained
@@ -72,20 +72,20 @@ Provide a concise but comprehensive summary that captures the essential insights
 Format as a structured summary with clear sections."""
 
     async def create_summary(
-        self, 
-        memories: List[Dict[str, Any]],
+        self,
+        memories: list[dict[str, Any]],
         external_llm = None,
     ) -> Optional[str]:
         """Create a summary of memories using external LLM."""
         if not memories:
             return None
-            
+
         if not external_llm:
             # Fallback to simple concatenation if no LLM available
             return self._create_simple_summary(memories)
-        
+
         prompt = self.create_summary_prompt(memories)
-        
+
         try:
             # Use external LLM for sophisticated summarization
             summary = await external_llm.generate(
@@ -98,21 +98,21 @@ Format as a structured summary with clear sections."""
             print(f"Error creating LLM summary: {e}")
             return self._create_simple_summary(memories)
 
-    def _create_simple_summary(self, memories: List[Dict[str, Any]]) -> str:
+    def _create_simple_summary(self, memories: list[dict[str, Any]]) -> str:
         """Create a simple text-based summary without LLM."""
         memory_types = {}
         content_snippets = []
-        
+
         for memory in memories:
             mem_type = memory["metadata"].get("type", "unknown")
             memory_types[mem_type] = memory_types.get(mem_type, 0) + 1
-            
+
             # Take first 200 chars of content
             content = memory["content"][:200]
             if len(memory["content"]) > 200:
                 content += "..."
             content_snippets.append(content)
-        
+
         summary = f"""Memory Summary ({len(memories)} entries)
 Generated: {datetime.now().isoformat()}
 
@@ -127,28 +127,28 @@ Total memories processed: {len(memories)}
         return summary
 
     async def summarize_and_compress(
-        self, 
+        self,
         external_llm = None,
         delete_originals: bool = False,
     ) -> Optional[str]:
         """Perform full summarization and compression cycle."""
         if not await self.should_summarize():
             return None
-        
+
         print("🧠 Starting memory summarization...")
-        
+
         # Get memories to summarize
         memories = await self.get_memories_for_summarization()
-        
+
         if not memories:
             print("No recent memories found for summarization")
             return None
-        
+
         print(f"Summarizing {len(memories)} memory entries...")
-        
+
         # Create summary
         summary = await self.create_summary(memories, external_llm)
-        
+
         if summary:
             # Store summary as a special memory entry
             summary_id = await self.vector_store.store_memory(
@@ -160,31 +160,31 @@ Total memories processed: {len(memories)}
                     "is_compressed": True,
                 },
             )
-            
+
             print(f"✅ Memory summary created with ID: {summary_id}")
-            
+
             # Optionally delete original memories to save space
             if delete_originals and len(memories) > 50:  # Safety check
                 # This would delete the original memories
                 # Implementation depends on specific requirements
                 print("⚠️  Original memory deletion not implemented yet")
-            
+
             return summary_id
-        
+
         return None
 
     async def run_periodic_summarization(
-        self, 
+        self,
         external_llm = None,
         interval_hours: int = 24,
     ) -> None:
         """Run periodic summarization in background."""
         print(f"📅 Starting periodic summarization (every {interval_hours} hours)")
-        
+
         while True:
             try:
                 await self.summarize_and_compress(external_llm)
                 await asyncio.sleep(interval_hours * 3600)  # Convert to seconds
             except Exception as e:
                 print(f"Error in periodic summarization: {e}")
-                await asyncio.sleep(3600)  # Retry in 1 hour on error 
+                await asyncio.sleep(3600)  # Retry in 1 hour on error

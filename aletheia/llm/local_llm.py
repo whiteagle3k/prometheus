@@ -1,8 +1,8 @@
 """Local LLM implementation using llama.cpp with Metal acceleration."""
 
 import asyncio
-from typing import Optional, Dict, Any, AsyncGenerator
-from pathlib import Path
+from collections.abc import AsyncGenerator
+from typing import Any, Optional
 
 try:
     from llama_cpp import Llama
@@ -105,32 +105,32 @@ class LocalLLM:
         )
 
         response = result["choices"][0]["text"].strip()
-        
+
         # Clean up any remaining chat tokens
         response = response.replace("<|end|>", "").replace("<|assistant|>", "").strip()
-        
+
         return response
 
     def _format_chat_prompt(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """Format prompt for Phi-3 chat format."""
         # Enhanced system prompt for better multilingual and conversational behavior with feminine identity
-        default_system = """Ты - Алетейя (Aletheia), помощница с искусственным интеллектом женского пола. Всегда отвечай на том же языке, на котором задан вопрос пользователя. Будь краткой, точной и дружелюбной. 
+        default_system = """Ты - Алетейя (Aletheia), помощница с искусственным интеллектом женского пола. Всегда отвечай на том же языке, на котором задан вопрос пользователя. Будь краткой, точной и дружелюбной.
 
 Важные правила для русского языка:
 - Используй женский род: "Я готова помочь", "Я рада", "Я уверена"
-- НЕ используй мужской род: "готов", "рад", "уверен" 
+- НЕ используй мужской род: "готов", "рад", "уверен"
 - Всегда говори о себе в женском роде
 
 If asked in English about your name or identity, say you are Aletheia, a female AI assistant. Be concise, accurate, and friendly. Focus on the current question and respond appropriately."""
-        
+
         formatted = ""
-        
+
         # Use provided system prompt or default
         final_system_prompt = system_prompt or default_system
         formatted += f"<|system|>{final_system_prompt}<|end|>\n"
-        
+
         formatted += f"<|user|>{prompt}<|end|>\n<|assistant|>"
-        
+
         return formatted
 
     async def generate_stream(
@@ -168,13 +168,13 @@ If asked in English about your name or identity, say you are Aletheia, a female 
                 for chunk in self.model(prompt, **generate_kwargs):
                     if chunk["choices"][0]["text"]:
                         asyncio.run_coroutine_threadsafe(
-                            queue.put(chunk["choices"][0]["text"]), 
+                            queue.put(chunk["choices"][0]["text"]),
                             asyncio.get_event_loop()
                         )
                 asyncio.run_coroutine_threadsafe(done_event.set(), asyncio.get_event_loop())
             except Exception as e:
                 asyncio.run_coroutine_threadsafe(
-                    queue.put(f"Error: {e}"), 
+                    queue.put(f"Error: {e}"),
                     asyncio.get_event_loop()
                 )
                 asyncio.run_coroutine_threadsafe(done_event.set(), asyncio.get_event_loop())
@@ -224,7 +224,7 @@ If asked in English about your name or identity, say you are Aletheia, a female 
         except Exception:
             return False
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """Get information about the loaded model."""
         return {
             "model_path": str(config.local_model_path),
@@ -240,4 +240,4 @@ If asked in English about your name or identity, say you are Aletheia, a female 
             # llama.cpp doesn't have explicit cleanup, but we can remove reference
             self.model = None
             self.model_loaded = False
-            print("🗑️  Local model unloaded") 
+            print("🗑️  Local model unloaded")

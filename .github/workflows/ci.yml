@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11"]
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+        installer-parallel: true
+
+    - name: Load cached venv
+      id: cached-poetry-dependencies
+      uses: actions/cache@v3
+      with:
+        path: .venv
+        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+
+    - name: Install dependencies
+      if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+      run: |
+        poetry install --no-interaction --no-root
+
+    - name: Install project
+      run: poetry install --no-interaction
+
+    - name: Install system dependencies (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install cmake pkg-config
+        export CMAKE_ARGS="-DLLAMA_METAL=on"
+
+    - name: Install system dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake pkg-config
+
+    - name: Run code quality checks
+      run: |
+        poetry run ruff check aletheia/
+        poetry run mypy aletheia/
+        poetry run black --check aletheia/
+
+    - name: Run unit tests (fast tests only)
+      run: |
+        poetry run pytest tests/ -v -m "unit or (not slow and not integration)"
+
+    - name: Run integration tests (Ubuntu only, no local LLM)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        poetry run pytest tests/ -v -m "integration" --tb=short
+      env:
+        # Skip heavy local LLM operations on Ubuntu CI
+        SKIP_LOCAL_LLM: "true"
+
+  test-slow:
+    runs-on: macos-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+    
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+
+    - name: Install dependencies
+      run: |
+        brew install cmake pkg-config
+        export CMAKE_ARGS="-DLLAMA_METAL=on"
+        poetry install --no-interaction
+
+    - name: Run all tests including slow ones
+      run: |
+        poetry run pytest tests/ -v
+      env:
+        # Allow slow tests for comprehensive testing
+        RUN_SLOW_TESTS: "true" 
