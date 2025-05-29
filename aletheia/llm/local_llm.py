@@ -404,3 +404,191 @@ class LocalLLM:
             self.model = None
             self.model_loaded = False
             print("🗑️  Local model unloaded")
+
+    async def generate_structured(
+        self,
+        prompt: str,
+        context: Optional[str] = None,
+        max_tokens: int = 512,
+        temperature: float = 0.7,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Generate structured response with parsing for agent tasks."""
+        await self.ensure_loaded()
+
+        if not self.model:
+            raise RuntimeError("Local model not available")
+
+        # Build structured prompt
+        structured_prompt = self._format_structured_prompt(prompt, context)
+
+        # Generate response
+        generate_kwargs = {
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stop": ["<|end|>", "<|user|>", "---END---"],
+            "echo": False,
+            **kwargs,
+        }
+
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: self.model(structured_prompt, **generate_kwargs)
+        )
+
+        raw_response = result["choices"][0]["text"].strip()
+        
+        # Parse structured response
+        return self._parse_structured_response(raw_response, prompt)
+
+    def _format_structured_prompt(self, prompt: str, context: Optional[str] = None) -> str:
+        """Format prompt to request structured response from local LLM."""
+        
+        # Detect language
+        is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in prompt.lower())
+        language = "ru" if is_russian else "en"
+        
+        # Get system prompt from identity
+        system_prompt = identity.get_system_prompt(language)
+        
+        # Build context section
+        context_section = ""
+        if context:
+            if is_russian:
+                context_section = f"\n\nКОНТЕКСТ: {context}"
+            else:
+                context_section = f"\n\nCONTEXT: {context}"
+
+        # Build structured instruction
+        if is_russian:
+            instruction = f"""<|system|>{system_prompt}
+
+Ответь на пользовательский запрос в следующем структурированном формате:
+
+ОТВЕТ: [твой основной ответ пользователю]
+УВЕРЕННОСТЬ: [высокая/средняя/низкая]
+ОБОСНОВАНИЕ: [краткое объяснение твоего ответа]
+ВНЕШНИЙ_ЗАПРОС: [да/нет - нужна ли консультация с внешней моделью]
+
+ВАЖНЫЕ ПРАВИЛА для ВНЕШНИЙ_ЗАПРОС:
+
+ОБЯЗАТЕЛЬНО ДА если:
+- "из чего делают ракетное топливо" → да (точный состав)
+- "как работает двигатель" → да (технические принципы)
+- "что такое квантовая физика" → да (научные определения)
+- "состав материала X" → да (точная химия)
+- "принцип работы компьютера" → да (технические детали)
+
+МОЖНО НЕТ только если:
+- "привет, как дела" → нет (простое общение)
+- "как меня зовут" → нет (контекстный вопрос)
+- "что ты умеешь" → нет (о твоих возможностях)
+- "давай поболтаем" → нет (социальное взаимодействие)
+
+При сомнении между техническими фактами и общением - ВСЕГДА выбирай ДА для технических вопросов!<|end|>
+<|user|>{prompt}{context_section}<|end|>
+<|assistant|>"""
+        else:
+            instruction = f"""<|system|>{system_prompt}
+
+Respond to the user query in the following structured format:
+
+ANSWER: [your main response to the user]
+CONFIDENCE: [high/medium/low]
+REASONING: [brief explanation of your answer]
+EXTERNAL_NEEDED: [yes/no - whether external model consultation is needed]
+
+IMPORTANT RULES for EXTERNAL_NEEDED:
+
+MUST BE YES if:
+- "what is rocket fuel made of" → yes (precise composition)
+- "how does an engine work" → yes (technical principles)
+- "what is quantum physics" → yes (scientific definitions)
+- "composition of material X" → yes (precise chemistry)
+- "how does a computer work" → yes (technical details)
+
+CAN BE NO only if:
+- "hello, how are you" → no (simple conversation)
+- "what's my name" → no (contextual question)
+- "what can you do" → no (about your capabilities)
+- "let's chat" → no (social interaction)
+
+When in doubt between technical facts and conversation - ALWAYS choose YES for technical questions!<|end|>
+<|user|>{prompt}{context_section}<|end|>
+<|assistant|>"""
+
+        return instruction
+
+    def _parse_structured_response(self, raw_response: str, original_prompt: str) -> dict[str, Any]:
+        """Parse structured response from local LLM."""
+        
+        # Clean the response first
+        response = raw_response.strip()
+        
+        # Early contamination stop
+        contamination_stops = [
+            "---END---", "<|end|>", "<|user|>", "---", "instruction:", 
+            "constraint:", "you are aletheia", "core principles:"
+        ]
+        for stop in contamination_stops:
+            if stop.lower() in response.lower():
+                response = response.split(stop)[0].strip()
+                break
+
+        # Default structure
+        parsed = {
+            "answer": "",
+            "confidence": "medium",
+            "reasoning": "",
+            "external_needed": False,
+            "raw_response": raw_response
+        }
+
+        # Try to parse structured format
+        lines = response.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Parse different fields
+            if line.startswith(('ОТВЕТ:', 'ANSWER:')):
+                parsed["answer"] = line.split(':', 1)[1].strip()
+            elif line.startswith(('УВЕРЕННОСТЬ:', 'CONFIDENCE:')):
+                conf_text = line.split(':', 1)[1].strip().lower()
+                if 'высокая' in conf_text or 'high' in conf_text:
+                    parsed["confidence"] = "high"
+                elif 'низкая' in conf_text or 'low' in conf_text:
+                    parsed["confidence"] = "low"
+                else:
+                    parsed["confidence"] = "medium"
+            elif line.startswith(('ОБОСНОВАНИЕ:', 'REASONING:')):
+                parsed["reasoning"] = line.split(':', 1)[1].strip()
+            elif line.startswith(('ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:')):
+                ext_text = line.split(':', 1)[1].strip().lower()
+                parsed["external_needed"] = 'да' in ext_text or 'yes' in ext_text
+
+        # If no structured answer found, use the whole response as answer
+        if not parsed["answer"]:
+            # Try to find a reasonable answer in the text
+            for line in lines:
+                line = line.strip()
+                if (line and 
+                    not line.startswith(('ОТВЕТ:', 'ANSWER:', 'УВЕРЕННОСТЬ:', 'CONFIDENCE:', 
+                                        'ОБОСНОВАНИЕ:', 'REASONING:', 'ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:')) and
+                    len(line) > 10):
+                    parsed["answer"] = line
+                    break
+            
+            # If still no answer, use cleaned response
+            if not parsed["answer"]:
+                parsed["answer"] = response
+
+        # Fallback for empty answers
+        if not parsed["answer"] or len(parsed["answer"]) < 3:
+            is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in original_prompt.lower())
+            parsed["answer"] = self._get_fallback_response(is_russian)
+            parsed["confidence"] = "low"
+            parsed["reasoning"] = "Fallback response due to parsing error"
+
+        return parsed

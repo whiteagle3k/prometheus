@@ -6,6 +6,7 @@ import traceback
 import warnings
 from datetime import datetime
 from typing import Any
+import time
 
 from ..config import config
 from ..identity.loader import load_identity_config, get_validation_config
@@ -217,181 +218,119 @@ class AletheiaAgent:
         user_input: str,
         relevant_memories: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Handle simple tasks with meta-cognitive routing assessment."""
-
-        print("⚡ Handling simple task with meta-cognitive routing...")
-
-        # Build context-aware prompt using the context manager
-        enhanced_prompt = self.context.build_context_prompt(user_input)
-
-        # First, ask the local LLM to assess if external routing is needed
-        routing_assessment_prompt = self.context.build_routing_assessment_prompt(user_input)
+        """Handle simple tasks with structured local LLM approach."""
         
+        start_time = time.time()
+        
+        # Build context for the local LLM
+        context_prompt = self.context.build_context_prompt(user_input)
+        
+        print("⚡ Handling simple task with structured local LLM...")
+        
+        # Use structured generation instead of the old routing assessment
         try:
-            print("🧠 Asking local LLM for routing assessment...")
-            routing_response = await self.router.local_llm.generate(
-                prompt=routing_assessment_prompt,
-                max_tokens=100,
-                temperature=0.1,  # Low temperature for consistent routing decisions
+            structured_result = await self.router.local_llm.generate_structured(
+                prompt=context_prompt,
+                context=None,  # Context is already built into the prompt
+                max_tokens=1024,
+                temperature=0.7
             )
             
-            # Check for explicit [EXTERNAL] token
-            has_external_token = "[EXTERNAL]" in routing_response.upper()
+            print(f"🎯 Structured response - Confidence: {structured_result['confidence']}")
+            if structured_result['reasoning']:
+                print(f"💭 Reasoning: {structured_result['reasoning'][:100]}...")
             
-            # Also check for scientific uncertainty indicators or deferral language
-            deferral_indicators = [
-                "внешней модели", "external model", "более мощной", "more powerful",
-                "научных данных", "scientific data", "не уверена", "not confident",
-                "требует точности", "requires precision", "передать внешней", "pass to external",
-                "сложно ответить", "difficult to answer", "need external", "нужна внешняя"
-            ]
-            shows_uncertainty = any(indicator in routing_response.lower() for indicator in deferral_indicators)
-            
-            # Check if this is a clear social interaction that should stay local
-            social_indicators = [
-                "поболтать", "просто поговорить", "знакомство", "зовут", "chat", "just talk", 
-                "my name", "introduction", "привет", "hello", "как дела", "how are you"
-            ]
-            is_social_interaction = any(indicator in user_input.lower() for indicator in social_indicators)
-            
-            # If this is clearly a scientific question but local LLM started answering, it might need external routing
-            scientific_question_indicators = [
-                "что такое", "what is", "как образуется", "how is formed", "почему", "why",
-                "водяной пар", "water vapor", "условиях", "conditions", "физика", "physics", "химия", "chemistry",
-                "из чего", "what is made", "made of", "состав", "composition", "ракетное", "rocket",
-                "топливо", "fuel", "двигатель", "engine", "принцип работы", "how does it work"
-            ]
-            is_scientific_question = any(indicator in user_input.lower() for indicator in scientific_question_indicators)
-            
-            # Additional technical terms that should always route externally
-            technical_terms = ["ракетное топливо", "двигатель", "компьютер", "engine", "computer", "rocket fuel"]
-            has_technical_terms = any(term in user_input.lower() for term in technical_terms)
-            
-            # If local LLM started giving scientific facts without [EXTERNAL], it might be overconfident
-            gives_scientific_facts = any(term in routing_response.lower() for term in [
-                "водород", "hydrogen", "молекула", "molecule", "температура", "temperature",
-                "атмосфера", "atmosphere", "химический", "chemical"
-            ])
-            
-            should_use_external = (
-                has_external_token or 
-                (shows_uncertainty and not is_social_interaction) or 
-                (is_scientific_question and gives_scientific_facts) or
-                has_technical_terms  # Force external for technical terms regardless of LLM response
-            )
-            
-            if should_use_external:
-                print("🔬 Local LLM recommends external routing - using external LLM for accuracy")
-                if has_external_token:
-                    print("  └─ Explicit [EXTERNAL] token found")
-                elif shows_uncertainty:
-                    print("  └─ Uncertainty/deferral language detected")
-                elif gives_scientific_facts:
-                    print("  └─ Scientific facts detected, routing for accuracy")
-            else:
-                print("💻 Local LLM confident in handling - proceeding with local response")
+            # Check if external consultation is recommended
+            if structured_result['external_needed']:
+                print("🔬 Local LLM recommends external consultation - routing to external LLM")
                 
-        except Exception as e:
-            print(f"⚠️  Error during routing assessment: {e}")
-            # Fallback to safe default: use external for complex questions
-            should_use_external = len(user_input.split()) > 10  # Simple heuristic fallback
-
-        # Create task context with proper routing
-        task_context = TaskContext(
-            prompt=enhanced_prompt,
-            max_tokens=500,
-            requires_deep_reasoning=should_use_external,
-            is_creative="create" in user_input.lower() or "write" in user_input.lower(),
-            needs_latest_knowledge="latest" in user_input.lower() or "recent" in user_input.lower(),
-            conversation_context=self._build_context_summary(),
-            user_name=self.context.user_name,
-            session_context={
-                "session_id": self.session_id,
-                "interaction_count": self.context.interaction_count,
-                "language": self.context.last_user_language
-            }
-        )
-
-        # Execute task
-        result = await self.router.execute_task(task_context)
-        
-        # Post-execution validation for local responses to factual questions
-        response_text = result.get("result", "")
-        route_used = result.get("route_used", "unknown")
-        
-        # If we used local but got an [EXTERNAL] response after all, re-route
-        if route_used == "local" and "[EXTERNAL]" in response_text.upper():
-            print("🔄 Local LLM requested external routing in response - re-routing...")
-            
-            # Re-route to external LLM
-            external_context = TaskContext(
-                prompt=enhanced_prompt,
-                max_tokens=600,
-                requires_deep_reasoning=True,  # Force external routing
-                conversation_context=self._build_context_summary(),
-                user_name=self.context.user_name,
-                session_context=task_context.session_context
-            )
-            
-            external_result = await self.router.execute_task(external_context)
-            
-            return {
-                "type": "simple_task",
-                "response": external_result.get("result", response_text),
-                "execution_details": {
-                    "route_used": "external_meta_cognitive",
-                    "execution_time": result.get("execution_time", 0) + external_result.get("execution_time", 0),
-                    "estimated_cost": result.get("estimated_cost", 0) + external_result.get("estimated_cost", 0),
-                    "routing_assessment": "local_deferred_to_external",
-                    "consultation_metadata": external_result.get("consultation_metadata"),
-                },
-                "approach": "meta_cognitive",
-            }
-        
-        if should_use_external and route_used == "local" and response_text:
-            confidence_issues = await self._validate_factual_response(user_input, response_text)
-            if confidence_issues:
-                print(f"⚠️  Detected potential accuracy issues: {', '.join(confidence_issues)}")
-                print("🔄 Re-routing to external LLM for validation...")
-                
-                # Re-route to external LLM with validation context
-                validation_context = TaskContext(
-                    prompt=f"Please provide an accurate answer to this question: {user_input}",
-                    max_tokens=600,
-                    requires_deep_reasoning=True,  # Force external routing
+                # Route to external LLM
+                task_context = TaskContext(
+                    prompt=user_input,
+                    max_tokens=1024,
+                    requires_deep_reasoning=True,
                     conversation_context=self._build_context_summary(),
                     user_name=self.context.user_name,
-                    session_context=task_context.session_context
+                    session_context={
+                        "session_id": self.session_id,
+                        "interaction_count": self.context.interaction_count,
+                        "language": self.context.last_user_language
+                    }
                 )
                 
-                validated_result = await self.router.execute_task(validation_context)
+                external_result = await self.router.execute_task(task_context)
+                route_used = "external"
+                response_text = external_result.get("result", "")
+                execution_time = time.time() - start_time
                 
                 return {
                     "type": "simple_task",
-                    "response": validated_result.get("result", response_text),
+                    "response": response_text,
                     "execution_details": {
-                        "route_used": "external_validation",
-                        "execution_time": result.get("execution_time", 0) + validated_result.get("execution_time", 0),
-                        "estimated_cost": result.get("estimated_cost", 0) + validated_result.get("estimated_cost", 0),
-                        "validation_issues": confidence_issues,
-                        "original_response": response_text
+                        "route_used": route_used,
+                        "execution_time": execution_time,
+                        "estimated_cost": external_result.get("estimated_cost", 0),
+                        "routing_assessment": "structured_local",
+                        "local_confidence": structured_result['confidence'],
+                        "local_reasoning": structured_result['reasoning'],
+                        "consultation_metadata": external_result.get("consultation_metadata"),
                     },
-                    "approach": "validated",
+                    "approach": "structured_local",
                 }
-
-        return {
-            "type": "simple_task",
-            "response": response_text,
-            "execution_details": {
-                "route_used": route_used,
-                "execution_time": result.get("execution_time"),
-                "estimated_cost": result.get("estimated_cost", 0),
-                "routing_assessment": "meta_cognitive",
-                "recommended_external": should_use_external,
-                "consultation_metadata": result.get("consultation_metadata"),
-            },
-            "approach": "meta_cognitive",
-        }
+            else:
+                print("💻 Local LLM confident in handling - using structured response")
+                
+                route_used = "local"
+                response_text = structured_result['answer']
+                execution_time = time.time() - start_time
+                
+                return {
+                    "type": "simple_task",
+                    "response": response_text,
+                    "execution_details": {
+                        "route_used": route_used,
+                        "execution_time": execution_time,
+                        "estimated_cost": 0,
+                        "routing_assessment": "structured_local",
+                        "local_confidence": structured_result['confidence'],
+                        "local_reasoning": structured_result['reasoning'],
+                        "raw_response": structured_result.get('raw_response', ''),
+                    },
+                    "approach": "structured_local",
+                }
+                
+        except Exception as e:
+            print(f"❌ Structured local LLM failed: {e}")
+            # Fallback to external LLM
+            task_context = TaskContext(
+                prompt=user_input,
+                max_tokens=1024,
+                requires_deep_reasoning=True,
+                conversation_context=self._build_context_summary(),
+                user_name=self.context.user_name,
+                session_context={
+                    "session_id": self.session_id,
+                    "interaction_count": self.context.interaction_count,
+                    "language": self.context.last_user_language
+                }
+            )
+            
+            external_result = await self.router.execute_task(task_context)
+            execution_time = time.time() - start_time
+            
+            return {
+                "type": "simple_task",
+                "response": external_result.get("result", ""),
+                "execution_details": {
+                    "route_used": "external_fallback",
+                    "execution_time": execution_time,
+                    "estimated_cost": external_result.get("estimated_cost", 0),
+                    "routing_assessment": "structured_local_failed",
+                    "error": str(e),
+                    "consultation_metadata": external_result.get("consultation_metadata"),
+                },
+                "approach": "structured_local",
+            }
 
     def _build_context_summary(self) -> str:
         """Build a clean context summary for external LLM calls."""
