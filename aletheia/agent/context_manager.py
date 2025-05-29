@@ -128,8 +128,18 @@ class ConversationContext:
             "up", "down", "left", "right", "back", "forward", "there", "here",
             "что", "как", "где", "когда", "почему", "зачем", "кто", "куда", "откуда",
             "who", "what", "where", "when", "why", "how", "which", "whom",
-            "такое", "происходит", "образуется", "поднимается", "опускается"
+            "такое", "происходит", "образуется", "поднимается", "опускается",
+            "зовут", "звать", "name", "called"  # Don't extract verbs related to naming
         }
+        
+        # Check if this is a self-reference question (simple check without circular dependency)
+        context_questions = self.conversation_config.get("context_questions", [])
+        is_self_ref = any(question in user_input.lower() for question in context_questions)
+        
+        # If this is a self-reference question and we already have a valid name, don't extract
+        if self.user_name and is_self_ref:
+            print(f"👤 Keeping existing name '{self.user_name}' for self-reference question")
+            return
         
         for pattern in patterns:
             match = re.search(pattern, user_input.lower())
@@ -195,9 +205,29 @@ class ConversationContext:
     
     def _extract_entities(self, text: str) -> List[str]:
         """Extract potential entities/topics from text."""
-        # Extract words of 3+ chars, but prioritize 4+ chars
-        words_4plus = re.findall(r'\b\w{4,}\b', text.lower())
-        words_3plus = re.findall(r'\b\w{3}\b', text.lower())
+        # First, extract compound scientific terms (2+ words)
+        compound_scientific_terms = [
+            "водяной пар", "water vapor", "водяное облако", "water cloud",
+            "ракетное топливо", "rocket fuel", "твердое топливо", "solid fuel",
+            "жидкое топливо", "liquid fuel", "атмосферное давление", "atmospheric pressure",
+            "внутреннего сгорания", "internal combustion", "быстрая сортировка", "quick sort",
+            "химическая реакция", "chemical reaction", "физический процесс", "physical process",
+            "научный метод", "scientific method", "молекулярная структура", "molecular structure"
+        ]
+        
+        entities = []
+        text_lower = text.lower()
+        
+        # Extract compound terms first (these have priority)
+        for compound_term in compound_scientific_terms:
+            if compound_term in text_lower:
+                entities.append(compound_term)
+                # Remove this compound term from text to avoid double-extraction
+                text_lower = text_lower.replace(compound_term, " ")
+        
+        # Then extract single words, but prioritize scientific terms
+        words_4plus = re.findall(r'\b\w{4,}\b', text_lower)
+        words_3plus = re.findall(r'\b\w{3}\b', text_lower)
         
         # Filter out common non-topical words but keep scientific/technical terms
         common_words = {"that", "this", "they", "them", "were", "been", "have", "will", "your", "with",
@@ -205,24 +235,32 @@ class ConversationContext:
                        "когда", "здравствуйте", "спасибо", "хочу", "меня", "зовут", "поговорить", "вопрос"}
         
         # Scientific/technical terms that should always be preserved (including 3-char terms)
-        scientific_terms = {"водяной", "пар", "vapor", "химический", "физический", "молекула", "процесс", 
+        scientific_terms = {"химический", "физический", "молекула", "процесс", 
                            "образуется", "температура", "конденсация", "осадки", "капли", "газообразный",
                            "жидкий", "твердый", "энергия", "атмосфера", "облака", "испарение", 
-                           "лёд", "лед", "ice", "газ", "gas"}
+                           "лёд", "лед", "ice", "газ", "gas", "топливо", "fuel", "двигатель", "engine",
+                           "компьютер", "computer", "сортировка", "sorting", "алгоритм", "algorithm"}
         
-        # Important 3-character scientific terms
+        # Important 3-character scientific terms (but NOT "водяной" alone if "водяной пар" was found)
         important_3char = {"лёд", "лед", "пар", "газ", "ice", "gas"}
         
-        entities = []
+        # Only add "пар" if "водяной пар" wasn't already found
+        compound_found = any("пар" in entity for entity in entities)
         
-        # First, add 4+ character words
+        # Add 4+ character words
         for word in words_4plus:
-            if word in scientific_terms or (word not in common_words):
+            if word in scientific_terms or (word not in common_words and word not in entities):
+                # Special case: don't add "водяной" if "водяной пар" was already found
+                if word == "водяной" and any("водяной пар" in entity for entity in entities):
+                    continue
                 entities.append(word)
         
-        # Then, add important 3-character scientific terms
+        # Add important 3-character scientific terms with special handling
         for word in words_3plus:
-            if word in important_3char and word not in entities:
+            if word in important_3char and word not in [e.split()[-1] for e in entities]:
+                # Don't add "пар" if "водяной пар" was already found
+                if word == "пар" and compound_found:
+                    continue
                 entities.append(word)
         
         return entities[:5]  # Return top 5 to avoid noise
@@ -302,7 +340,14 @@ class ConversationContext:
         """Check if user is asking about themselves (needs context)."""
         context_questions = self.conversation_config.get("context_questions", [])
         user_lower = user_input.lower()
-        return any(question in user_lower for question in context_questions)
+        
+        # Check each pattern more carefully
+        for question in context_questions:
+            if question in user_lower:
+                print(f"🔍 Self-reference detected: '{question}' in '{user_input}'")
+                return True
+        
+        return False
     
     def _is_simple_greeting(self, user_input: str) -> bool:
         """Check if this is a simple greeting that shouldn't have context."""
@@ -343,11 +388,14 @@ class ConversationContext:
         """Build a prompt for self-reference questions."""
         if self.user_name:
             if self.last_user_language == "ru":
-                context_instruction = f"ВАЖНО: Пользователя зовут {self.user_name}."
+                context_instruction = f"ВАЖНО: Пользователя зовут {self.user_name}. Когда они спрашивают 'Как меня зовут?', ответь: 'Тебя зовут {self.user_name}' или 'Вас зовут {self.user_name}'."
             else:
-                context_instruction = f"IMPORTANT: The user's name is {self.user_name}."
+                context_instruction = f"IMPORTANT: The user's name is {self.user_name}. When they ask 'What's my name?', respond: 'Your name is {self.user_name}'."
             
+            print(f"🔍 Building self-reference prompt with name: {self.user_name}")
             return f"{context_instruction}\n\nВопрос: {user_input}"
+        else:
+            print(f"⚠️  No user name available for self-reference question: {user_input}")
         
         return user_input
     

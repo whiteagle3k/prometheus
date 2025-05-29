@@ -36,22 +36,34 @@ class LocalLLM:
 
         print(f"🔄 Loading local model: {config.local_model_path}")
 
-        # Configure hardware acceleration
+        # Get performance config from identity if available
+        try:
+            performance_config = identity.module_paths.performance_config or {}
+        except:
+            performance_config = {}
+
+        # Configure hardware acceleration with optimizations
         model_kwargs = {
             "model_path": str(config.local_model_path),
-            "n_ctx": config.local_model_context_size,
+            "n_ctx": performance_config.get("context_size", config.local_model_context_size),
             "verbose": False,
-            "n_batch": 512,
-            "n_threads": None,  # Auto-detect
+            "n_batch": performance_config.get("batch_size", 512),  # Default to 512 for better balance
+            "n_threads": performance_config.get("threads", None),  # Auto-detect or use configured
+            # Performance optimizations
+            "use_mmap": True,  # Memory-map model file for faster loading
+            "use_mlock": True,  # Lock model in memory to prevent swapping
+            "f16_kv": True,  # Use fp16 for key/value cache
         }
 
         # Hardware-specific optimizations
         if config.use_metal:
-            model_kwargs["n_gpu_layers"] = config.local_model_gpu_layers
-            print("🚀 Using Metal acceleration")
+            gpu_layers = performance_config.get("gpu_layers", config.local_model_gpu_layers)
+            model_kwargs["n_gpu_layers"] = gpu_layers
+            print(f"🚀 Using Metal acceleration with {gpu_layers} GPU layers")
         elif config.use_cuda:
-            model_kwargs["n_gpu_layers"] = config.local_model_gpu_layers
-            print("🚀 Using CUDA acceleration")
+            gpu_layers = performance_config.get("gpu_layers", config.local_model_gpu_layers)
+            model_kwargs["n_gpu_layers"] = gpu_layers
+            print(f"🚀 Using CUDA acceleration with {gpu_layers} GPU layers")
         else:
             model_kwargs["n_gpu_layers"] = 0
             print("💻 Using CPU-only mode")
@@ -113,7 +125,7 @@ class LocalLLM:
         # Detect language for cleanup
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in prompt.lower())
         
-        # Very aggressive cleanup for contamination patterns
+        # More aggressive cleanup for contamination patterns
         contamination_patterns = [
             r"Written by Assistant:.*",
             r"Written by Aletheia.*", 
@@ -138,7 +150,15 @@ class LocalLLM:
             r"Now, here are three more.*",
             r"How can you ensure.*",
             r"How can you handle.*",
-            r"How can AI ensure.*"
+            r"How can AI ensure.*",
+            r"--- \*\*Instruction.*",  # New: Training instruction artifacts
+            r"AVOID:.*",               # New: Training constraints
+            r"Additional Constraint:.*", # New: Training constraints
+            r"You are Aletheia,.*advanced analytical.*", # New: Spurious identity descriptions
+            r"Вопрос:.*Римской империи.*", # New: Roman Empire training leakage
+            r"падения Римской империи.*", # New: Roman Empire training leakage
+            r"Эдуард Гиббон.*",        # New: Historical training leakage
+            r"работе \"История упадка.*", # New: Historical training leakage
         ]
         
         import re
@@ -149,6 +169,7 @@ class LocalLLM:
         lines = response.split('\n')
         clean_lines = []
         
+        # Skip lines with obvious contamination
         for line in lines:
             line = line.strip()
             # Skip lines with obvious contamination
@@ -157,7 +178,9 @@ class LocalLLM:
                 "task:", "approach:", "response:", "relevant context:",
                 "omnipotent ai", "аминь", "theoretical", "follow up questions:",
                 "solutions for follow up", "how can you", "how can ai", 
-                "now, here are", "gender role representation", "programmed rules"
+                "now, here are", "gender role representation", "programmed rules",
+                "--- **", "**more complex", "avoid:", "additional constraint:",
+                "падения римской", "эдуард гиббон", "> # this is", "code|", "|>"
             ]):
                 continue
             # Skip very short fragments
@@ -179,18 +202,70 @@ class LocalLLM:
         contamination_stops = [
             "CV Template", "Имя:", "Task:", "Relevant context:", "theoretical",
             "###", "Follow up questions", "Solutions for follow up", 
-            "Now, here are", "How can you", "How can AI"
+            "Now, here are", "How can you", "How can AI", "--- **Instruction",
+            "AVOID:", "Additional Constraint:", "падения Римской империи", 
+            "Эдуард Гиббон", "История упадка", "работе \"История"
         ]
         for stop in contamination_stops:
             if stop in response:
                 response = response.split(stop)[0].strip()
+                break  # Stop at first contamination found
         
         # Clean up multiple spaces and normalize
         response = re.sub(r'\s+', ' ', response).strip()
         
+        # Remove obvious duplications (sentences or phrases that repeat)
+        sentences = response.split('. ')
+        clean_sentences = []
+        seen_sentences = set()
+        
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+                
+            # Normalize sentence for comparison (remove punctuation, lowercase)
+            normalized = re.sub(r'[^\w\s]', '', sentence.lower()).strip()
+            
+            # Skip if we've seen a very similar sentence (70% similarity threshold)
+            is_duplicate = False
+            for seen in seen_sentences:
+                # Simple similarity check: if 70%+ of words are the same
+                seen_words = set(seen.split())
+                current_words = set(normalized.split())
+                if len(current_words) > 0:
+                    similarity = len(seen_words & current_words) / len(current_words | seen_words)
+                    if similarity > 0.7:
+                        is_duplicate = True
+                        break
+            
+            if not is_duplicate:
+                clean_sentences.append(sentence)
+                seen_sentences.add(normalized)
+        
+        # Rebuild response from clean sentences
+        if clean_sentences:
+            response = '. '.join(clean_sentences)
+            # Add final period if missing and response doesn't end with other punctuation
+            if response and not response.endswith(('.', '!', '?')):
+                response += '.'
+        
         # If response is still too short or seems corrupted, provide a fallback
         if len(response) < 20 or not any(char.isalpha() for char in response):
             response = self._get_fallback_response(is_russian)
+
+        # VERY early and aggressive contamination stopping - cut response at first sign
+        early_contamination_stops = [
+            "-----", "---", "instruction", "constraint", "ограничения:", "limitations:",
+            "you are aletheia,", "ты алетейя,", "core principles:", "key traits:",
+            "пользователя зовут анна", "user name is anna", "вопрос:"
+        ]
+        
+        for stop in early_contamination_stops:
+            if stop in response.lower():
+                response = response.split(stop)[0].strip()
+                print(f"🛑 Early contamination stop at: '{stop}'")
+                break
 
         return response
 

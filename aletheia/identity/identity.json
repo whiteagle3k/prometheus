@@ -119,8 +119,14 @@
   },
   "module_paths": {
     "local_llm_binary": "models/llama.cpp/build/bin/llama",
-    "local_model_gguf": "models/phi-3-mini-3.8b-q8_0.gguf",
-    "memory_dir": "storage/chroma"
+    "local_model_gguf": "models/Phi-3-medium-4k-instruct-Q4_K_M.gguf",
+    "memory_dir": "storage/chroma",
+    "performance_config": {
+      "gpu_layers": 40,
+      "context_size": 8192,
+      "batch_size": 512,
+      "threads": 8
+    }
   },
   "constitution": [
     "Do not violate laws or generate harmful content",
