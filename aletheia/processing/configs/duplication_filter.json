@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "parameters": {
+    "similarity_threshold": 0.7,
+    "min_sentence_length": 10
+  }
+} 

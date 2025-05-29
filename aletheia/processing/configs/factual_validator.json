@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "parameters": {
+    "confusion_checks": {
+      "water_vapor_hydrogen": {
+        "question_terms": ["водяной пар", "water vapor"],
+        "error_terms": ["водород", "hydrogen", "h2", "водских"]
+      }
+    },
+    "contradiction_pairs": [
+      [["газ", "gas"], ["твердый", "solid"]],
+      [["жидкость", "liquid"], ["газообразный", "gaseous"]],
+      [["образуется", "formed"], ["не существует", "doesn't exist"]]
+    ],
+    "impossible_combinations": {
+      "chemistry": [
+        ["водород", "планета"]
+      ]
+    }
+  }
+} 

@@ -1,0 +1,64 @@
+{
+  "enabled": true,
+  "parameters": {
+    "regex_patterns": [
+      "Written by Assistant:.*",
+      "Written by Aletheia.*", 
+      "Follow-up Question \\d+:.*",
+      "\\*\\*How would.*",
+      "\\*\\*Solution:\\*\\*.*",
+      "What if the user.*",
+      "Пользователь:.*",
+      "User:.*",
+      "CV Template.*",
+      "Имя: Алетейя.*",
+      "Omnipotent AI:.*",
+      "Ответ: \\*\\*.*",
+      "Relevant context:.*",
+      "Task:.*Approach:.*Response:.*",
+      "theoretical.*",
+      "аминь.*",
+      "Follow up questions:.*",
+      "\\*\\*Follow up questions:\\*\\*.*",
+      "Solutions for follow up questions:.*",
+      "\\*\\*Solutions.*",
+      "Now, here are three more.*",
+      "How can you ensure.*",
+      "How can you handle.*",
+      "How can AI ensure.*",
+      "--- \\*\\*Instruction.*",
+      "AVOID:.*",
+      "Additional Constraint:.*",
+      "You are Aletheia,.*advanced analytical.*",
+      "Вопрос:.*Римской империи.*",
+      "падения Римской империи.*",
+      "Эдуард Гиббон.*",
+      "работе \"История упадка.*"
+    ],
+    "keyword_markers": [
+      "cv template", "имя:", "опыт работы:", "контакты:", "специальности:",
+      "task:", "approach:", "response:", "relevant context:",
+      "omnipotent ai", "аминь", "theoretical", "follow up questions:",
+      "solutions for follow up", "how can you", "how can ai", 
+      "now, here are", "gender role representation", "programmed rules",
+      "--- **", "**more complex", "avoid:", "additional constraint:",
+      "падения римской", "эдуард гиббон", "> # this is", "code|", "|>",
+      "ai-помощник", "ai-ассистент", "я ai", "как ваш ai", "как ai",
+      "ai assistant", "i am ai", "as your ai", "as an ai"
+    ],
+    "stop_phrases": [
+      "CV Template", "Имя:", "Task:", "Relevant context:", "theoretical",
+      "###", "Follow up questions", "Solutions for follow up", 
+      "Now, here are", "How can you", "How can AI", "--- **Instruction",
+      "AVOID:", "Additional Constraint:", "падения Римской империи", 
+      "Эдуард Гиббон", "История упадка", "работе \"История",
+      "AI-помощник", "AI-ассистент", "Я AI", "Как ваш AI", "Как AI",
+      "AI assistant", "I am AI", "As your AI", "As an AI"
+    ],
+    "early_stops": [
+      "-----", "---", "instruction", "constraint", "ограничения:", "limitations:",
+      "you are aletheia,", "ты алетейя,", "core principles:", "key traits:",
+      "пользователя зовут анна", "user name is anna", "вопрос:"
+    ]
+  }
+} 

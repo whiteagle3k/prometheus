@@ -1,0 +1,35 @@
+{
+  "enabled": true,
+  "parameters": {
+    "pronouns": [
+      "it", "that", "this", "them", "those", "он", "она", "оно", "они", 
+      "его", "её", "их", "им", "ей", "ему", "ими", "ним", "ней", "нём", 
+      "это", "то", "этого", "того", "этому", "тому", "этой", "той"
+    ],
+    "continuation_phrases": [
+      "tell me more", "detail", "explain further", "расскажи подробнее", 
+      "детально", "больше", "да, интересно", "yes, interesting", "интересно", 
+      "interesting", "продолжай", "continue", "да, продолжай", "yes, continue", 
+      "да, расскажи", "yes, tell me", "хочу больше", "want more",
+      "можно подробнее", "can you elaborate", "поподробнее", "more details",
+      "что дальше", "what's next", "а дальше", "and then", "что происходит", 
+      "what happens", "как это", "how does this", "почему это", "why does this", 
+      "куда", "where does", "что с", "what about", "а что", "and what", 
+      "что потом", "what then"
+    ],
+    "implicit_patterns": [
+      "\\bа\\s+если\\b",
+      "\\bно\\s+если\\b", 
+      "\\bа\\s+что\\b",
+      "\\bа\\s+как\\b",
+      "\\bа\\s+где\\b",
+      "\\bа\\s+когда\\b",
+      "^\\s*(а|но|и)\\s+",
+      "\\bif\\s+not\\b",
+      "\\bbut\\s+if\\b",
+      "\\band\\s+if\\b",
+      "\\band\\s+what\\b",
+      "\\band\\s+how\\b"
+    ]
+  }
+} 

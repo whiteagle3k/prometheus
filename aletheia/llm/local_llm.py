@@ -12,6 +12,7 @@ except ImportError:
 
 from ..config import config
 from ..identity import identity
+from ..processing.pipeline import create_simple_response_pipeline
 
 
 class LocalLLM:
@@ -22,6 +23,9 @@ class LocalLLM:
         self.model: Optional[Llama] = None
         self.model_loaded = False
         self._init_lock = asyncio.Lock()
+        
+        # Initialize processing pipeline for response cleanup
+        self.response_pipeline = create_simple_response_pipeline()
 
     async def _load_model(self) -> None:
         """Load the local model with proper hardware acceleration."""
@@ -117,155 +121,21 @@ class LocalLLM:
             None, lambda: self.model(formatted_prompt, **generate_kwargs)
         )
 
-        response = result["choices"][0]["text"].strip()
+        raw_response = result["choices"][0]["text"].strip()
 
-        # Clean up any remaining chat tokens and formatting issues
+        # Use new processing pipeline instead of hardcoded cleanup
+        pipeline_result = self.response_pipeline.process(raw_response)
+        response = pipeline_result["processed_text"]
+
+        # Basic cleanup that's still needed
         response = response.replace("<|end|>", "").replace("<|assistant|>", "").strip()
         
-        # Detect language for cleanup
+        # Detect language for fallback
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in prompt.lower())
         
-        # More aggressive cleanup for contamination patterns
-        contamination_patterns = [
-            r"Written by Assistant:.*",
-            r"Written by Aletheia.*", 
-            r"Follow-up Question \d+:.*",
-            r"\*\*How would.*",
-            r"\*\*Solution:\*\*.*",
-            r"What if the user.*",
-            r"Пользователь:.*",
-            r"User:.*",
-            r"CV Template.*",
-            r"Имя: Алетейя.*",
-            r"Omnipotent AI:.*",
-            r"Ответ:.*",
-            r"Relevant context:.*",
-            r"Task:.*Approach:.*Response:.*",
-            r"theoretical.*",
-            r"аминь.*",
-            r"Follow up questions:.*",
-            r"\*\*Follow up questions:\*\*.*",
-            r"Solutions for follow up questions:.*",
-            r"\*\*Solutions.*",
-            r"Now, here are three more.*",
-            r"How can you ensure.*",
-            r"How can you handle.*",
-            r"How can AI ensure.*",
-            r"--- \*\*Instruction.*",  # New: Training instruction artifacts
-            r"AVOID:.*",               # New: Training constraints
-            r"Additional Constraint:.*", # New: Training constraints
-            r"You are Aletheia,.*advanced analytical.*", # New: Spurious identity descriptions
-            r"Вопрос:.*Римской империи.*", # New: Roman Empire training leakage
-            r"падения Римской империи.*", # New: Roman Empire training leakage
-            r"Эдуард Гиббон.*",        # New: Historical training leakage
-            r"работе \"История упадка.*", # New: Historical training leakage
-        ]
-        
-        import re
-        for pattern in contamination_patterns:
-            response = re.sub(pattern, "", response, flags=re.IGNORECASE | re.DOTALL)
-        
-        # Remove obvious training artifacts and mixed content
-        lines = response.split('\n')
-        clean_lines = []
-        
-        # Skip lines with obvious contamination
-        for line in lines:
-            line = line.strip()
-            # Skip lines with obvious contamination
-            if any(marker in line.lower() for marker in [
-                "cv template", "имя:", "опыт работы:", "контакты:", "специальности:",
-                "task:", "approach:", "response:", "relevant context:",
-                "omnipotent ai", "аминь", "theoretical", "follow up questions:",
-                "solutions for follow up", "how can you", "how can ai", 
-                "now, here are", "gender role representation", "programmed rules",
-                "--- **", "**more complex", "avoid:", "additional constraint:",
-                "падения римской", "эдуард гиббон", "> # this is", "code|", "|>"
-            ]):
-                continue
-            # Skip very short fragments
-            if len(line) < 3:
-                continue
-            # Skip lines that repeat the same pattern
-            if line.count('алетейя') > 2 or line.count('иван') > 1:
-                continue
-            clean_lines.append(line)
-        
-        # Rebuild response from clean lines
-        if clean_lines:
-            response = ' '.join(clean_lines)
-        else:
-            # If nothing is left, provide fallback based on identity
-            response = self._get_fallback_response(is_russian)
-        
-        # Final cleanup - stop at first major contamination marker
-        contamination_stops = [
-            "CV Template", "Имя:", "Task:", "Relevant context:", "theoretical",
-            "###", "Follow up questions", "Solutions for follow up", 
-            "Now, here are", "How can you", "How can AI", "--- **Instruction",
-            "AVOID:", "Additional Constraint:", "падения Римской империи", 
-            "Эдуард Гиббон", "История упадка", "работе \"История"
-        ]
-        for stop in contamination_stops:
-            if stop in response:
-                response = response.split(stop)[0].strip()
-                break  # Stop at first contamination found
-        
-        # Clean up multiple spaces and normalize
-        response = re.sub(r'\s+', ' ', response).strip()
-        
-        # Remove obvious duplications (sentences or phrases that repeat)
-        sentences = response.split('. ')
-        clean_sentences = []
-        seen_sentences = set()
-        
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-                
-            # Normalize sentence for comparison (remove punctuation, lowercase)
-            normalized = re.sub(r'[^\w\s]', '', sentence.lower()).strip()
-            
-            # Skip if we've seen a very similar sentence (70% similarity threshold)
-            is_duplicate = False
-            for seen in seen_sentences:
-                # Simple similarity check: if 70%+ of words are the same
-                seen_words = set(seen.split())
-                current_words = set(normalized.split())
-                if len(current_words) > 0:
-                    similarity = len(seen_words & current_words) / len(current_words | seen_words)
-                    if similarity > 0.7:
-                        is_duplicate = True
-                        break
-            
-            if not is_duplicate:
-                clean_sentences.append(sentence)
-                seen_sentences.add(normalized)
-        
-        # Rebuild response from clean sentences
-        if clean_sentences:
-            response = '. '.join(clean_sentences)
-            # Add final period if missing and response doesn't end with other punctuation
-            if response and not response.endswith(('.', '!', '?')):
-                response += '.'
-        
-        # If response is still too short or seems corrupted, provide a fallback
+        # If response is too short or corrupted after processing, provide fallback
         if len(response) < 20 or not any(char.isalpha() for char in response):
             response = self._get_fallback_response(is_russian)
-
-        # VERY early and aggressive contamination stopping - cut response at first sign
-        early_contamination_stops = [
-            "-----", "---", "instruction", "constraint", "ограничения:", "limitations:",
-            "you are aletheia,", "ты алетейя,", "core principles:", "key traits:",
-            "пользователя зовут анна", "user name is anna", "вопрос:"
-        ]
-        
-        for stop in early_contamination_stops:
-            if stop in response.lower():
-                response = response.split(stop)[0].strip()
-                print(f"🛑 Early contamination stop at: '{stop}'")
-                break
 
         return response
 
@@ -426,7 +296,7 @@ class LocalLLM:
         generate_kwargs = {
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "stop": ["<|end|>", "<|user|>", "---END---"],
+            "stop": ["<|end|>", "<|user|>", "---END---", "\n\nПРИМЕРЫ", "\n\nVAЖНЫЕ", "\n\nIMPORTANT", "\n\nОБЯЗАТЕЛЬНО", "\n\nМОЖНО"],
             "echo": False,
             **kwargs,
         }
@@ -462,78 +332,43 @@ class LocalLLM:
         if is_russian:
             instruction = f"""<|system|>{system_prompt}
 
-Ответь на пользовательский запрос в следующем структурированном формате:
+Ответь в следующем формате:
 
-ОТВЕТ: [твой основной ответ пользователю]
+ОТВЕТ: [прямой ответ пользователю]
 УВЕРЕННОСТЬ: [высокая/средняя/низкая]
-ОБОСНОВАНИЕ: [краткое объяснение твоего ответа]
-ВНЕШНИЙ_ЗАПРОС: [да/нет - нужна ли консультация с внешней моделью]
+ОБОСНОВАНИЕ: [краткое объяснение]
+ВНЕШНИЙ_ЗАПРОС: [да для технических/научных вопросов, нет для общения]
 
-ВАЖНЫЕ ПРАВИЛА для ВНЕШНИЙ_ЗАПРОС:
-
-ОБЯЗАТЕЛЬНО ДА если:
-- "из чего делают ракетное топливо" → да (точный состав)
-- "как работает двигатель" → да (технические принципы)
-- "что такое квантовая физика" → да (научные определения)
-- "состав материала X" → да (точная химия)
-- "принцип работы компьютера" → да (технические детали)
-
-МОЖНО НЕТ только если:
-- "привет, как дела" → нет (простое общение)
-- "как меня зовут" → нет (контекстный вопрос)
-- "что ты умеешь" → нет (о твоих возможностях)
-- "давай поболтаем" → нет (социальное взаимодействие)
-
-При сомнении между техническими фактами и общением - ВСЕГДА выбирай ДА для технических вопросов!<|end|>
+Используй ВНЕШНИЙ_ЗАПРОС=да для: состав материалов, работа техники, научные факты.
+Используй ВНЕШНИЙ_ЗАПРОС=нет для: приветствий, общения, вопросов обо мне.<|end|>
 <|user|>{prompt}{context_section}<|end|>
 <|assistant|>"""
         else:
             instruction = f"""<|system|>{system_prompt}
 
-Respond to the user query in the following structured format:
+Respond in this format:
 
-ANSWER: [your main response to the user]
+ANSWER: [direct response to user]
 CONFIDENCE: [high/medium/low]
-REASONING: [brief explanation of your answer]
-EXTERNAL_NEEDED: [yes/no - whether external model consultation is needed]
+REASONING: [brief explanation]
+EXTERNAL_NEEDED: [yes for technical/scientific, no for conversation]
 
-IMPORTANT RULES for EXTERNAL_NEEDED:
-
-MUST BE YES if:
-- "what is rocket fuel made of" → yes (precise composition)
-- "how does an engine work" → yes (technical principles)
-- "what is quantum physics" → yes (scientific definitions)
-- "composition of material X" → yes (precise chemistry)
-- "how does a computer work" → yes (technical details)
-
-CAN BE NO only if:
-- "hello, how are you" → no (simple conversation)
-- "what's my name" → no (contextual question)
-- "what can you do" → no (about your capabilities)
-- "let's chat" → no (social interaction)
-
-When in doubt between technical facts and conversation - ALWAYS choose YES for technical questions!<|end|>
+Use EXTERNAL_NEEDED=yes for: material composition, how things work, scientific facts.
+Use EXTERNAL_NEEDED=no for: greetings, chat, questions about me.<|end|>
 <|user|>{prompt}{context_section}<|end|>
 <|assistant|>"""
 
         return instruction
 
     def _parse_structured_response(self, raw_response: str, original_prompt: str) -> dict[str, Any]:
-        """Parse structured response from local LLM."""
+        """Parse structured response from local LLM using processing pipeline."""
         
-        # Clean the response first
-        response = raw_response.strip()
+        # Use contamination filter for basic cleanup first
+        from ..processing.filters import ContaminationFilter
+        filter_processor = ContaminationFilter()
+        filter_result = filter_processor.process(raw_response)
+        response = filter_result.data if filter_result.success else raw_response.strip()
         
-        # Early contamination stop
-        contamination_stops = [
-            "---END---", "<|end|>", "<|user|>", "---", "instruction:", 
-            "constraint:", "you are aletheia", "core principles:"
-        ]
-        for stop in contamination_stops:
-            if stop.lower() in response.lower():
-                response = response.split(stop)[0].strip()
-                break
-
         # Default structure
         parsed = {
             "answer": "",
@@ -543,34 +378,114 @@ When in doubt between technical facts and conversation - ALWAYS choose YES for t
             "raw_response": raw_response
         }
 
-        # Try to parse structured format
-        lines = response.split('\n')
+        # Try to parse structured format - handle both original and filtered versions
+        lines = response.replace('\n', ' ').split()  # Split by any whitespace
+        text_parts = []
         
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-                
-            # Parse different fields
-            if line.startswith(('ОТВЕТ:', 'ANSWER:')):
-                parsed["answer"] = line.split(':', 1)[1].strip()
-            elif line.startswith(('УВЕРЕННОСТЬ:', 'CONFIDENCE:')):
-                conf_text = line.split(':', 1)[1].strip().lower()
+        current_field = None
+        current_content = []
+        
+        for part in lines:
+            # Check if this is a field marker
+            if part.upper() in ('ОТВЕТ:', 'ANSWER:'):
+                if current_field and current_content:
+                    # Store previous field
+                    if current_field == 'answer':
+                        parsed["answer"] = ' '.join(current_content)
+                current_field = 'answer'
+                current_content = []
+            elif part.upper() in ('УВЕРЕННОСТЬ:', 'CONFIDENCE:'):
+                if current_field and current_content:
+                    # Store previous field
+                    if current_field == 'answer':
+                        parsed["answer"] = ' '.join(current_content)
+                current_field = 'confidence'
+                current_content = []
+            elif part.upper() in ('ОБОСНОВАНИЕ:', 'REASONING:'):
+                if current_field and current_content:
+                    # Store previous field
+                    if current_field == 'answer':
+                        parsed["answer"] = ' '.join(current_content)
+                    elif current_field == 'confidence':
+                        conf_text = ' '.join(current_content).lower()
+                        if 'высокая' in conf_text or 'high' in conf_text:
+                            parsed["confidence"] = "high"
+                        elif 'низкая' in conf_text or 'low' in conf_text:
+                            parsed["confidence"] = "low"
+                        else:
+                            parsed["confidence"] = "medium"
+                current_field = 'reasoning'
+                current_content = []
+            elif part.upper() in ('ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:'):
+                if current_field and current_content:
+                    # Store previous field
+                    if current_field == 'answer':
+                        parsed["answer"] = ' '.join(current_content)
+                    elif current_field == 'confidence':
+                        conf_text = ' '.join(current_content).lower()
+                        if 'высокая' in conf_text or 'high' in conf_text:
+                            parsed["confidence"] = "high"
+                        elif 'низкая' in conf_text or 'low' in conf_text:
+                            parsed["confidence"] = "low"
+                        else:
+                            parsed["confidence"] = "medium"
+                    elif current_field == 'reasoning':
+                        parsed["reasoning"] = ' '.join(current_content)
+                current_field = 'external_needed'
+                current_content = []
+            else:
+                # Add to current field content
+                if current_field:
+                    current_content.append(part)
+        
+        # Store final field
+        if current_field and current_content:
+            if current_field == 'answer':
+                parsed["answer"] = ' '.join(current_content)
+            elif current_field == 'confidence':
+                conf_text = ' '.join(current_content).lower()
                 if 'высокая' in conf_text or 'high' in conf_text:
                     parsed["confidence"] = "high"
                 elif 'низкая' in conf_text or 'low' in conf_text:
                     parsed["confidence"] = "low"
                 else:
                     parsed["confidence"] = "medium"
-            elif line.startswith(('ОБОСНОВАНИЕ:', 'REASONING:')):
-                parsed["reasoning"] = line.split(':', 1)[1].strip()
-            elif line.startswith(('ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:')):
-                ext_text = line.split(':', 1)[1].strip().lower()
+            elif current_field == 'reasoning':
+                parsed["reasoning"] = ' '.join(current_content)
+            elif current_field == 'external_needed':
+                ext_text = ' '.join(current_content).lower()
                 parsed["external_needed"] = 'да' in ext_text or 'yes' in ext_text
 
-        # If no structured answer found, use the whole response as answer
+        # Fallback parsing if structured parsing didn't work
+        if not parsed["answer"]:
+            # Try old line-based approach
+            lines = response.split('\n')
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                # Parse different fields
+                if line.startswith(('ОТВЕТ:', 'ANSWER:')):
+                    parsed["answer"] = line.split(':', 1)[1].strip()
+                elif line.startswith(('УВЕРЕННОСТЬ:', 'CONFIDENCE:')):
+                    conf_text = line.split(':', 1)[1].strip().lower()
+                    if 'высокая' in conf_text or 'high' in conf_text:
+                        parsed["confidence"] = "high"
+                    elif 'низкая' in conf_text or 'low' in conf_text:
+                        parsed["confidence"] = "low"
+                    else:
+                        parsed["confidence"] = "medium"
+                elif line.startswith(('ОБОСНОВАНИЕ:', 'REASONING:')):
+                    parsed["reasoning"] = line.split(':', 1)[1].strip()
+                elif line.startswith(('ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:')):
+                    ext_text = line.split(':', 1)[1].strip().lower()
+                    parsed["external_needed"] = 'да' in ext_text or 'yes' in ext_text
+
+        # If still no structured answer found, use the whole response as answer
         if not parsed["answer"]:
             # Try to find a reasonable answer in the text
+            lines = response.split('\n')
             for line in lines:
                 line = line.strip()
                 if (line and 

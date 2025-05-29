@@ -305,12 +305,13 @@ class TestIntegration:
         """Test that errors are handled gracefully."""
         agent = AletheiaAgent()
         
-        # Mock a router that throws an exception
-        with patch.object(agent.router, 'execute_task', side_effect=Exception("Mock error")):
-            result = await agent.think("This should fail")
-            
-            assert "error" in result
-            assert "Mock error" in result["error"]
+        # Mock both router and local LLM to throw exceptions to force an error
+        with patch.object(agent.router, 'execute_task', side_effect=Exception("Mock router error")):
+            with patch.object(agent.router.local_llm, 'generate_structured', side_effect=Exception("Mock local LLM error")):
+                result = await agent.think("This should fail")
+                
+                assert "error" in result
+                assert "Mock router error" in result["error"]
 
 
 if __name__ == "__main__":

@@ -94,7 +94,7 @@ class AletheiaAgent:
             await self._store_experience(user_input, result)
 
             # Step 4: Optional reflection
-            if config.reflection_enabled:
+            if config.reflection_enabled and needs_planning:  # Only reflect on complex tasks
                 await self._maybe_reflect(user_input, result)
 
             # Step 5: Memory management
@@ -229,10 +229,31 @@ class AletheiaAgent:
         
         # Use structured generation instead of the old routing assessment
         try:
+            # Check if this is a reference question that needs context
+            context_info = None
+            current_input = user_input.lower()
+            
+            # Enhanced reference detection
+            has_references = any(pronoun in current_input for pronoun in 
+                               ["он", "она", "оно", "они", "его", "её", "их", "им", "ей", "ему", "ими", "ним", "ней", "нём", 
+                                "это", "то", "такое", "этого", "того", "it", "that", "this", "them", "those"])
+            
+            # Check for implicit continuation patterns
+            implicit_continuation_patterns = [
+                r'\bа\s+если\b',  # "а если" (but if)
+                r'\bа\s+что\b',   # "а что" (and what)
+                r'^\s*(а|но|и)\s+', # Starting with "а", "но", "и" (and, but)
+            ]
+            has_implicit_continuation = any(re.search(pattern, current_input) for pattern in implicit_continuation_patterns)
+            
+            # If this is a reference question, build context
+            if (has_references or has_implicit_continuation) and self.context.current_topic:
+                context_info = self._build_context_summary()
+            
             structured_result = await self.router.local_llm.generate_structured(
                 prompt=context_prompt,
-                context=None,  # Context is already built into the prompt
-                max_tokens=1024,
+                context=context_info,  # Pass context for reference questions
+                max_tokens=512,  # Reduced from 1024 for better performance
                 temperature=0.7
             )
             
@@ -344,40 +365,88 @@ class AletheiaAgent:
                     current_input = entry["content"]
                     break
         
-        # Simple reference detection for context building
+        # Enhanced reference detection including implicit continuation patterns
         has_references = any(pronoun in current_input.lower() for pronoun in 
                            ["он", "она", "оно", "они", "его", "её", "их", "им", "ей", "ему", "ими", "ним", "ней", "нём", 
                             "это", "то", "такое", "этого", "того", "it", "that", "this", "them", "those"])
         
-        if has_references and self.context.current_topic:
-            # This is a reference question - prioritize topic context
-            context_parts.append(f"Topic: {self.context.current_topic}")
+        # Also check for implicit continuation patterns (questions starting with "а", "но", "если")
+        implicit_continuation_patterns = [
+            r'\bа\s+если\b',  # "а если" (but if)
+            r'\bа\s+что\b',   # "а что" (and what)
+            r'^\s*(а|но|и)\s+', # Starting with "а", "но", "и" (and, but)
+            r'\bкогда\s+(это|то)\b',  # "когда это/то" (when this/that)
+            r'\bгде\s+(это|то)\b',   # "где это/то" (where this/that)
+            r'\bпочему\s+(это|то)\b', # "почему это/то" (why this/that)
+        ]
+        has_implicit_continuation = any(re.search(pattern, current_input.lower()) for pattern in implicit_continuation_patterns)
+        
+        if has_references or has_implicit_continuation:
+            # This is a reference question - search for relevant context more thoroughly
+            if self.context.current_topic:
+                context_parts.append(f"Topic: {self.context.current_topic}")
             
-            # Add only the most recent relevant exchange about this topic
+            # Search through task history for relevant exchanges
             if self.task_history:
-                for task_record in reversed(self.task_history[-3:]):  # Check last 3 exchanges
-                    user_input = task_record['user_input'].lower()
+                # Look for the most relevant previous exchange
+                best_match = None
+                best_score = 0
+                
+                for task_record in reversed(self.task_history[-5:]):  # Check last 5 exchanges
+                    user_input_prev = task_record['user_input'].lower()
                     response = task_record['result'].get('response', '').lower()
                     
-                    # Check if this exchange was about the current topic
-                    topic_lower = self.context.current_topic.lower()
-                    if (topic_lower in user_input or topic_lower in response or 
-                        any(keyword in user_input for keyword in ["водяной пар", "water vapor", "пар", "vapor"])):
-                        
-                        user_preview = task_record['user_input'][:100]
-                        response_preview = task_record['result'].get('response', '')[:120]
-                        
-                        context_parts.append(f"Previous exchange about {self.context.current_topic}:")
-                        context_parts.append(f"User: {user_preview}")
-                        context_parts.append(f"Assistant: {response_preview}")
-                        break  # Only include the most recent relevant exchange
+                    # Calculate relevance score based on multiple factors
+                    score = 0
+                    
+                    # 1. Topic word matching
+                    if self.context.current_topic:
+                        topic_words = self.context.current_topic.lower().split()
+                        topic_mentioned = any(word in user_input_prev or word in response for word in topic_words if len(word) > 2)
+                        if topic_mentioned:
+                            score += 3
+                    
+                    # 2. Word overlap between current input and previous exchanges
+                    current_words = set(word.lower().strip('.,!?;:') for word in current_input.split() if len(word) > 3)
+                    prev_words = set(word.lower().strip('.,!?;:') for word in task_record['user_input'].split() if len(word) > 3)
+                    response_words = set(word.lower().strip('.,!?;:') for word in task_record['result'].get('response', '').split() if len(word) > 3)
+                    
+                    word_overlap = len(current_words & (prev_words | response_words))
+                    score += word_overlap
+                    
+                    # 3. Check for common reference patterns
+                    reference_indicators = ["когда", "где", "почему", "как", "что", "кто", "when", "where", "why", "how", "what", "who"]
+                    has_reference_word = any(word in current_input.lower() for word in reference_indicators)
+                    if has_reference_word:
+                        score += 1
+                    
+                    # 4. Prefer more recent exchanges
+                    recency_bonus = len(self.task_history) - self.task_history.index(task_record)
+                    score += recency_bonus * 0.1
+                    
+                    # 5. Boost score if previous exchange contains substantial content
+                    if len(task_record['result'].get('response', '')) > 100:
+                        score += 1
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_match = task_record
+                
+                # Include the best match if it's relevant enough
+                if best_match and best_score > 1:
+                    user_preview = best_match['user_input'][:100]
+                    response_preview = best_match['result'].get('response', '')[:120]
+                    
+                    context_parts.append(f"Previous exchange:")
+                    context_parts.append(f"User: {user_preview}")
+                    context_parts.append(f"Assistant: {response_preview}")
         else:
             # Regular conversation - include minimal context
             if self.context.current_topic:
                 context_parts.append(f"Topic: {self.context.current_topic}")
             
             # Only add user name if it's specifically relevant and not a reference question
-            if self.context.user_name and not has_references:
+            if self.context.user_name and not has_references and not has_implicit_continuation:
                 context_parts.append(f"User name: {self.context.user_name}")
         
         return "\n".join(context_parts) if context_parts else ""

@@ -1,0 +1,18 @@
+{
+  "enabled": true,
+  "parameters": {
+    "planning_indicators": [
+      "пошагово", "step by step", "детально", "подробно", "в деталях", "in detail",
+      "объясни как", "explain how", "расскажи как", "tell me how", "покажи как", "show me how",
+      "процесс", "process", "алгоритм", "algorithm", "метод", "method", "способ", "way",
+      "последовательность", "sequence", "этапы", "stages", "фазы", "phases"
+    ],
+    "sequential_markers": [
+      "сначала", "first", "затем", "then", "потом", "after", "далее", "next",
+      "во-первых", "firstly", "во-вторых", "secondly", "в-третьих", "thirdly",
+      "1.", "2.", "3.", "шаг", "step", "этап", "stage"
+    ],
+    "length_threshold": 15,
+    "question_threshold": 2
+  }
+} 
