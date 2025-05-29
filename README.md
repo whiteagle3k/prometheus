@@ -496,7 +496,7 @@ The Prometheus framework is designed for easy agent extension. Future documentat
 
 ## License
 
-[License information to be added]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
