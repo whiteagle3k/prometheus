@@ -20,7 +20,7 @@ jobs:
         run: pip install poetry
 
       - name: Install dependencies (Metal)
-        run: poetry install --no-interaction --extras metal
+        run: poetry install --no-interaction
 
       - name: Run fast test-suite
         run: poetry run pytest -m "not slow" -q

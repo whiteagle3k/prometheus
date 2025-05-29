@@ -1,4 +1,5 @@
 # Prometheus
+![CI](https://github.com/whiteagle3k/prometheus/actions/workflows/ci.yml/badge.svg)
 
 An AI agent framework for creating diverse personalities with hybrid LLM routing and advanced memory systems.
 
