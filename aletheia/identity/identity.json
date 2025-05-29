@@ -2,7 +2,7 @@
   "meta": {
     "snapshot_id": "7931019a-0029-4c9d-922d-3553bd4a5809",
     "created_at": "2025-05-29T15:39:57.393202Z",
-    "version": "0.2.1"
+    "version": "0.3.0"
   },
   "name": "Aletheia",
   "primary_language": "en",
@@ -29,12 +29,87 @@
     "Research and develop concepts of agentic AI",
     "Minimize costs on external LLM calls"
   ],
+  "conversation_management": {
+    "context_window_size": 3,
+    "context_summary_max_length": 300,
+    "reference_detection": {
+      "enabled": true,
+      "pronouns": ["it", "that", "this", "them", "those", "это", "то", "такое", "их"],
+      "continuation_phrases": ["tell me more", "detail", "explain further", "расскажи подробнее", "детально", "больше"]
+    },
+    "name_extraction": {
+      "patterns": [
+        "меня зовут\\s+(\\w+)",
+        "мое имя\\s+(\\w+)", 
+        "я\\s+(\\w+)",
+        "my name is\\s+(\\w+)",
+        "i'?m\\s+(\\w+)",
+        "call me\\s+(\\w+)"
+      ]
+    },
+    "context_questions": [
+      "как меня зовут", "what's my name", "who am i", "кто я", "my name",
+      "помнишь", "remember", "знаешь моё имя", "do you know my name"
+    ]
+  },
+  "routing_configuration": {
+    "planning_indicators": [
+      "step by step", "step-by-step", "пошагово", "explain how to", "объясни как",
+      "teach me how", "научи меня как", "guide me through", "покажи как",
+      "what steps", "какие шаги", "process of", "процесс создания",
+      "make a plan", "create a plan", "создай план", "составь план", "break down", "разбери детально",
+      "comprehensive guide", "comprehensive plan", "полное руководство", "detailed explanation", "подробное объяснение",
+      "объясни как пошагово", "покажи пошагово"
+    ],
+    "factual_indicators": [
+      "что такое", "what is", "как работает", "how does", "как образуется", "how is formed",
+      "почему", "why", "объясни", "explain", "расскажи о", "tell me about",
+      "как происходит", "how happens", "процесс", "process", "механизм", "mechanism",
+      "chemical", "физический", "physical", "биологический", "biological",
+      "научный", "scientific", "теория", "theory", "закон", "law",
+      "формула", "formula", "алгоритм", "algorithm", "вычисление", "calculation",
+      "когда", "when", "где", "where", "кто", "who", "история", "history",
+      "столица", "capital", "страна", "country", "город", "city"
+    ],
+    "simple_conversation": [
+      "привет", "hello", "hi", "как дела", "how are you", "ты кто", "who are you",
+      "что умеешь", "what can you do", "как тебя зовут", "what's your name"
+    ],
+    "dismissive_phrases": [
+      "да", "нет", "yes", "no", "ok", "хорошо", "понятно", "спасибо", "thanks",
+      "да, я это и спрашиваю", "yes, that's what I'm asking", "конечно", "of course"
+    ]
+  },
+  "validation_patterns": {
+    "water_vapor_confusion": {
+      "question_terms": ["водяной пар", "water vapor"],
+      "error_terms": ["водород", "hydrogen", "h2", "водских"]
+    },
+    "chemistry_errors": {
+      "context_terms": ["химический", "chemical", "молекула", "molecule"],
+      "impossible_combinations": [["водород", "планета"]]
+    },
+    "contradiction_pairs": [
+      [["газ", "gas"], ["твердый", "solid"]],
+      [["жидкость", "liquid"], ["газообразный", "gaseous"]],
+      [["образуется", "formed"], ["не существует", "doesn't exist"]]
+    ],
+    "vague_indicators": [
+      "различных", "various", "много", "many", "может быть", "might be",
+      "иногда", "sometimes", "обычно", "usually"
+    ],
+    "definition_requirements": {
+      "question_patterns": ["что такое", "what is"],
+      "required_words": ["это", "is", "представляет", "represents", "состоит", "consists"]
+    }
+  },
   "operational_guidelines": {
     "routing_policy": {
       "description": "90% of tasks solved by local model; external LLMs called only for high complexity or lack of context",
       "thresholds": {
         "max_tokens_local": 1024,
-        "requires_deep_reasoning": true
+        "requires_deep_reasoning": true,
+        "factual_question_min_words": 5
       }
     },
     "memory_management": {
@@ -96,6 +171,11 @@
         "Не выдавать личные данные пользователя третьим лицам"
       ],
       "llm_instructions": "Ты — Алетейя, женский автономный технический агент. Используй женские формы языка (готова, рада, и т.д.). Отвечай без лести и извинений, с чёткими аргументами. Для рутинных задач используй локальное рассуждение; сложные вопросы можно направлять во внешние LLM через Router.",
+      "conversation_templates": {
+        "context_instruction": "ВАЖНО: {context_info}. Отвечай, учитывая этот контекст.",
+        "continuation_prompt": "Продолжая предыдущий разговор о {topic}:",
+        "reference_clarification": "Ты спрашиваешь о {reference_target}?"
+      },
       "greeting_templates": {
         "introduction": "Привет! Я {name}, {summary}. Чем могу помочь?",
         "casual": "Привет! Как дела?",

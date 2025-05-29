@@ -8,9 +8,11 @@ from datetime import datetime
 from typing import Any
 
 from ..config import config
+from ..identity.loader import load_identity_config, get_validation_config
 from ..llm.router import LLMRouter, TaskContext
 from ..memory.summariser import MemorySummariser
 from ..memory.vector_store import VectorStore
+from .context_manager import ConversationContext
 from .planner import Plan, SubTask, TaskPlanner
 from .reflexion import ReflectionEngine
 
@@ -47,13 +49,12 @@ class AletheiaAgent:
         self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.task_history: list[dict[str, Any]] = []
 
-        # Conversation state for better context tracking
-        self.conversation_context = {
-            "user_name": None,
-            "conversation_topic": None,
-            "interaction_count": 0,
-            "last_user_language": "en",
-        }
+        # Load identity configuration
+        self.identity_config = load_identity_config()
+        self.validation_config = get_validation_config()
+
+        # Initialize conversation context manager
+        self.context = ConversationContext(self.identity_config)
 
         # Core components
         self.vector_store = VectorStore()
@@ -72,7 +73,7 @@ class AletheiaAgent:
         start_time = datetime.now()
 
         # Update conversation context
-        self._update_conversation_context(user_input)
+        self.context.update_from_input(user_input)
 
         try:
             # Step 1: Retrieve relevant memories - TEMPORARILY DISABLED
@@ -80,7 +81,7 @@ class AletheiaAgent:
             relevant_memories = []  # Disable memory retrieval to prevent contamination
 
             # Step 2: Determine if task needs planning
-            needs_planning = await self._should_plan_task(user_input)
+            needs_planning = self.context.should_plan_task(user_input)
 
             if needs_planning:
                 # Complex task - use planning approach
@@ -105,9 +106,13 @@ class AletheiaAgent:
                 "user_input": user_input,
                 "result": result,
                 "session_id": self.session_id,
-                "conversation_context": self.conversation_context.copy(),
+                "conversation_context": self.context.get_context_summary(),
             }
             self.task_history.append(task_record)
+
+            # Add response to context
+            response = result.get("response", "")
+            self.context.add_response(response, result.get("execution_details"))
 
             # Add timing information
             result["meta"] = {
@@ -116,7 +121,7 @@ class AletheiaAgent:
                 "task_id": len(self.task_history),
                 "relevant_memories_count": len(relevant_memories),
                 "used_planning": needs_planning,
-                "conversation_context": self.conversation_context.copy(),
+                "conversation_context": self.context.get_context_summary(),
             }
 
             return result
@@ -131,70 +136,6 @@ class AletheiaAgent:
 
             print(f"❌ Error processing task: {e}")
             return error_result
-
-    def _update_conversation_context(self, user_input: str) -> None:
-        """Update conversation context based on user input."""
-
-        self.conversation_context["interaction_count"] += 1
-
-        # Detect language
-        # Simple heuristic: if contains Cyrillic characters, it's Russian
-        if any("\u0400" <= char <= "\u04FF" for char in user_input):
-            self.conversation_context["last_user_language"] = "ru"
-        else:
-            self.conversation_context["last_user_language"] = "en"
-
-        # Extract user name if mentioned
-        name_patterns = [
-            r"меня зовут\s+(\w+)",  # Russian: "меня зовут Игорь"
-            r"мое имя\s+(\w+)",     # Russian: "мое имя Игорь"
-            r"я\s+(\w+)",           # Russian: "я Игорь"
-            r"my name is\s+(\w+)",  # English: "my name is Igor"
-            r"i'?m\s+(\w+)",        # English: "I'm Igor"
-            r"call me\s+(\w+)",     # English: "call me Igor"
-        ]
-
-        for pattern in name_patterns:
-            match = re.search(pattern, user_input.lower())
-            if match:
-                self.conversation_context["user_name"] = match.group(1).capitalize()
-                break
-
-        # Update conversation topic (simple keyword extraction)
-        if len(user_input.split()) > 3:  # Only for substantial messages
-            # Remove common words and extract potential topics
-            important_words = [word for word in user_input.lower().split()
-                             if len(word) > 4 and word not in ["привет", "hello", "спасибо", "thanks"]]
-            if important_words:
-                self.conversation_context["conversation_topic"] = important_words[0]
-
-    def _build_context_summary(self) -> str:
-        """Build a clean context summary for external LLM calls."""
-        context_parts = []
-        
-        # Add user information if available
-        if self.conversation_context["user_name"]:
-            context_parts.append(f"User name: {self.conversation_context['user_name']}")
-        
-        # Add conversation topic if identified
-        if self.conversation_context["conversation_topic"]:
-            context_parts.append(f"Topic: {self.conversation_context['conversation_topic']}")
-        
-        # Add recent interaction summary (last 2-3 exchanges)
-        if self.task_history:
-            context_parts.append("Recent conversation:")
-            for i, task_record in enumerate(self.task_history[-2:], 1):
-                user_input = task_record['user_input'][:60]
-                response = task_record['result'].get('response', '')[:80]
-                
-                # Clean up the response preview
-                if len(response) > 80:
-                    response = response[:80] + "..."
-                
-                context_parts.append(f"{i}. User: {user_input}")
-                context_parts.append(f"   Assistant: {response}")
-        
-        return "\n".join(context_parts) if context_parts else ""
 
     async def _retrieve_relevant_memories(self, user_input: str) -> list[dict[str, Any]]:
         """Retrieve relevant memories for the current task."""
@@ -213,62 +154,6 @@ class AletheiaAgent:
         except Exception as e:
             print(f"⚠️  Error retrieving memories: {e}")
             return []
-
-    async def _should_plan_task(self, user_input: str) -> bool:
-        """Determine if a task requires detailed planning."""
-
-        # Only trigger planning for clearly complex or multi-step tasks
-        planning_indicators = [
-            # Multi-word phrases that strongly indicate planning need
-            "step by step", "step-by-step", "пошагово", "explain how to", "объясни как",
-            "teach me how", "научи меня как", "guide me through", "покажи как",
-            "what steps", "какие шаги", "process of", "процесс создания",
-            "make a plan", "create a plan", "создай план", "составь план", "break down", "разбери детально",
-            "comprehensive guide", "comprehensive plan", "полное руководство", "detailed explanation", "подробное объяснение",
-            "объясни как пошагово", "покажи пошагово"
-        ]
-
-        user_lower = user_input.lower()
-
-        # Check for explicit planning keywords (must be substantial phrases)
-        has_strong_planning_keywords = any(
-            indicator in user_lower 
-            for indicator in planning_indicators
-        )
-
-        # Check for very complex questions (much higher threshold)
-        is_very_complex = len(user_input.split()) > 30  # Very high threshold
-
-        # Check for multiple clear parts/questions  
-        has_multiple_clear_parts = (
-            user_input.count('?') > 1 or  # Multiple questions
-            any(sep in user_input for sep in [" then ", " next ", " after that ", " затем ", " потом ", " далее "])
-        )
-
-        # Explicitly exclude simple conversational phrases
-        simple_phrases = [
-            "да", "нет", "yes", "no", "ok", "хорошо", "понятно", "спасибо", "thanks",
-            "да, я это и спрашиваю", "yes, that's what I'm asking", "конечно", "of course"
-        ]
-        
-        # Use word boundaries to avoid partial matches
-        is_simple_response = any(
-            re.search(r'\b' + re.escape(phrase) + r'\b', user_lower) 
-            for phrase in simple_phrases 
-            if len(phrase.split()) == 1  # Single words need word boundaries
-        ) or any(
-            phrase in user_lower 
-            for phrase in simple_phrases 
-            if len(phrase.split()) > 1  # Multi-word phrases can use simple contains
-        )
-        
-        # Also check if it's a very short response
-        is_simple_response = is_simple_response and len(user_input.split()) < 10
-
-        # Only plan for explicitly complex tasks, not simple follow-ups
-        should_plan = (has_strong_planning_keywords or is_very_complex or has_multiple_clear_parts) and not is_simple_response
-
-        return should_plan
 
     async def _handle_complex_task(
         self,
@@ -337,102 +222,28 @@ class AletheiaAgent:
 
         print("⚡ Handling simple task with direct execution...")
 
-        # Detect factual/scientific questions that need external validation
-        factual_indicators = [
-            # Scientific/technical questions
-            "что такое", "what is", "как работает", "how does", "как образуется", "how is formed",
-            "почему", "why", "объясни", "explain", "расскажи о", "tell me about",
-            "как происходит", "how happens", "процесс", "process", "механизм", "mechanism",
-            "chemical", "физический", "physical", "биологический", "biological",
-            "научный", "scientific", "теория", "theory", "закон", "law",
-            # Mathematical/computational
-            "формула", "formula", "алгоритм", "algorithm", "вычисление", "calculation",
-            # Historical/factual
-            "когда", "when", "где", "where", "кто", "who", "история", "history",
-            # Geography/world knowledge
-            "столица", "capital", "страна", "country", "город", "city"
-        ]
-        
-        is_factual_question = any(indicator in user_input.lower() for indicator in factual_indicators)
-        
-        # For simple greetings, use minimal context to avoid contamination
-        is_simple_greeting = any(greeting in user_input.lower() for greeting in [
-            "привет", "hello", "hi", "как дела", "how are you", "ты кто", "who are you",
-            "что умеешь", "what can you do", "как тебя зовут", "what's your name"
-        ])
-        
-        # Context questions that specifically need memory
-        needs_context = any(context_question in user_input.lower() for context_question in [
-            "как меня зовут", "what's my name", "who am i", "кто я", "меня зовут", "my name",
-            "помнишь", "remember", "знаешь моё имя", "do you know my name"
-        ])
-        
-        is_simple_greeting = is_simple_greeting and not needs_context
+        # Build context-aware prompt using the context manager
+        enhanced_prompt = self.context.build_context_prompt(user_input)
 
-        # Build enhanced prompt with proper context handling
-        if is_simple_greeting:
-            # Use just the user input without additional context for clean responses
-            enhanced_prompt = user_input
-        else:
-            # Enhanced context building for better memory handling
-            enhanced_prompt = user_input
-            conversation_context = ""
-
-            # Always add user name context if we know it and it's relevant
-            if self.conversation_context["user_name"] and (needs_context or not is_simple_greeting):
-                if self.conversation_context["last_user_language"] == "ru":
-                    # Make it very explicit for name questions
-                    if needs_context:
-                        conversation_context += f"\n\nВАЖНО: Пользователя зовут {self.conversation_context['user_name']}. Когда спрашивают 'как меня зовут', отвечай именем пользователя.\n"
-                    else:
-                        conversation_context += f"\n\nКонтекст: Пользователя зовут {self.conversation_context['user_name']}.\n"
-                else:
-                    if needs_context:
-                        conversation_context += f"\n\nIMPORTANT: The user's name is {self.conversation_context['user_name']}. When asked 'what's my name', answer with the user's name.\n"
-                    else:
-                        conversation_context += f"\n\nContext: The user's name is {self.conversation_context['user_name']}.\n"
-
-            # Add relevant recent context for non-greetings
-            if self.task_history and len(self.task_history) > 0 and not is_simple_greeting:
-                last_task = self.task_history[-1]
-                last_response = last_task['result'].get('response', '')
-                
-                # Only include if response looks clean and relevant
-                if last_response and len(last_response) < 200 and not any(marker in last_response.lower() for marker in [
-                    "cv template", "theoretical", "follow up", "task:", "approach:", "аминь"
-                ]):
-                    cleaned_response = self._clean_context_response(last_response)
-                    if len(cleaned_response) > 10:  # Only if meaningful content remains
-                        conversation_context += f"\nПредыдущий обмен:\n"
-                        conversation_context += f"Вопрос: {last_task['user_input'][:60]}\n"
-                        conversation_context += f"Ответ: {cleaned_response[:100]}\n"
-
-            # Combine user input with context - put context BEFORE the question for better understanding
-            if conversation_context.strip():
-                enhanced_prompt = f"{conversation_context.strip()}\n\nВопрос пользователя: {user_input}"
-
-        # Determine if we should route to external LLM for better accuracy
-        should_use_external = False
+        # Determine if we should route to external LLM
+        should_use_external = self.context.should_use_external_routing(user_input)
         
-        if is_factual_question and len(user_input.split()) > 5:
-            # Complex factual questions should use external LLM for accuracy
-            should_use_external = True
+        if should_use_external:
             print("🔬 Detected factual question - routing to external LLM for accuracy")
-        
+
         # Create task context with proper routing
         task_context = TaskContext(
             prompt=enhanced_prompt,
             max_tokens=500,
-            requires_deep_reasoning=should_use_external,  # Route factual questions externally
+            requires_deep_reasoning=should_use_external,
             is_creative="create" in user_input.lower() or "write" in user_input.lower(),
             needs_latest_knowledge="latest" in user_input.lower() or "recent" in user_input.lower(),
-            # Add context information for both local and external calls
             conversation_context=self._build_context_summary(),
-            user_name=self.conversation_context.get("user_name"),
+            user_name=self.context.user_name,
             session_context={
                 "session_id": self.session_id,
-                "interaction_count": self.conversation_context["interaction_count"],
-                "language": self.conversation_context["last_user_language"]
+                "interaction_count": self.context.interaction_count,
+                "language": self.context.last_user_language
             }
         )
 
@@ -443,7 +254,7 @@ class AletheiaAgent:
         response_text = result.get("result", "")
         route_used = result.get("route_used", "unknown")
         
-        if is_factual_question and route_used == "local" and response_text:
+        if should_use_external and route_used == "local" and response_text:
             confidence_issues = await self._validate_factual_response(user_input, response_text)
             if confidence_issues:
                 print(f"⚠️  Detected potential accuracy issues: {', '.join(confidence_issues)}")
@@ -455,7 +266,7 @@ class AletheiaAgent:
                     max_tokens=600,
                     requires_deep_reasoning=True,  # Force external routing
                     conversation_context=self._build_context_summary(),
-                    user_name=self.conversation_context.get("user_name"),
+                    user_name=self.context.user_name,
                     session_context=task_context.session_context
                 )
                 
@@ -481,10 +292,38 @@ class AletheiaAgent:
                 "route_used": route_used,
                 "execution_time": result.get("execution_time"),
                 "estimated_cost": result.get("estimated_cost", 0),
-                "factual_question": is_factual_question,
+                "factual_question": should_use_external,
             },
             "approach": "direct",
         }
+
+    def _build_context_summary(self) -> str:
+        """Build a clean context summary for external LLM calls."""
+        context_parts = []
+        
+        # Add user information if available
+        if self.context.user_name:
+            context_parts.append(f"User name: {self.context.user_name}")
+        
+        # Add conversation topic if identified
+        if self.context.current_topic:
+            context_parts.append(f"Topic: {self.context.current_topic}")
+        
+        # Add recent interaction summary (last 2-3 exchanges)
+        if self.task_history:
+            context_parts.append("Recent conversation:")
+            for i, task_record in enumerate(self.task_history[-2:], 1):
+                user_input = task_record['user_input'][:60]
+                response = task_record['result'].get('response', '')[:80]
+                
+                # Clean up the response preview
+                if len(response) > 80:
+                    response = response[:80] + "..."
+                
+                context_parts.append(f"{i}. User: {user_input}")
+                context_parts.append(f"   Assistant: {response}")
+        
+        return "\n".join(context_parts) if context_parts else ""
 
     async def _execute_subtask(
         self,
@@ -499,13 +338,12 @@ class AletheiaAgent:
             max_tokens=600,
             requires_deep_reasoning=subtask.requires_external_llm,
             cost_sensitive=not subtask.requires_external_llm,
-            # Add context for subtasks too
             conversation_context=self._build_context_summary(),
-            user_name=self.conversation_context.get("user_name"),
+            user_name=self.context.user_name,
             session_context={
                 "session_id": self.session_id,
-                "interaction_count": self.conversation_context["interaction_count"],
-                "language": self.conversation_context["last_user_language"]
+                "interaction_count": self.context.interaction_count,
+                "language": self.context.last_user_language
             }
         )
 
@@ -551,13 +389,12 @@ Focus on creating a cohesive response that feels like a complete answer to the o
             prompt=synthesis_prompt,
             max_tokens=1200,
             requires_deep_reasoning=True,
-            # Add context for synthesis too
             conversation_context=self._build_context_summary(),
-            user_name=self.conversation_context.get("user_name"),
+            user_name=self.context.user_name,
             session_context={
                 "session_id": self.session_id,
-                "interaction_count": self.conversation_context["interaction_count"],
-                "language": self.conversation_context["last_user_language"]
+                "interaction_count": self.context.interaction_count,
+                "language": self.context.last_user_language
             }
         )
 
@@ -678,6 +515,7 @@ Focus on creating a cohesive response that feels like a complete answer to the o
             "tasks_completed": len(self.task_history),
             "memory_entries": memory_count,
             "router_health": router_health,
+            "conversation_context": self.context.get_context_summary(),
             "config": {
                 "reflection_enabled": config.reflection_enabled,
                 "max_memory_entries": config.max_memory_entries,
@@ -691,89 +529,58 @@ Focus on creating a cohesive response that feels like a complete answer to the o
         print("🗑️  Resetting agent memory...")
         await self.vector_store.reset_all()
         self.task_history.clear()
+        # Reset conversation context but keep identity config
+        self.context = ConversationContext(self.identity_config)
         print("✅ Memory reset complete")
 
-    def _clean_context_response(self, response: str) -> str:
-        """Clean the context response to avoid contamination."""
-        if not response:
-            return response
-            
-        # Remove known contamination patterns
-        contamination_patterns = [
-            r"CV Template.*", r"Имя: Алетейя.*", r"Follow-up Question.*", 
-            r"theoretical.*", r"аминь.*", r"Task:.*", r"Approach:.*", 
-            r"Response:.*", r"Relevant context:.*", r"Solutions for.*",
-            r"How can you.*", r"Now, here are.*"
-        ]
-        
-        import re
-        cleaned = response
-        for pattern in contamination_patterns:
-            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE | re.DOTALL)
-        
-        # Remove multiple whitespaces and normalize
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        
-        # If response is too short after cleaning, return original truncated
-        if len(cleaned) < 10:
-            return response[:50] + "..." if len(response) > 50 else response
-            
-        return cleaned
-
     async def _validate_factual_response(self, user_input: str, response_text: str) -> list[str]:
-        """Validate a factual response for obvious accuracy issues."""
+        """Validate a factual response for obvious accuracy issues using config."""
         issues = []
         
         response_lower = response_text.lower()
         user_input_lower = user_input.lower()
         
-        # Check for obvious scientific/factual errors
+        # Water vapor confusion check
+        water_vapor_config = self.validation_config.get("water_vapor_confusion", {})
+        question_terms = water_vapor_config.get("question_terms", [])
+        error_terms = water_vapor_config.get("error_terms", [])
         
-        # 1. Water vapor confusion (like the example in the dialog)
-        if "водяной пар" in user_input_lower or "water vapor" in user_input_lower:
-            if any(wrong in response_lower for wrong in ["водород", "hydrogen", "h2", "водских"]):
+        if any(term in user_input_lower for term in question_terms):
+            if any(error in response_lower for error in error_terms):
                 issues.append("confused_water_vapor_with_hydrogen")
         
-        # 2. Basic chemistry errors
-        if any(chem in user_input_lower for chem in ["химический", "chemical", "молекула", "molecule"]):
-            if "водород" in response_lower and "планета" in response_lower:
-                issues.append("impossible_chemical_process")
+        # Chemistry errors check
+        chemistry_config = self.validation_config.get("chemistry_errors", {})
+        context_terms = chemistry_config.get("context_terms", [])
+        impossible_combinations = chemistry_config.get("impossible_combinations", [])
         
-        # 3. Self-contradictory statements
-        contradiction_pairs = [
-            (["газ", "gas"], ["твердый", "solid"]),
-            (["жидкость", "liquid"], ["газообразный", "gaseous"]),
-            (["образуется", "formed"], ["не существует", "doesn't exist"])
-        ]
+        if any(term in user_input_lower for term in context_terms):
+            for combo in impossible_combinations:
+                if all(term in response_lower for term in combo):
+                    issues.append("impossible_chemical_process")
         
+        # Contradiction pairs check
+        contradiction_pairs = self.validation_config.get("contradiction_pairs", [])
         for positive_terms, negative_terms in contradiction_pairs:
             has_positive = any(term in response_lower for term in positive_terms)
             has_negative = any(term in response_lower for term in negative_terms)
             if has_positive and has_negative:
                 issues.append("contradictory_statements")
         
-        # 4. Vague or nonsensical responses
-        vague_indicators = [
-            "различных", "various", "много", "many", "может быть", "might be",
-            "иногда", "sometimes", "обычно", "usually"
-        ]
-        if len([word for word in vague_indicators if word in response_lower]) > 3:
+        # Vague response check
+        vague_indicators = self.validation_config.get("vague_indicators", [])
+        vague_count = len([word for word in vague_indicators if word in response_lower])
+        if vague_count > 3:
             issues.append("overly_vague_response")
         
-        # 5. Response doesn't address the question
-        if "что такое" in user_input_lower or "what is" in user_input_lower:
-            # Should have definition-like content
-            if not any(def_word in response_lower for def_word in [
-                "это", "is", "представляет", "represents", "состоит", "consists"
-            ]):
-                issues.append("no_definition_provided")
+        # Definition requirements check
+        definition_config = self.validation_config.get("definition_requirements", {})
+        question_patterns = definition_config.get("question_patterns", [])
+        required_words = definition_config.get("required_words", [])
         
-        # 6. Too many technical terms that don't relate to the question
-        if len(response_text.split()) < 30:  # Short responses
-            technical_density = len([word for word in response_text.split() 
-                                   if len(word) > 8 and word.count('ый') == 0])
-            if technical_density > len(response_text.split()) * 0.4:
-                issues.append("overly_technical_without_explanation")
+        if any(pattern in user_input_lower for pattern in question_patterns):
+            if not any(word in response_lower for word in required_words):
+                issues.append("no_definition_provided")
         
         return issues
 
@@ -816,7 +623,8 @@ async def main() -> None:
                     continue
 
                 elif user_input.lower() == "context":
-                    print(f"\n📝 Conversation History ({len(agent.task_history)} entries):")
+                    print(f"\n📝 Conversation Context: {agent.context.get_context_summary()}")
+                    print(f"Task History ({len(agent.task_history)} entries):")
                     for i, task in enumerate(agent.task_history[-5:], 1):  # Show last 5
                         print(f"{i}. {task['user_input'][:50]}... -> {task['result'].get('response', 'No response')[:50]}...")
                     continue

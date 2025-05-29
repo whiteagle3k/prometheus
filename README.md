@@ -15,6 +15,7 @@ Prometheus is a framework designed to bring different AI agent personalities to 
 - **Identity-Driven Configuration**: JSON-based identity system with English-primary design
 - **Female AI Personality**: Presents as a thoughtful female AI with proper linguistic gender handling
 - **Conversational Memory**: Maintains context across interactions with persistent conversation history
+- **Natural Conversation Flow**: Understands references and continuation requests naturally
 - **Multilingual Capabilities**: Fluent in Russian and English with appropriate grammatical forms
 - **Self-Learning**: Continuous improvement through self-reflection and experience storage
 - **Cost-Conscious**: Optimized hybrid routing to balance quality and efficiency
@@ -40,6 +41,13 @@ Each agent in the Prometheus ecosystem shares core capabilities while expressing
 - **Validation & Templates**: Built-in validation and agent templates for quick setup
 - **Modular Package Structure**: Organized identity management with `aletheia/identity/` package
 
+### 💬 **Conversation Continuity System**
+- **Context-Aware Conversations**: Natural handling of pronouns and references like "tell me more about that"
+- **Topic Tracking**: Automatic detection and maintenance of conversation topics and entities
+- **Reference Resolution**: Intelligent understanding of what "it", "that", "this" refer to in context
+- **Configuration-Driven**: All conversation patterns defined in `identity.json`, not hardcoded
+- **Language-Aware Patterns**: Supports both English and Russian conversation flows seamlessly
+
 ### 🤖 **Adaptive Personality System**
 - **Unique Identities**: Each agent has distinct personality traits and communication styles
 - **Context Awareness**: Maintains conversation history and user relationships
@@ -61,6 +69,7 @@ Each agent in the Prometheus ecosystem shares core capabilities while expressing
 ### 🔧 **Developer-Friendly Framework**
 - **Modular Architecture**: Easy to extend with new agent personalities
 - **Hardware Optimized**: Metal acceleration for Apple Silicon, future CUDA support
+- **Configuration-Based**: No hardcoded text patterns - everything in JSON configuration
 - **Comprehensive Testing**: Production-ready with full test coverage
 - **Clean APIs**: Well-structured codebase for agent development
 
@@ -71,8 +80,9 @@ The Prometheus framework uses a sophisticated identity management system:
 ```
 aletheia/identity/
 ├── __init__.py          # Main Identity class + package interface
-├── identity.json        # English-primary configuration (v0.2.1)
+├── identity.json        # English-primary configuration (v0.3.0)
 ├── validator.py         # Schema validation utilities
+├── loader.py            # Configuration loading utilities
 └── templates.py         # Agent templates (technical, creative, academic)
 ```
 
@@ -84,12 +94,47 @@ The identity system uses English as the primary language for optimal model perfo
 - **Linguistic Accuracy**: Proper feminine forms and cultural context in Russian
 - **Model Optimization**: English system prompts work better with Phi-3 Mini
 
+### Conversation Management Configuration
+
+The `identity.json` file now includes comprehensive conversation management settings:
+
+```json
+{
+  "conversation_management": {
+    "context_window_size": 3,
+    "reference_detection": {
+      "enabled": true,
+      "pronouns": ["it", "that", "this", "them", "those", "это", "то", "такое", "их"],
+      "continuation_phrases": ["tell me more", "detail", "explain further", "расскажи подробнее"]
+    },
+    "context_questions": ["как меня зовут", "what's my name", "помнишь", "remember"]
+  },
+  "routing_configuration": {
+    "planning_indicators": ["step by step", "пошагово", "explain how to", "объясни как"],
+    "factual_indicators": ["что такое", "what is", "как работает", "how does"],
+    "simple_conversation": ["привет", "hello", "как дела", "how are you"]
+  },
+  "validation_patterns": {
+    "water_vapor_confusion": {
+      "question_terms": ["водяной пар", "water vapor"],
+      "error_terms": ["водород", "hydrogen"]
+    }
+  }
+}
+```
+
+This configuration-driven approach means:
+- **No Hardcoded Patterns**: All text patterns are configurable
+- **Language Support**: Easy to add new languages
+- **Customizable Behavior**: Adjust conversation patterns per agent
+- **Maintainable Code**: Changes to conversation logic don't require code updates
+
 ### Identity Configuration Example
 
 ```json
 {
   "meta": {
-    "version": "0.2.1"
+    "version": "0.3.0"
   },
   "name": "Aletheia",
   "primary_language": "en",
