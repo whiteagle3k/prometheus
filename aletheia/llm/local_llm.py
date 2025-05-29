@@ -11,6 +11,7 @@ except ImportError:
     Llama = None
 
 from ..config import config
+from ..identity import identity
 
 
 class LocalLLM:
@@ -106,29 +107,115 @@ class LocalLLM:
 
         response = result["choices"][0]["text"].strip()
 
-        # Clean up any remaining chat tokens
+        # Clean up any remaining chat tokens and formatting issues
         response = response.replace("<|end|>", "").replace("<|assistant|>", "").strip()
+        
+        # Detect language for cleanup
+        is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in prompt.lower())
+        
+        # Very aggressive cleanup for contamination patterns
+        contamination_patterns = [
+            r"Written by Assistant:.*",
+            r"Written by Aletheia.*", 
+            r"Follow-up Question \d+:.*",
+            r"\*\*How would.*",
+            r"\*\*Solution:\*\*.*",
+            r"What if the user.*",
+            r"Пользователь:.*",
+            r"User:.*",
+            r"CV Template.*",
+            r"Имя: Алетейя.*",
+            r"Omnipotent AI:.*",
+            r"Ответ:.*",
+            r"Relevant context:.*",
+            r"Task:.*Approach:.*Response:.*",
+            r"theoretical.*",
+            r"аминь.*",
+            r"Follow up questions:.*",
+            r"\*\*Follow up questions:\*\*.*",
+            r"Solutions for follow up questions:.*",
+            r"\*\*Solutions.*",
+            r"Now, here are three more.*",
+            r"How can you ensure.*",
+            r"How can you handle.*",
+            r"How can AI ensure.*"
+        ]
+        
+        import re
+        for pattern in contamination_patterns:
+            response = re.sub(pattern, "", response, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Remove obvious training artifacts and mixed content
+        lines = response.split('\n')
+        clean_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            # Skip lines with obvious contamination
+            if any(marker in line.lower() for marker in [
+                "cv template", "имя:", "опыт работы:", "контакты:", "специальности:",
+                "task:", "approach:", "response:", "relevant context:",
+                "omnipotent ai", "аминь", "theoretical", "follow up questions:",
+                "solutions for follow up", "how can you", "how can ai", 
+                "now, here are", "gender role representation", "programmed rules"
+            ]):
+                continue
+            # Skip very short fragments
+            if len(line) < 3:
+                continue
+            # Skip lines that repeat the same pattern
+            if line.count('алетейя') > 2 or line.count('иван') > 1:
+                continue
+            clean_lines.append(line)
+        
+        # Rebuild response from clean lines
+        if clean_lines:
+            response = ' '.join(clean_lines)
+        else:
+            # If nothing is left, provide fallback based on identity
+            response = self._get_fallback_response(is_russian)
+        
+        # Final cleanup - stop at first major contamination marker
+        contamination_stops = [
+            "CV Template", "Имя:", "Task:", "Relevant context:", "theoretical",
+            "###", "Follow up questions", "Solutions for follow up", 
+            "Now, here are", "How can you", "How can AI"
+        ]
+        for stop in contamination_stops:
+            if stop in response:
+                response = response.split(stop)[0].strip()
+        
+        # Clean up multiple spaces and normalize
+        response = re.sub(r'\s+', ' ', response).strip()
+        
+        # If response is still too short or seems corrupted, provide a fallback
+        if len(response) < 20 or not any(char.isalpha() for char in response):
+            response = self._get_fallback_response(is_russian)
 
         return response
 
+    def _get_fallback_response(self, is_russian: bool) -> str:
+        """Get fallback response based on identity configuration."""
+        language = "ru" if is_russian else "en"
+        return identity.get_fallback_response(language)
+
     def _format_chat_prompt(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Format prompt for Phi-3 chat format."""
-        # Enhanced system prompt for better multilingual and conversational behavior with feminine identity
-        default_system = """Ты - Алетейя (Aletheia), помощница с искусственным интеллектом женского пола. Всегда отвечай на том же языке, на котором задан вопрос пользователя. Будь краткой, точной и дружелюбной.
-
-Важные правила для русского языка:
-- Используй женский род: "Я готова помочь", "Я рада", "Я уверена"
-- НЕ используй мужской род: "готов", "рад", "уверен"
-- Всегда говори о себе в женском роде
-
-If asked in English about your name or identity, say you are Aletheia, a female AI assistant. Be concise, accurate, and friendly. Focus on the current question and respond appropriately."""
-
+        """Format prompt for Phi-3 chat format using identity configuration."""
+        
+        # Detect language of the prompt
+        is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in prompt.lower())
+        
         formatted = ""
 
-        # Use provided system prompt or default
-        final_system_prompt = system_prompt or default_system
-        formatted += f"<|system|>{final_system_prompt}<|end|>\n"
+        # Use provided system prompt or get from identity
+        if system_prompt:
+            final_system_prompt = system_prompt
+        else:
+            # Get system prompt from identity configuration
+            language = "ru" if is_russian else "en"
+            final_system_prompt = identity.get_system_prompt(language)
 
+        formatted += f"<|system|>{final_system_prompt}<|end|>\n"
         formatted += f"<|user|>{prompt}<|end|>\n<|assistant|>"
 
         return formatted
@@ -232,6 +319,7 @@ If asked in English about your name or identity, say you are Aletheia, a female 
             "gpu_layers": config.local_model_gpu_layers,
             "hardware_acceleration": "Metal" if config.use_metal else "CUDA" if config.use_cuda else "CPU",
             "loaded": self.model_loaded,
+            "identity": identity.to_dict(),
         }
 
     async def unload(self) -> None:

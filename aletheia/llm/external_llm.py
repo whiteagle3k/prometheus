@@ -132,7 +132,7 @@ class ExternalLLM:
         messages.append({"role": "user", "content": prompt})
 
         request_kwargs = {
-            "model": kwargs.get("model", "gpt-4_1-mini"),
+            "model": kwargs.get("model", "gpt-4.1-mini"),
             "max_tokens": max_tokens,
             "temperature": temperature,
             "messages": messages,

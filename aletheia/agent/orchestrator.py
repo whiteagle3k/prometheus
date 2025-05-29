@@ -75,8 +75,9 @@ class AletheiaAgent:
         self._update_conversation_context(user_input)
 
         try:
-            # Step 1: Retrieve relevant memories
-            relevant_memories = await self._retrieve_relevant_memories(user_input)
+            # Step 1: Retrieve relevant memories - TEMPORARILY DISABLED
+            # relevant_memories = await self._retrieve_relevant_memories(user_input)
+            relevant_memories = []  # Disable memory retrieval to prevent contamination
 
             # Step 2: Determine if task needs planning
             needs_planning = await self._should_plan_task(user_input)
@@ -167,6 +168,34 @@ class AletheiaAgent:
             if important_words:
                 self.conversation_context["conversation_topic"] = important_words[0]
 
+    def _build_context_summary(self) -> str:
+        """Build a clean context summary for external LLM calls."""
+        context_parts = []
+        
+        # Add user information if available
+        if self.conversation_context["user_name"]:
+            context_parts.append(f"User name: {self.conversation_context['user_name']}")
+        
+        # Add conversation topic if identified
+        if self.conversation_context["conversation_topic"]:
+            context_parts.append(f"Topic: {self.conversation_context['conversation_topic']}")
+        
+        # Add recent interaction summary (last 2-3 exchanges)
+        if self.task_history:
+            context_parts.append("Recent conversation:")
+            for i, task_record in enumerate(self.task_history[-2:], 1):
+                user_input = task_record['user_input'][:60]
+                response = task_record['result'].get('response', '')[:80]
+                
+                # Clean up the response preview
+                if len(response) > 80:
+                    response = response[:80] + "..."
+                
+                context_parts.append(f"{i}. User: {user_input}")
+                context_parts.append(f"   Assistant: {response}")
+        
+        return "\n".join(context_parts) if context_parts else ""
+
     async def _retrieve_relevant_memories(self, user_input: str) -> list[dict[str, Any]]:
         """Retrieve relevant memories for the current task."""
 
@@ -188,35 +217,58 @@ class AletheiaAgent:
     async def _should_plan_task(self, user_input: str) -> bool:
         """Determine if a task requires detailed planning."""
 
-        # More accessible planning triggers
+        # Only trigger planning for clearly complex or multi-step tasks
         planning_indicators = [
-            "step by step", "plan", "strategy", "approach", "how to", "break down",
-            "organize", "structure", "complex", "detailed", "comprehensive", "thorough",
-            # Russian equivalents
-            "пошагово", "план", "стратегия", "подход", "как", "разбить", "организовать",
-            "структура", "сложный", "детально", "всесторонне", "тщательно",
-            # Add more general triggers
-            "explain how", "teach me", "guide me", "what steps", "process",
-            "объясни как", "научи меня", "покажи", "какие шаги", "процесс"
+            # Multi-word phrases that strongly indicate planning need
+            "step by step", "пошагово", "explain how to", "объясни как",
+            "teach me how", "научи меня как", "guide me through", "покажи как",
+            "what steps", "какие шаги", "process of", "процесс создания",
+            "make a plan", "создай план", "составь план", "break down", "разбери детально",
+            "comprehensive guide", "полное руководство", "detailed explanation", "подробное объяснение",
+            "объясни как пошагово", "покажи пошагово"
         ]
 
         user_lower = user_input.lower()
 
-        # Check for planning keywords
-        has_planning_keywords = any(indicator in user_lower for indicator in planning_indicators)
+        # Check for explicit planning keywords (must be substantial phrases)
+        has_strong_planning_keywords = any(
+            indicator in user_lower 
+            for indicator in planning_indicators
+        )
 
-        # Check for question length (longer questions often need more planning)
-        is_complex_length = len(user_input.split()) > 15  # Reduced threshold
+        # Check for very complex questions (much higher threshold)
+        is_very_complex = len(user_input.split()) > 30  # Very high threshold
 
-        # Check for multiple parts/questions
-        has_multiple_parts = any(sep in user_input for sep in ["and", ";", "also", "then", "next", "и", "а также", "затем", "далее"])
+        # Check for multiple clear parts/questions  
+        has_multiple_clear_parts = (
+            user_input.count('?') > 1 or  # Multiple questions
+            any(sep in user_input for sep in [" then ", " next ", " after that ", " затем ", " потом ", " далее "])
+        )
 
-        # Check if user explicitly asks for planning
-        explicit_planning = any(phrase in user_lower for phrase in [
-            "make a plan", "create plan", "планируй", "создай план", "составь план"
-        ])
+        # Explicitly exclude simple conversational phrases
+        simple_phrases = [
+            "да", "нет", "yes", "no", "ok", "хорошо", "понятно", "спасибо", "thanks",
+            "да, я это и спрашиваю", "yes, that's what I'm asking", "конечно", "of course"
+        ]
+        
+        # Use word boundaries to avoid partial matches
+        is_simple_response = any(
+            re.search(r'\b' + re.escape(phrase) + r'\b', user_lower) 
+            for phrase in simple_phrases 
+            if len(phrase.split()) == 1  # Single words need word boundaries
+        ) or any(
+            phrase in user_lower 
+            for phrase in simple_phrases 
+            if len(phrase.split()) > 1  # Multi-word phrases can use simple contains
+        )
+        
+        # Also check if it's a very short response
+        is_simple_response = is_simple_response and len(user_input.split()) < 10
 
-        return has_planning_keywords or is_complex_length or has_multiple_parts or explicit_planning
+        # Only plan for explicitly complex tasks, not simple follow-ups
+        should_plan = (has_strong_planning_keywords or is_very_complex or has_multiple_clear_parts) and not is_simple_response
+
+        return should_plan
 
     async def _handle_complex_task(
         self,
@@ -285,42 +337,69 @@ class AletheiaAgent:
 
         print("⚡ Handling simple task with direct execution...")
 
-        # Build conversation context from recent task history
-        conversation_context = ""
+        # For simple greetings, use minimal context to avoid contamination
+        is_simple_greeting = any(greeting in user_input.lower() for greeting in [
+            "привет", "hello", "hi", "как дела", "how are you", "ты кто", "who are you",
+            "что умеешь", "what can you do", "как тебя зовут", "what's your name"
+        ])
+        # Exclude questions that specifically need context
+        needs_context = any(context_question in user_input.lower() for context_question in [
+            "как меня зовут", "what's my name", "who am i", "кто я", "меня зовут", "my name"
+        ])
+        
+        is_simple_greeting = is_simple_greeting and not needs_context
 
-        # Add personalization if we know the user's name
-        if self.conversation_context["user_name"]:
-            if self.conversation_context["last_user_language"] == "ru":
-                conversation_context += f"\n\nПользователь: {self.conversation_context['user_name']}\n"
-            else:
-                conversation_context += f"\n\nUser: {self.conversation_context['user_name']}\n"
+        if is_simple_greeting:
+            # Use just the user input without additional context for clean responses
+            enhanced_prompt = user_input
+        else:
+            # Enable basic context for non-greeting interactions to remember names
+            enhanced_prompt = user_input
+            
+            # Build minimal conversation context
+            conversation_context = ""
 
-        # Include last 3 interactions for context (limit to avoid overwhelming the model)
-        recent_tasks = self.task_history[-3:] if len(self.task_history) > 0 else []
+            # Add user name if we know it
+            if self.conversation_context["user_name"]:
+                if self.conversation_context["last_user_language"] == "ru":
+                    conversation_context += f"\n\nПользователь: {self.conversation_context['user_name']}\n"
+                else:
+                    conversation_context += f"\n\nUser: {self.conversation_context['user_name']}\n"
 
-        if recent_tasks:
-            conversation_context += "\nRecent conversation:\n"
-            for i, task_record in enumerate(recent_tasks, 1):
-                conversation_context += f"{i}. User: {task_record['user_input'][:80]}...\n"
-                conversation_context += f"   Assistant: {task_record['result'].get('response', 'No response')[:120]}...\n"
+            # Add only the most recent interaction for basic context (if safe)
+            if self.task_history and len(self.task_history) > 0:
+                last_task = self.task_history[-1]
+                last_response = last_task['result'].get('response', '')
+                
+                # Only include if response looks clean (no contamination markers)
+                if last_response and len(last_response) < 200 and not any(marker in last_response.lower() for marker in [
+                    "cv template", "theoretical", "follow up", "task:", "approach:", "аминь"
+                ]):
+                    cleaned_response = self._clean_context_response(last_response)
+                    if len(cleaned_response) > 10:  # Only if meaningful content remains
+                        conversation_context += f"\nПоследний обмен:\n"
+                        conversation_context += f"Пользователь: {last_task['user_input'][:50]}\n"
+                        conversation_context += f"Ассистент: {cleaned_response[:80]}\n"
 
-        # Prepare minimal context with memories (limit to avoid overwhelming the model)
-        memory_context = ""
-        if relevant_memories and len(relevant_memories) > 0:
-            # Only include the most relevant memory and keep it brief
-            most_relevant = relevant_memories[0]
-            memory_context = f"\n\nRelevant context: {most_relevant['content'][:100]}..."
-
-        # Combine user input with context
-        enhanced_prompt = f"{user_input}{conversation_context}{memory_context}"
+            # Combine user input with minimal context
+            if conversation_context.strip():
+                enhanced_prompt = f"{user_input}{conversation_context}"
 
         # Create task context
         task_context = TaskContext(
             prompt=enhanced_prompt,
             max_tokens=500,  # Reduced to encourage more concise responses
-            requires_deep_reasoning="analysis" in user_input.lower() or "explain" in user_input.lower(),
+            requires_deep_reasoning=False,  # Don't auto-trigger external LLM
             is_creative="create" in user_input.lower() or "write" in user_input.lower(),
             needs_latest_knowledge="latest" in user_input.lower() or "recent" in user_input.lower(),
+            # Only add context information for external LLM calls to avoid local contamination
+            conversation_context=self._build_context_summary() if not is_simple_greeting else None,
+            user_name=self.conversation_context.get("user_name"),
+            session_context={
+                "session_id": self.session_id,
+                "interaction_count": self.conversation_context["interaction_count"],
+                "language": self.conversation_context["last_user_language"]
+            }
         )
 
         # Execute task
@@ -350,6 +429,14 @@ class AletheiaAgent:
             max_tokens=600,
             requires_deep_reasoning=subtask.requires_external_llm,
             cost_sensitive=not subtask.requires_external_llm,
+            # Add context for subtasks too
+            conversation_context=self._build_context_summary(),
+            user_name=self.conversation_context.get("user_name"),
+            session_context={
+                "session_id": self.session_id,
+                "interaction_count": self.conversation_context["interaction_count"],
+                "language": self.conversation_context["last_user_language"]
+            }
         )
 
         # Execute subtask
@@ -394,6 +481,14 @@ Focus on creating a cohesive response that feels like a complete answer to the o
             prompt=synthesis_prompt,
             max_tokens=1200,
             requires_deep_reasoning=True,
+            # Add context for synthesis too
+            conversation_context=self._build_context_summary(),
+            user_name=self.conversation_context.get("user_name"),
+            session_context={
+                "session_id": self.session_id,
+                "interaction_count": self.conversation_context["interaction_count"],
+                "language": self.conversation_context["last_user_language"]
+            }
         )
 
         synthesis_result = await self.router.execute_task(synthesis_context)
@@ -404,6 +499,10 @@ Focus on creating a cohesive response that feels like a complete answer to the o
         """Store the task experience in memory."""
 
         try:
+            # Temporarily disabled to prevent storing contaminated responses
+            print("🚫 Memory storage temporarily disabled to prevent contamination")
+            return
+            
             # Create experience summary
             experience = f"Task: {user_input}\n"
             experience += f"Approach: {result.get('approach', 'unknown')}\n"
@@ -523,6 +622,33 @@ Focus on creating a cohesive response that feels like a complete answer to the o
         await self.vector_store.reset_all()
         self.task_history.clear()
         print("✅ Memory reset complete")
+
+    def _clean_context_response(self, response: str) -> str:
+        """Clean the context response to avoid contamination."""
+        if not response:
+            return response
+            
+        # Remove known contamination patterns
+        contamination_patterns = [
+            r"CV Template.*", r"Имя: Алетейя.*", r"Follow-up Question.*", 
+            r"theoretical.*", r"аминь.*", r"Task:.*", r"Approach:.*", 
+            r"Response:.*", r"Relevant context:.*", r"Solutions for.*",
+            r"How can you.*", r"Now, here are.*"
+        ]
+        
+        import re
+        cleaned = response
+        for pattern in contamination_patterns:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Remove multiple whitespaces and normalize
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        
+        # If response is too short after cleaning, return original truncated
+        if len(cleaned) < 10:
+            return response[:50] + "..." if len(response) > 50 else response
+            
+        return cleaned
 
 
 # Simple CLI interface for testing

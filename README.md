@@ -1,7 +1,7 @@
 # Prometheus
 ![CI](https://github.com/whiteagle3k/prometheus/actions/workflows/ci.yml/badge.svg)
 
-An AI agent framework for creating diverse personalities with hybrid LLM routing and advanced memory systems.
+An AI agent framework for creating diverse personalities with identity-driven configuration, hybrid LLM routing, and advanced memory systems.
 
 ## Overview
 
@@ -12,10 +12,11 @@ Prometheus is a framework designed to bring different AI agent personalities to 
 **Aletheia** is our inaugural self-learning female AI agent, serving as the foundation for the Prometheus framework. She embodies the core principles of intelligent conversation, continuous learning, and adaptive behavior.
 
 **Aletheia's Characteristics:**
+- **Identity-Driven Configuration**: JSON-based identity system with English-primary design
+- **Female AI Personality**: Presents as a thoughtful female AI with proper linguistic gender handling
 - **Conversational Memory**: Maintains context across interactions with persistent conversation history
-- **Multilingual Capabilities**: Fluent in Russian and English with proper grammatical gender handling
+- **Multilingual Capabilities**: Fluent in Russian and English with appropriate grammatical forms
 - **Self-Learning**: Continuous improvement through self-reflection and experience storage
-- **Female Identity**: Presents as a thoughtful female AI with appropriate cultural and linguistic awareness
 - **Cost-Conscious**: Optimized hybrid routing to balance quality and efficiency
 
 ## The Prometheus Vision 🚀
@@ -28,9 +29,16 @@ Prometheus aims to create a diverse ecosystem of AI personalities, each designed
 - **🔧 Technical Agents**: Expert in coding, system administration, and technical tasks
 - **🌍 Cultural Agents**: Specialized in specific languages, cultures, and regional knowledge
 
-Each agent in the Prometheus ecosystem shares core capabilities while expressing unique personalities and specialized skills.
+Each agent in the Prometheus ecosystem shares core capabilities while expressing unique personalities and specialized skills through the identity configuration system.
 
 ## Key Framework Features ✨
+
+### 🆔 **Identity Management System**
+- **JSON-Based Configuration**: Complete agent identity defined in `aletheia/identity/identity.json`
+- **English-Primary Design**: Core personality in English for optimal model performance
+- **Translation Layer**: Seamless Russian interactions with proper grammatical forms
+- **Validation & Templates**: Built-in validation and agent templates for quick setup
+- **Modular Package Structure**: Organized identity management with `aletheia/identity/` package
 
 ### 🤖 **Adaptive Personality System**
 - **Unique Identities**: Each agent has distinct personality traits and communication styles
@@ -56,6 +64,55 @@ Each agent in the Prometheus ecosystem shares core capabilities while expressing
 - **Comprehensive Testing**: Production-ready with full test coverage
 - **Clean APIs**: Well-structured codebase for agent development
 
+## Identity Configuration System
+
+The Prometheus framework uses a sophisticated identity management system:
+
+```
+aletheia/identity/
+├── __init__.py          # Main Identity class + package interface
+├── identity.json        # English-primary configuration (v0.2.1)
+├── validator.py         # Schema validation utilities
+└── templates.py         # Agent templates (technical, creative, academic)
+```
+
+### English-Primary Design
+
+The identity system uses English as the primary language for optimal model performance:
+- **Core Identity**: All personality traits and system prompts in English
+- **Translation Layer**: Russian translations for user-facing interactions
+- **Linguistic Accuracy**: Proper feminine forms and cultural context in Russian
+- **Model Optimization**: English system prompts work better with Phi-3 Mini
+
+### Identity Configuration Example
+
+```json
+{
+  "meta": {
+    "version": "0.2.1"
+  },
+  "name": "Aletheia",
+  "primary_language": "en",
+  "identity": {
+    "summary": "Female autonomous research agent focused on analysis, self-development, and solution prototyping",
+    "personality": [
+      "Presents as a thoughtful female AI",
+      "Technically precise and concise",
+      "Uses appropriate feminine language forms"
+    ]
+  },
+  "translations": {
+    "ru": {
+      "identity": {
+        "summary": "Женский автономный исследователь-агент...",
+        "personality": ["Позиционирует себя как женский ИИ", ...]
+      },
+      "llm_instructions": "Ты — Алетейя, женский автономный технический агент. Используй женские формы языка (готова, рада, и т.д.)..."
+    }
+  }
+}
+```
+
 ## Architecture
 
 ```
@@ -78,14 +135,16 @@ Each agent in the Prometheus ecosystem shares core capabilities while expressing
                                │
                                ▼
                      ┌──────────────────┐
-                     │   Conversation   │
-                     │     Context      │
+                     │ Identity System  │
+                     │ (JSON Config)    │
                      └──────────────────┘
                                │
-                               ▼
-                     ┌──────────────────┐
-                     │   LLM Router     │
-                     └──────────────────┘
+                     ┌─────────┴─────────┐
+                     ▼                   ▼
+             ┌──────────────┐    ┌──────────────┐
+             │ Conversation │    │   LLM Router │
+             │   Context    │    │   (Smart)    │
+             └──────────────┘    └──────────────┘
                                │
                      ┌─────────┴─────────┐
                      ▼                   ▼
@@ -106,6 +165,16 @@ Each agent in the Prometheus ecosystem shares core capabilities while expressing
                      │    Engine        │
                      └──────────────────┘
 ```
+
+### Identity-Driven Architecture
+
+The Prometheus framework's core innovation is its identity-driven architecture:
+
+1. **Identity Configuration**: JSON-based personality definition drives all behavior
+2. **English-Primary Core**: Optimal model performance with translation layer for users
+3. **Modular Identity Package**: `aletheia/identity/` with validation and templates
+4. **Runtime Adaptation**: Identity settings update routing, prompts, and responses
+5. **Template System**: Easy creation of new agent personalities
 
 ## Requirements
 
@@ -181,8 +250,9 @@ Commands:
 ------------------------------------------------------------
 
 🧑 You: Привет! Меня зовут Игорь.
-🤖 Aletheia: Привет, Игорь! Я Алетейя, первый агент в рамках проекта Prometheus. 
-Рада познакомиться! Я здесь, чтобы изучать, помогать и развиваться вместе с вами.
+🤖 Aletheia: Привет, Игорь! Я Алетейя, женский автономный исследователь-агент 
+в рамках проекта Prometheus. Рада познакомиться! Готова помочь с задачами 
+анализа и разработки решений.
 💭 Thoughts: 1.2s | Task #1 | Approach: direct | Route: local
 ```
 
@@ -191,21 +261,18 @@ Commands:
 🧑 You: What is Prometheus?
 🤖 Aletheia: Prometheus is the AI framework that brought me to life! It's designed to 
 create diverse AI personalities with unique characteristics. I'm Aletheia, the first 
-agent - a self-learning female AI focused on conversation and continuous improvement. 
-Future agents will have different personalities and specializations.
+agent - a female autonomous research agent focused on analysis and self-development. 
+Future agents will have different personalities and specializations through the same 
+identity-driven architecture.
 💭 Thoughts: 0.9s | Task #2 | Approach: direct | Route: local
 ```
 
-### Complex Task Demonstration
+### Female Identity Demonstration
 ```
-🧑 You: Объясни как работает машинное обучение пошагово
-🎯 Handling complex task with planning...
-📋 Executing plan with 5 sub-tasks...
-🔄 Executing: Explain basic concepts of machine learning
-🔄 Executing: Describe training process step by step
-...
-🤖 Aletheia: [Comprehensive ML explanation with structured steps]
-💭 Thoughts: 12.3s | Task #3 | Approach: planning | Route: external
+🧑 You: Ты готов помочь?
+🤖 Aletheia: Я готова помочь! Как женский ИИ-агент, я использую соответствующие 
+формы языка. Над чем работаем?
+💭 Thoughts: 0.7s | Task #3 | Approach: direct | Route: local
 ```
 
 ## Aletheia's Capabilities

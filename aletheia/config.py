@@ -18,19 +18,19 @@ class AppSettings(BaseSettings):
     anthropic_api_key: Optional[str] = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     openai_api_key: Optional[str] = Field(default=None, validation_alias="OPENAI_API_KEY")
 
-    # Local Model Configuration
+    # Local Model Configuration (can be overridden by identity.json)
     local_model_path: Path = Field(
         default=Path("./models/phi-3-mini-3.8b-q4_k.gguf"),
         validation_alias="LOCAL_MODEL_PATH",
     )
-    local_model_context_size: int = Field(default=4096, validation_alias="LOCAL_MODEL_CONTEXT_SIZE")
+    local_model_context_size: int = Field(default=8192, validation_alias="LOCAL_MODEL_CONTEXT_SIZE")
     local_model_gpu_layers: int = Field(default=32, validation_alias="LOCAL_MODEL_GPU_LAYERS")
 
     # Hardware-specific settings
     use_metal: bool = Field(default=True)  # macOS Metal acceleration
     use_cuda: bool = Field(default=False)  # NVIDIA CUDA (for future RTX migration)
 
-    # Vector Database
+    # Vector Database (can be overridden by identity.json)
     chroma_persist_dir: Path = Field(
         default=Path("./data/chroma_db"), validation_alias="CHROMA_PERSIST_DIR"
     )
@@ -42,12 +42,18 @@ class AppSettings(BaseSettings):
     )
     reflection_enabled: bool = Field(default=True, validation_alias="REFLECTION_ENABLED")
 
-    # Routing Configuration
+    # Routing Configuration (can be overridden by identity.json)
     local_token_threshold: int = Field(default=1024, validation_alias="LOCAL_TOKEN_THRESHOLD")
     # Handle deep reasoning keywords as a string first, then convert to list
     deep_reasoning_keywords_str: str = Field(
-        default="analysis,strategy,complex,detailed,research,comprehensive",
+        default="analysis,strategy,complex,detailed,research,comprehensive,подробно,детально,анализ,стратегия,комплексный,исследование",
         validation_alias="DEEP_REASONING_KEYWORDS",
+    )
+
+    # Identity configuration path
+    identity_path: Path = Field(
+        default=Path("./aletheia/identity/identity.json"),
+        validation_alias="IDENTITY_PATH"
     )
 
     # Logging
@@ -80,7 +86,42 @@ class AppSettings(BaseSettings):
             self.use_metal = False
             # CUDA detection would go here
 
+    def update_from_identity(self, identity_instance) -> None:
+        """Update configuration from identity settings."""
+        try:
+            # Update model path if specified in identity
+            if identity_instance.module_paths.local_model_gguf:
+                identity_model_path = Path(identity_instance.module_paths.local_model_gguf)
+                if identity_model_path.exists():
+                    self.local_model_path = identity_model_path
+                    print(f"📁 Using model path from identity: {identity_model_path}")
+
+            # Update memory directory if specified in identity
+            if identity_instance.module_paths.memory_dir:
+                identity_memory_dir = Path(identity_instance.module_paths.memory_dir)
+                # Update chroma directory to use identity's memory dir
+                self.chroma_persist_dir = identity_memory_dir / "chroma_db"
+                self.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
+                print(f"💾 Using memory directory from identity: {identity_memory_dir}")
+
+            # Update routing threshold from identity
+            identity_threshold = identity_instance.get_routing_threshold()
+            if identity_threshold and identity_threshold != self.local_token_threshold:
+                self.local_token_threshold = identity_threshold
+                print(f"🎯 Using routing threshold from identity: {identity_threshold}")
+
+        except Exception as e:
+            print(f"⚠️  Warning: Could not update config from identity: {e}")
+
 
 # Global config instance
 config = AppSettings()
 config._init_paths_and_hardware()
+
+# Load identity and update config accordingly
+try:
+    from .identity import identity
+    config.update_from_identity(identity)
+    print(f"✅ Identity loaded: {identity.name} v{identity.meta.version}")
+except Exception as e:
+    print(f"⚠️  Warning: Could not load identity configuration: {e}")

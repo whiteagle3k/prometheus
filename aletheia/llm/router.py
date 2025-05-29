@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any, Optional, Union
 
 from ..config import config
+from ..identity import identity
 from .external_llm import ExternalLLM, ExternalLLMManager
 from .local_llm import LocalLLM
 
@@ -26,6 +27,10 @@ class TaskContext:
     needs_latest_knowledge: bool = False
     cost_sensitive: bool = True
     latency_sensitive: bool = False
+    # New context fields
+    conversation_context: Optional[str] = None
+    user_name: Optional[str] = None
+    session_context: Optional[dict] = None
 
 
 class LLMRouter:
@@ -80,14 +85,15 @@ class LLMRouter:
                 return RouteDecision.EXTERNAL
 
     async def _apply_routing_heuristics(self, task: TaskContext) -> RouteDecision:
-        """Apply routing heuristics to make decision."""
+        """Apply routing heuristics to make decision using identity configuration."""
 
         # Estimate token count
         estimated_tokens = await self.local_llm.count_tokens(task.prompt)
         total_estimated_tokens = estimated_tokens + task.max_tokens
 
-        # Rule 1: Token threshold check
-        if estimated_tokens > config.local_token_threshold:
+        # Rule 1: Token threshold check - use identity configuration
+        routing_threshold = identity.get_routing_threshold()
+        if estimated_tokens > routing_threshold:
             return RouteDecision.EXTERNAL
 
         # Rule 2: Deep reasoning keyword check
@@ -95,8 +101,8 @@ class LLMRouter:
         if any(keyword in prompt_lower for keyword in config.deep_reasoning_keywords):
             task.requires_deep_reasoning = True
 
-        # Rule 3: Explicit deep reasoning requirement
-        if task.requires_deep_reasoning:
+        # Rule 3: Explicit deep reasoning requirement - use identity configuration
+        if task.requires_deep_reasoning and identity.should_require_deep_reasoning():
             return RouteDecision.EXTERNAL
 
         # Rule 4: Latest knowledge requirement
@@ -120,85 +126,203 @@ class LLMRouter:
         if total_estimated_tokens > local_context * 0.8:  # 80% threshold
             return RouteDecision.EXTERNAL
 
-        # Default: use local for efficiency
+        # Default: use local for efficiency (aligned with identity's cost optimization goal)
         return RouteDecision.LOCAL
 
-    async def get_llm_for_task(
-        self,
-        task: TaskContext,
-        force_route: Optional[RouteDecision] = None,
-    ) -> Union[LocalLLM, ExternalLLM]:
-        """Get the appropriate LLM instance for a task."""
-
-        route = force_route or await self.route_task(task)
-
-        if route == RouteDecision.LOCAL:
-            return self.local_llm
-        else:
-            external_llm = await self.external_manager.get_best_available()
-            if not external_llm:
-                print("⚠️  No external LLM available, falling back to local")
-                return self.local_llm
-            return external_llm
-
-    async def execute_task(
-        self,
-        task: TaskContext,
-        system_prompt: Optional[str] = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Execute a task with automatic routing."""
-
+    async def execute_task(self, task: TaskContext) -> dict[str, Any]:
+        """Execute a task using the appropriate LLM."""
         start_time = asyncio.get_event_loop().time()
 
-        # Get routing decision
-        route = await self.route_task(task)
-        llm = await self.get_llm_for_task(task, force_route=route)
-
-        # Execute the task
         try:
-            result = await llm.generate(
-                prompt=task.prompt,
-                max_tokens=task.max_tokens,
-                system_prompt=system_prompt,
-                **kwargs,
-            )
+            # Make routing decision
+            route = await self.route_task(task)
 
-            # Handle empty or None results
-            if not result or result.strip() == "":
-                result = "I apologize, but I wasn't able to generate a proper response. Please try rephrasing your question."
+            if route == RouteDecision.LOCAL:
+                # Execute locally
+                response = await self.local_llm.generate(
+                    prompt=task.prompt,
+                    max_tokens=task.max_tokens,
+                    temperature=0.7,
+                )
+                route_used = "local"
 
-            end_time = asyncio.get_event_loop().time()
+            else:
+                # Execute externally  
+                external_llm = await self.external_manager.get_best_available()
+                if not external_llm:
+                    # Fallback to local
+                    response = await self.local_llm.generate(
+                        prompt=task.prompt,
+                        max_tokens=task.max_tokens,
+                        temperature=0.7,
+                    )
+                    route_used = "local_fallback"
+                else:
+                    # Enhance prompt with context for external LLM
+                    enhanced_prompt = await self._prepare_external_prompt(task)
+                    
+                    # Use external LLM with enhanced context
+                    raw_response = await external_llm.generate(
+                        prompt=enhanced_prompt,
+                        max_tokens=task.max_tokens,
+                        temperature=0.7,
+                        system_prompt=self._get_external_system_prompt(task)
+                    )
+                    response = await self._filter_external_response(raw_response, task.prompt)
+                    route_used = "external"
 
-            # Estimate cost for external LLMs
-            cost_estimate = 0.0
-            if route == RouteDecision.EXTERNAL and isinstance(llm, ExternalLLM):
-                input_tokens = await llm.count_tokens(task.prompt)
-                output_tokens = await llm.count_tokens(result)
-                cost_estimate = llm.estimate_cost(input_tokens, output_tokens)
+            execution_time = asyncio.get_event_loop().time() - start_time
 
             return {
-                "result": result,
-                "route_used": route.value,
-                "model_info": llm.get_model_info() if hasattr(llm, "get_model_info") else {},
-                "execution_time": end_time - start_time,
-                "estimated_cost": cost_estimate,
-                "task_context": {
-                    "prompt_length": len(task.prompt),
-                    "max_tokens": task.max_tokens,
-                    "requires_deep_reasoning": task.requires_deep_reasoning,
-                },
+                "result": response,
+                "route_used": route_used,
+                "execution_time": execution_time,
+                "estimated_cost": 0,  # TODO: Calculate actual cost
             }
 
         except Exception as e:
-            end_time = asyncio.get_event_loop().time()
-            return {
-                "result": f"Error generating response: {e!s}",
-                "error": str(e),
-                "route_used": route.value,
-                "execution_time": end_time - start_time,
-                "estimated_cost": 0.0,
-            }
+            print(f"Task execution error: {e}")
+            # Fallback to local if available
+            try:
+                response = await self.local_llm.generate(
+                    prompt=task.prompt,
+                    max_tokens=task.max_tokens,
+                    temperature=0.7,
+                )
+                execution_time = asyncio.get_event_loop().time() - start_time
+                return {
+                    "result": response,
+                    "route_used": "local_fallback",
+                    "execution_time": execution_time,
+                    "estimated_cost": 0,
+                    "error": str(e),
+                }
+            except Exception as fallback_error:
+                return {
+                    "result": "Извините, произошла ошибка при обработке запроса. / Sorry, an error occurred processing your request.",
+                    "route_used": "error",
+                    "execution_time": 0,
+                    "estimated_cost": 0,
+                    "error": f"Primary: {e}, Fallback: {fallback_error}",
+                }
+
+    async def _prepare_external_prompt(self, task: TaskContext) -> str:
+        """Prepare an enhanced prompt for external LLM with context."""
+        enhanced_prompt = task.prompt
+        
+        # Add conversation context if available
+        if task.conversation_context:
+            # Create a brief summary of context for external LLM
+            context_summary = await self._summarize_context(task.conversation_context)
+            enhanced_prompt = f"""Conversation context: {context_summary}
+
+Current question: {task.prompt}"""
+        
+        # Add user personalization if available
+        if task.user_name:
+            enhanced_prompt = f"""User: {task.user_name}
+
+{enhanced_prompt}"""
+        
+        return enhanced_prompt
+
+    def _get_external_system_prompt(self, task: TaskContext) -> str:
+        """Get appropriate system prompt for external LLM from identity configuration."""
+        # Detect language
+        is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in task.prompt.lower())
+        
+        # Use identity system to get external system prompt
+        language = "ru" if is_russian else "en"
+        return identity.get_external_system_prompt(language)
+
+    async def _summarize_context(self, context: str) -> str:
+        """Create a brief summary of conversation context for external LLM."""
+        # For now, use a simple truncation with key information extraction
+        # In the future, this could use a summarization model
+        
+        if len(context) <= 300:
+            return context
+        
+        # Extract key information patterns
+        lines = context.split('\n')
+        important_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            # Keep lines with key information
+            if any(keyword in line.lower() for keyword in [
+                'user:', 'пользователь:', 'name', 'имя', 'topic', 'тема', 
+                'question', 'вопрос', 'task', 'задача', 'problem', 'проблема'
+            ]):
+                important_lines.append(line)
+        
+        # If we have important lines, use them; otherwise truncate
+        if important_lines:
+            summary = '\n'.join(important_lines[:5])  # Top 5 important lines
+            if len(summary) > 300:
+                summary = summary[:300] + "..."
+            return summary
+        else:
+            return context[:300] + "..."
+
+    async def _filter_external_response(self, external_response: str, original_prompt: str) -> str:
+        """Filter external LLM response through identity personality and maintain language consistency."""
+        
+        # Detect language of original prompt
+        is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in original_prompt.lower())
+        
+        # Create a personality filter prompt using English core identity for better model understanding
+        core_traits = ', '.join(identity.personality.personality[:3])
+        core_values = ', '.join(identity.core_values[:2])
+        
+        if is_russian:
+            filter_prompt = f"""Original user question: {original_prompt}
+
+External system response: {external_response}
+
+Reframe this response as {identity.name} - {identity.personality.summary}. Important personality traits: {core_traits}. Core principles: {core_values}.
+
+Requirements:
+1. Maintain my personality and traits listed above
+2. Keep all useful information from the response
+3. Make the response natural according to my character
+4. Don't mention ChatGPT or other systems - you are {identity.name}
+5. Respond in Russian with natural grammar and cultural context
+6. Follow my core principles
+
+Response in Russian:"""
+        else:
+            filter_prompt = f"""Original user question: {original_prompt}
+
+External system response: {external_response}
+
+Reframe this response as {identity.name} - {identity.personality.summary}. Important personality traits: {core_traits}. Core principles: {core_values}.
+
+Requirements:
+1. Maintain my personality and traits listed above
+2. Keep all useful information from the response
+3. Make the response natural according to my character
+4. Don't mention ChatGPT or other systems - you are {identity.name}
+5. Respond in English
+6. Follow my core principles
+
+Response:"""
+
+        try:
+            # Use local LLM to filter the response with identity personality
+            filtered_response = await self.local_llm.generate(
+                prompt=filter_prompt,
+                max_tokens=min(800, len(external_response) + 200),
+                temperature=0.3,  # Lower temperature for consistent personality
+            )
+            return filtered_response
+        except Exception as e:
+            print(f"Error filtering response: {e}")
+            # Fallback: return external response with identity disclaimer
+            if is_russian:
+                return f"[От {identity.name}] {external_response}"
+            else:
+                return f"[From {identity.name}] {external_response}"
 
     def get_routing_stats(self) -> dict[str, Any]:
         """Get routing statistics."""
