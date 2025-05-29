@@ -225,11 +225,11 @@ class TestAletheiaAgent:
         
         # Simple question shouldn't need planning
         simple_task = "What is 2+2?"
-        assert asyncio.run(agent._should_plan_task(simple_task)) == False
+        assert agent.context.should_plan_task(simple_task) == False
         
         # Complex request should need planning
         complex_task = "Please create a comprehensive step-by-step plan for organizing a conference"
-        assert asyncio.run(agent._should_plan_task(complex_task)) == True
+        assert agent.context.should_plan_task(complex_task) == True
 
     @pytest.mark.asyncio
     @pytest.mark.unit
