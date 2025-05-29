@@ -34,12 +34,15 @@
     "context_summary_max_length": 300,
     "reference_detection": {
       "enabled": true,
-      "pronouns": ["it", "that", "this", "them", "those", "это", "то", "такое", "их"],
+      "pronouns": ["it", "that", "this", "them", "those", "он", "она", "оно", "они", "его", "её", "их", "им", "ей", "ему", "ими", "ним", "ней", "нём", "это", "то", "такое", "этого", "того", "этому", "тому", "этой", "той"],
       "continuation_phrases": [
         "tell me more", "detail", "explain further", "расскажи подробнее", "детально", "больше",
         "да, интересно", "yes, interesting", "интересно", "interesting", "продолжай", "continue",
         "да, продолжай", "yes, continue", "да, расскажи", "yes, tell me", "хочу больше", "want more",
-        "можно подробнее", "can you elaborate", "поподробнее", "more details"
+        "можно подробнее", "can you elaborate", "поподробнее", "more details",
+        "что дальше", "what's next", "а дальше", "and then", "что происходит", "what happens",
+        "как это", "how does this", "почему это", "why does this", "куда", "where does",
+        "что с", "what about", "а что", "and what", "что потом", "what then"
       ]
     },
     "name_extraction": {
@@ -65,16 +68,6 @@
       "make a plan", "create a plan", "создай план", "составь план", "break down", "разбери детально",
       "comprehensive guide", "comprehensive plan", "полное руководство", "detailed explanation", "подробное объяснение",
       "объясни как пошагово", "покажи пошагово"
-    ],
-    "factual_indicators": [
-      "что такое", "what is", "как работает", "how does", "как образуется", "how is formed",
-      "почему", "why", "объясни", "explain", "расскажи о", "tell me about",
-      "как происходит", "how happens", "процесс", "process", "механизм", "mechanism",
-      "chemical", "физический", "physical", "биологический", "biological",
-      "научный", "scientific", "теория", "theory", "закон", "law",
-      "формула", "formula", "алгоритм", "algorithm", "вычисление", "calculation",
-      "когда", "when", "где", "where", "кто", "who", "история", "history",
-      "столица", "capital", "страна", "country", "город", "city"
     ],
     "simple_conversation": [
       "привет", "hello", "hi", "как дела", "how are you", "ты кто", "who are you",

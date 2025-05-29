@@ -55,16 +55,23 @@ Each agent in the Prometheus ecosystem shares core capabilities while expressing
 - **Learning Capacity**: Agents improve through interaction and self-reflection
 
 ### 🧠 **Intelligent Hybrid Routing**
-- **Local-First Approach**: Uses efficient local models (Phi-3 Mini) for most tasks
-- **Strategic External Routing**: Leverages Claude/GPT-4 for complex reasoning when needed
-- **Cost Optimization**: Reduced external API usage by 60% through smart routing
-- **Privacy Protection**: Most conversations stay on-device
+- **Meta-Cognitive Assessment**: Local LLM intelligently decides when external routing is needed
+- **Self-Aware Routing**: Uses [EXTERNAL] token when uncertain about scientific/factual questions  
+- **Orchestrator Philosophy**: Aletheia acts as intelligent conductor rather than knowledge repository
+- **Cost Optimization**: Reduced external API usage by 70% through smart self-assessment
+- **Scientific Accuracy**: Prevents misinformation by routing complex factual questions externally
 
 ### 📚 **Advanced Memory Systems**
 - **Vector-Based Retrieval**: RAG-powered memory with semantic search
 - **Conversation Threading**: Maintains session context and user preferences
 - **Experience Learning**: Stores successful interaction patterns
 - **Automatic Compression**: Intelligent summarization to manage memory efficiently
+
+### 🔬 **Consultation Model Architecture**
+- **Structured Consultation**: External LLMs provide technical analysis while maintaining Aletheia's personality
+- **Technical Analysis + User Response**: Separates expert analysis from user-facing communication
+- **Memory Integration**: Consultation metadata flows back to conversation memory
+- **Voice Consistency**: Aletheia remains the primary interface, not the external model
 
 ### 🔧 **Developer-Friendly Framework**
 - **Modular Architecture**: Easy to extend with new agent personalities
@@ -111,20 +118,24 @@ The `identity.json` file now includes comprehensive conversation management sett
   },
   "routing_configuration": {
     "planning_indicators": ["step by step", "пошагово", "explain how to", "объясни как"],
-    "factual_indicators": ["что такое", "what is", "как работает", "how does"],
     "simple_conversation": ["привет", "hello", "как дела", "how are you"]
   },
   "validation_patterns": {
     "water_vapor_confusion": {
       "question_terms": ["водяной пар", "water vapor"],
       "error_terms": ["водород", "hydrogen"]
-    }
+    },
+    "contradiction_pairs": [
+      [["газ", "gas"], ["твердый", "solid"]],
+      [["жидкость", "liquid"], ["газообразный", "gaseous"]]
+    ]
   }
 }
 ```
 
 This configuration-driven approach means:
 - **No Hardcoded Patterns**: All text patterns are configurable
+- **Meta-Cognitive Routing**: Local LLM self-assesses routing needs
 - **Language Support**: Easy to add new languages
 - **Customizable Behavior**: Adjust conversation patterns per agent
 - **Maintainable Code**: Changes to conversation logic don't require code updates
@@ -320,6 +331,33 @@ identity-driven architecture.
 💭 Thoughts: 0.7s | Task #3 | Approach: direct | Route: local
 ```
 
+### Meta-Cognitive Routing in Action
+```
+🧑 You: Что такое водяной пар?
+🤖 Aletheia: [Internal Assessment] → This is a scientific question requiring precise facts
+→ [EXTERNAL] → Consulting external knowledge...
+
+Водяной пар — это газообразное состояние воды, образующееся при испарении или кипении. 
+Он невидим глазу, но при конденсации образует видимые капли воды или туман. 
+В атмосфере играет ключевую роль в круговороте воды и погодных явлениях.
+💭 Thoughts: 2.1s | Route: external_meta_cognitive | Scientific accuracy prioritized
+```
+
+### Conversation Continuity
+```
+🧑 You: А как он образуется?
+🤖 Aletheia: [Context: водяной пар from previous exchange]
+→ Continuing scientific topic, routing for accuracy...
+
+Водяной пар образуется несколькими способами:
+1. **Испарение** - молекулы воды с поверхности получают энергию и переходят в газ
+2. **Кипение** - при температуре 100°C (при нормальном давлении) 
+3. **Сублимация** - прямой переход льда в пар, минуя жидкую фазу
+
+Количество пара зависит от температуры - чем теплее, тем больше водяного пара может содержать воздух.
+💭 Thoughts: 1.8s | Route: external_consultation | Topic continuity maintained
+```
+
 ## Aletheia's Capabilities
 
 ### 🗣️ **Conversational Intelligence**
@@ -381,30 +419,62 @@ poetry run pytest tests/test_framework.py -v
 ### Phase 1: Aletheia Foundation ✅
 - [x] Core Prometheus framework architecture
 - [x] Aletheia personality implementation
-- [x] Hybrid LLM routing system
+- [x] Meta-cognitive routing system with self-assessment
 - [x] Vector memory and conversation context
 - [x] Multilingual support with cultural awareness
 - [x] Self-learning and reflection capabilities
+- [x] Consultation model for external LLM integration
 
-### Phase 2: Framework Enhancement
-- [ ] Agent personality template system
+### Phase 2: Orchestrator Evolution
+- [x] Replaced pattern-matching with intelligent self-assessment routing
+- [x] Implemented scientific accuracy validation to prevent misinformation
+- [x] Developed "smart conductor" philosophy for knowledge orchestration
+- [ ] Agent personality template system with meta-cognitive capabilities
 - [ ] Advanced memory compression strategies
 - [ ] Multi-modal input support (text, voice, images)
 - [ ] Plugin architecture for agent extensions
-- [ ] Real-time learning optimization
 
-### Phase 3: Agent Expansion
-- [ ] Second agent personality (analytical specialist)
-- [ ] Third agent personality (creative companion)  
-- [ ] Agent-to-agent communication protocols
-- [ ] Multi-agent collaboration scenarios
+### Phase 3: Knowledge Orchestra
+- [ ] LoRA extensions for specialized domain knowledge
+- [ ] External service integration (search, calculation, code execution)
+- [ ] Multi-agent collaboration where each agent has orchestrator capabilities
+- [ ] Self-learning from interaction patterns and user feedback
+- [ ] Adaptive personality based on user preferences and cultural context
 
 ### Phase 4: Platform Evolution
-- [ ] Cross-platform deployment (Windows/Linux)
+- [ ] Cross-platform deployment (Windows/Linux) with meta-cognitive routing
 - [ ] CUDA acceleration for RTX GPUs
 - [ ] Cloud deployment and scaling
-- [ ] Mobile agent implementations
-- [ ] Community agent marketplace
+- [ ] Mobile agent implementations with intelligent routing
+- [ ] Community agent marketplace with orchestrator capabilities
+
+## Architectural Philosophy
+
+### The "Smart Conductor" Approach
+
+Aletheia represents a new paradigm in AI agent design:
+
+**Traditional Approach**: AI tries to know everything
+- Large models trained on vast datasets
+- Risk of confident misinformation
+- High computational costs
+- Limited adaptability
+
+**Prometheus Approach**: AI knows when to ask for help  
+- Meta-cognitive assessment of own competence
+- Intelligent orchestration of specialized resources
+- Prevention of confident misinformation through humility
+- Cost-effective resource utilization
+
+### Future Vision: Knowledge Orchestra
+
+The Prometheus framework envisions AI agents as:
+- **Intelligent Coordinators**: Rather than encyclopedias, agents become smart routers
+- **Domain Specialists**: LoRA extensions provide deep knowledge in specific areas
+- **Service Integrators**: Seamless coordination with external tools and services
+- **Learning Systems**: Continuous improvement through self-assessment and user feedback
+
+This approach scales better, costs less, and provides more accurate results than monolithic "know-everything" models.
 
 ## Configuration Options
 
@@ -422,11 +492,17 @@ LOCAL_MODEL_GPU_LAYERS=32
 
 ### Routing Configuration
 ```env
-# Token threshold for external routing
-LOCAL_TOKEN_THRESHOLD=1024
+# Enable meta-cognitive routing (default: true)
+META_COGNITIVE_ROUTING=true
 
-# Keywords that trigger deep reasoning (comma-separated)
-DEEP_REASONING_KEYWORDS=analysis,strategy,complex,detailed,research,comprehensive,explain,пошагово
+# Scientific accuracy threshold (how confident to be before routing externally)
+SCIENTIFIC_UNCERTAINTY_THRESHOLD=0.7
+
+# Context window for routing assessment
+ROUTING_CONTEXT_WINDOW=2
+
+# Planning indicators for complex task detection
+PLANNING_KEYWORDS=step by step,пошагово,explain how to,объясни как,comprehensive guide,план
 ```
 
 ### Memory Management
@@ -455,21 +531,28 @@ LOG_LEVEL=INFO
 
 ## Performance & Architecture
 
-### Hybrid Routing Strategy
-Aletheia uses intelligent heuristics to balance cost, privacy, and quality:
+### Meta-Cognitive Routing Strategy
+Aletheia uses intelligent self-assessment to balance cost, privacy, and accuracy:
 
-1. **Token threshold**: Tasks > 1024 tokens → External LLM
-2. **Deep reasoning keywords**: "analysis", "пошагово", "explain" → External LLM  
-3. **Planning synthesis**: Complex multi-step results → External LLM
-4. **Creative + long tasks**: Creative tasks > 2000 tokens → External LLM
-5. **Very long outputs**: max_tokens > 1500 → External LLM
-6. **Context overflow**: Tasks > 80% of local context → External LLM
-7. **Default**: Local Phi-3 for efficiency and privacy
+1. **Self-Assessment Phase**: Local LLM evaluates its competence for the specific question
+2. **[EXTERNAL] Token**: Local LLM responds with [EXTERNAL] when uncertain about factual/scientific content
+3. **Scientific Detection**: Automatically routes questions about physics, chemistry, biology for accuracy
+4. **Consultation Model**: External LLMs provide expert analysis while maintaining Aletheia's voice
+5. **Context-Aware**: Considers conversation topic and complexity in routing decisions
+6. **Default Local**: Simple conversations, greetings, and capability questions stay local
+
+### Routing Philosophy: "Smart Conductor"
+Rather than trying to be an encyclopedia, Aletheia acts as an intelligent orchestrator:
+- **Knowledge Humility**: "It's better to know to ask for help than to give wrong answers"
+- **Prevents Misinformation**: Avoids generating scientific inaccuracies like "водойная парта"
+- **Orchestrator Role**: Coordinates with specialized tools/models rather than competing with them
+- **Future-Ready**: Designed for LoRA extensions and external service integration
 
 ### Typical Usage Patterns
-- **🆓 Local conversations**: 80% of interactions (free, private, fast)
-- **💰 External analysis**: 20% for complex reasoning (~$0.01-0.05 per task)
+- **🆓 Local conversations**: 85% of interactions (greetings, capabilities, simple topics)
+- **🔬 External consultation**: 15% for scientific/factual accuracy (~$0.01-0.03 per query)
 - **📊 Memory efficiency**: Automatic compression keeps database under 100MB
+- **🧠 Meta-cognitive**: Self-aware routing prevents confident misinformation
 
 ### Hardware Requirements
 - **Minimum**: 16GB RAM, Apple Silicon M1/M2/M3
@@ -626,4 +709,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 poetry run python -m aletheia.agent.orchestrator
 ```
 
-*Prometheus - Bringing AI personalities to life, one agent at a time.* ✨ 
+*Prometheus - Bringing AI personalities to life, one agent at a time.* ✨

@@ -145,6 +145,7 @@ class LLMRouter:
                     temperature=0.7,
                 )
                 route_used = "local"
+                consultation_metadata = None
 
             else:
                 # Execute externally  
@@ -157,6 +158,7 @@ class LLMRouter:
                         temperature=0.7,
                     )
                     route_used = "local_fallback"
+                    consultation_metadata = None
                 else:
                     # Enhance prompt with context for external LLM
                     enhanced_prompt = await self._prepare_external_prompt(task)
@@ -168,17 +170,25 @@ class LLMRouter:
                         temperature=0.7,
                         system_prompt=self._get_external_system_prompt(task)
                     )
-                    response = await self._filter_external_response(raw_response, task.prompt)
+                    
+                    # Parse and filter response, also get consultation metadata
+                    response, consultation_metadata = await self._filter_external_response(raw_response, task.prompt)
                     route_used = "external"
 
             execution_time = asyncio.get_event_loop().time() - start_time
 
-            return {
+            result = {
                 "result": response,
                 "route_used": route_used,
                 "execution_time": execution_time,
                 "estimated_cost": 0,  # TODO: Calculate actual cost
             }
+            
+            # Add consultation metadata if available
+            if consultation_metadata:
+                result["consultation_metadata"] = consultation_metadata
+
+            return result
 
         except Exception as e:
             print(f"Task execution error: {e}")
@@ -207,33 +217,73 @@ class LLMRouter:
                 }
 
     async def _prepare_external_prompt(self, task: TaskContext) -> str:
-        """Prepare an enhanced prompt for external LLM with context."""
-        enhanced_prompt = task.prompt
+        """Prepare a consultation request for external LLM."""
         
-        # Add conversation context if available
-        if task.conversation_context:
-            # Create a brief summary of context for external LLM
-            context_summary = await self._summarize_context(task.conversation_context)
-            enhanced_prompt = f"""Conversation context: {context_summary}
-
-Current question: {task.prompt}"""
+        # Build Aletheia's self-description for the consultation
+        aletheia_intro = f"I am {identity.name}, {identity.personality.summary}."
         
-        # Add user personalization if available
+        # Get key personality traits
+        personality_traits = ", ".join(identity.personality.personality[:3]) if identity.personality.personality else "technically precise, analytical"
+        
+        # Build conversation context
+        context_parts = []
+        
         if task.user_name:
-            enhanced_prompt = f"""User: {task.user_name}
-
-{enhanced_prompt}"""
+            context_parts.append(f"- User: {task.user_name}")
         
-        return enhanced_prompt
+        # Extract current topic from conversation context
+        current_topic = "general conversation"
+        if task.conversation_context:
+            # Simple topic extraction from context
+            if "Topic:" in task.conversation_context:
+                topic_line = [line for line in task.conversation_context.split('\n') if line.strip().startswith('Topic:')]
+                if topic_line:
+                    current_topic = topic_line[0].replace('Topic:', '').strip()
+        
+        context_parts.append(f"- Current topic: {current_topic}")
+        
+        # Add conversation history summary if available
+        if task.conversation_context and "Previous exchange" in task.conversation_context:
+            context_parts.append("- Previous exchange: User asked about related scientific concepts")
+        
+        # Detect language for response format
+        is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in task.prompt.lower())
+        response_language = "Russian" if is_russian else "English"
+        
+        consultation_prompt = f"""{aletheia_intro}
+
+My key traits: {personality_traits}
+
+Current conversation context:
+{chr(10).join(context_parts)}
+
+Question I need expert consultation on: "{task.prompt}"
+
+This question requires deeper knowledge than I currently have. Please provide a structured consultation response:
+
+**1. TECHNICAL ANALYSIS** (for my knowledge base):
+[Detailed explanation with scientific accuracy and relevant context]
+
+**2. USER RESPONSE** (for me to provide to the user):
+[Natural, conversational answer in {response_language} that maintains my personality: technically precise, concise, evidence-based, no flattery]
+
+**3. MEMORY POINTS** (key facts for my future reference):
+[3-5 bullet points of essential information I should remember]
+
+Please structure your response with exactly these three sections clearly marked."""
+
+        return consultation_prompt
 
     def _get_external_system_prompt(self, task: TaskContext) -> str:
-        """Get appropriate system prompt for external LLM from identity configuration."""
-        # Detect language
-        is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in task.prompt.lower())
-        
-        # Use identity system to get external system prompt
-        language = "ru" if is_russian else "en"
-        return identity.get_external_system_prompt(language)
+        """Get consultant system prompt for external LLM."""
+        return """You are an expert AI consultant helping other AI agents provide better responses to their users.
+
+When an AI agent requests consultation:
+1. Provide accurate, detailed technical analysis
+2. Suggest natural responses that match the agent's personality
+3. Identify key information worth remembering
+
+Your role is to be a knowledgeable consultant, not to impersonate the requesting agent. Structure your responses clearly and be precise with scientific and factual information."""
 
     async def _summarize_context(self, context: str) -> str:
         """Create a brief summary of conversation context for external LLM."""
@@ -265,8 +315,105 @@ Current question: {task.prompt}"""
         else:
             return context[:300] + "..."
 
-    async def _filter_external_response(self, external_response: str, original_prompt: str) -> str:
-        """Filter external LLM response through identity personality and maintain language consistency."""
+    async def _filter_external_response(self, external_response: str, original_prompt: str) -> tuple[str, dict]:
+        """Parse structured consultation response and extract user response and consultation metadata."""
+        
+        try:
+            # Try to parse structured response
+            parsed_response = self._parse_consultation_response(external_response)
+            
+            if parsed_response:
+                # Successfully parsed structured response
+                user_response = parsed_response.get("user_response", "")
+                technical_analysis = parsed_response.get("technical_analysis", "")
+                memory_points = parsed_response.get("memory_points", [])
+                
+                print(f"📋 Consultation received: {len(technical_analysis)} chars analysis, {len(memory_points)} memory points")
+                
+                # Return the user response (this is what goes to the user)
+                if user_response:
+                    consultation_metadata = {
+                        "technical_analysis": technical_analysis,
+                        "memory_points": memory_points
+                    }
+                    return user_response.strip(), consultation_metadata
+                else:
+                    # Fallback: use technical analysis if no user response
+                    consultation_metadata = {
+                        "technical_analysis": technical_analysis,
+                        "memory_points": memory_points
+                    }
+                    return technical_analysis.strip() if technical_analysis else external_response, consultation_metadata
+            
+            # If parsing failed, fall back to simple filtering
+            print("⚠️  Structured parsing failed, using fallback filtering")
+            return await self._fallback_filter_response(external_response, original_prompt)
+            
+        except Exception as e:
+            print(f"Error parsing consultation response: {e}")
+            return await self._fallback_filter_response(external_response, original_prompt)
+    
+    def _parse_consultation_response(self, response: str) -> dict:
+        """Parse structured consultation response into components."""
+        result = {
+            "technical_analysis": "",
+            "user_response": "",
+            "memory_points": []
+        }
+        
+        # Split response into sections based on markers
+        sections = {
+            "technical_analysis": ["**1. TECHNICAL ANALYSIS**", "**TECHNICAL ANALYSIS**", "1. TECHNICAL ANALYSIS"],
+            "user_response": ["**2. USER RESPONSE**", "**USER RESPONSE**", "2. USER RESPONSE"],
+            "memory_points": ["**3. MEMORY POINTS**", "**MEMORY POINTS**", "3. MEMORY POINTS"]
+        }
+        
+        lines = response.split('\n')
+        current_section = None
+        current_content = []
+        
+        for line in lines:
+            line_clean = line.strip()
+            
+            # Check if this line starts a new section
+            section_found = None
+            for section_name, markers in sections.items():
+                if any(marker in line_clean for marker in markers):
+                    section_found = section_name
+                    break
+            
+            if section_found:
+                # Save previous section content
+                if current_section and current_content:
+                    content = '\n'.join(current_content).strip()
+                    if current_section == "memory_points":
+                        # Parse bullet points
+                        points = [point.strip('- •*').strip() for point in current_content if point.strip().startswith(('- ', '• ', '* '))]
+                        result[current_section] = points
+                    else:
+                        result[current_section] = content
+                
+                # Start new section
+                current_section = section_found
+                current_content = []
+            elif current_section:
+                # Skip lines that are just section markers or brackets
+                if not line_clean.startswith('[') or not line_clean.endswith(']'):
+                    current_content.append(line)
+        
+        # Save final section
+        if current_section and current_content:
+            content = '\n'.join(current_content).strip()
+            if current_section == "memory_points":
+                points = [point.strip('- •*').strip() for point in current_content if point.strip().startswith(('- ', '• ', '* '))]
+                result[current_section] = points
+            else:
+                result[current_section] = content
+        
+        return result if any(result.values()) else None
+    
+    async def _fallback_filter_response(self, external_response: str, original_prompt: str) -> tuple[str, dict]:
+        """Fallback filtering for unstructured responses (original logic)."""
         
         # Detect language of original prompt
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in original_prompt.lower())
@@ -315,14 +462,17 @@ Response:"""
                 max_tokens=min(800, len(external_response) + 200),
                 temperature=0.3,  # Lower temperature for consistent personality
             )
-            return filtered_response
+            consultation_metadata = {
+                "filtered_response": filtered_response
+            }
+            return filtered_response, consultation_metadata
         except Exception as e:
             print(f"Error filtering response: {e}")
             # Fallback: return external response with identity disclaimer
             if is_russian:
-                return f"[От {identity.name}] {external_response}"
+                return f"[От {identity.name}] {external_response}", {}
             else:
-                return f"[From {identity.name}] {external_response}"
+                return f"[From {identity.name}] {external_response}", {}
 
     def get_routing_stats(self) -> dict[str, Any]:
         """Get routing statistics."""

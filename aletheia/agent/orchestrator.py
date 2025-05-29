@@ -217,18 +217,84 @@ class AletheiaAgent:
         user_input: str,
         relevant_memories: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Handle simple tasks with direct execution."""
+        """Handle simple tasks with meta-cognitive routing assessment."""
 
-        print("⚡ Handling simple task with direct execution...")
+        print("⚡ Handling simple task with meta-cognitive routing...")
 
         # Build context-aware prompt using the context manager
         enhanced_prompt = self.context.build_context_prompt(user_input)
 
-        # Determine if we should route to external LLM
-        should_use_external = self.context.should_use_external_routing(user_input)
+        # First, ask the local LLM to assess if external routing is needed
+        routing_assessment_prompt = self.context.build_routing_assessment_prompt(user_input)
         
-        if should_use_external:
-            print("🔬 Detected factual question - routing to external LLM for accuracy")
+        try:
+            print("🧠 Asking local LLM for routing assessment...")
+            routing_response = await self.router.local_llm.generate(
+                prompt=routing_assessment_prompt,
+                max_tokens=100,
+                temperature=0.1,  # Low temperature for consistent routing decisions
+            )
+            
+            # Check for explicit [EXTERNAL] token
+            has_external_token = "[EXTERNAL]" in routing_response.upper()
+            
+            # Also check for scientific uncertainty indicators or deferral language
+            deferral_indicators = [
+                "внешней модели", "external model", "более мощной", "more powerful",
+                "научных данных", "scientific data", "не уверена", "not confident",
+                "требует точности", "requires precision", "передать внешней", "pass to external",
+                "сложно ответить", "difficult to answer", "need external", "нужна внешняя"
+            ]
+            shows_uncertainty = any(indicator in routing_response.lower() for indicator in deferral_indicators)
+            
+            # Check if this is a clear social interaction that should stay local
+            social_indicators = [
+                "поболтать", "просто поговорить", "знакомство", "зовут", "chat", "just talk", 
+                "my name", "introduction", "привет", "hello", "как дела", "how are you"
+            ]
+            is_social_interaction = any(indicator in user_input.lower() for indicator in social_indicators)
+            
+            # If this is clearly a scientific question but local LLM started answering, it might need external routing
+            scientific_question_indicators = [
+                "что такое", "what is", "как образуется", "how is formed", "почему", "why",
+                "водяной пар", "water vapor", "условиях", "conditions", "физика", "physics", "химия", "chemistry",
+                "из чего", "what is made", "made of", "состав", "composition", "ракетное", "rocket",
+                "топливо", "fuel", "двигатель", "engine", "принцип работы", "how does it work"
+            ]
+            is_scientific_question = any(indicator in user_input.lower() for indicator in scientific_question_indicators)
+            
+            # Additional technical terms that should always route externally
+            technical_terms = ["ракетное топливо", "двигатель", "компьютер", "engine", "computer", "rocket fuel"]
+            has_technical_terms = any(term in user_input.lower() for term in technical_terms)
+            
+            # If local LLM started giving scientific facts without [EXTERNAL], it might be overconfident
+            gives_scientific_facts = any(term in routing_response.lower() for term in [
+                "водород", "hydrogen", "молекула", "molecule", "температура", "temperature",
+                "атмосфера", "atmosphere", "химический", "chemical"
+            ])
+            
+            should_use_external = (
+                has_external_token or 
+                (shows_uncertainty and not is_social_interaction) or 
+                (is_scientific_question and gives_scientific_facts) or
+                has_technical_terms  # Force external for technical terms regardless of LLM response
+            )
+            
+            if should_use_external:
+                print("🔬 Local LLM recommends external routing - using external LLM for accuracy")
+                if has_external_token:
+                    print("  └─ Explicit [EXTERNAL] token found")
+                elif shows_uncertainty:
+                    print("  └─ Uncertainty/deferral language detected")
+                elif gives_scientific_facts:
+                    print("  └─ Scientific facts detected, routing for accuracy")
+            else:
+                print("💻 Local LLM confident in handling - proceeding with local response")
+                
+        except Exception as e:
+            print(f"⚠️  Error during routing assessment: {e}")
+            # Fallback to safe default: use external for complex questions
+            should_use_external = len(user_input.split()) > 10  # Simple heuristic fallback
 
         # Create task context with proper routing
         task_context = TaskContext(
@@ -252,6 +318,35 @@ class AletheiaAgent:
         # Post-execution validation for local responses to factual questions
         response_text = result.get("result", "")
         route_used = result.get("route_used", "unknown")
+        
+        # If we used local but got an [EXTERNAL] response after all, re-route
+        if route_used == "local" and "[EXTERNAL]" in response_text.upper():
+            print("🔄 Local LLM requested external routing in response - re-routing...")
+            
+            # Re-route to external LLM
+            external_context = TaskContext(
+                prompt=enhanced_prompt,
+                max_tokens=600,
+                requires_deep_reasoning=True,  # Force external routing
+                conversation_context=self._build_context_summary(),
+                user_name=self.context.user_name,
+                session_context=task_context.session_context
+            )
+            
+            external_result = await self.router.execute_task(external_context)
+            
+            return {
+                "type": "simple_task",
+                "response": external_result.get("result", response_text),
+                "execution_details": {
+                    "route_used": "external_meta_cognitive",
+                    "execution_time": result.get("execution_time", 0) + external_result.get("execution_time", 0),
+                    "estimated_cost": result.get("estimated_cost", 0) + external_result.get("estimated_cost", 0),
+                    "routing_assessment": "local_deferred_to_external",
+                    "consultation_metadata": external_result.get("consultation_metadata"),
+                },
+                "approach": "meta_cognitive",
+            }
         
         if should_use_external and route_used == "local" and response_text:
             confidence_issues = await self._validate_factual_response(user_input, response_text)
@@ -291,36 +386,60 @@ class AletheiaAgent:
                 "route_used": route_used,
                 "execution_time": result.get("execution_time"),
                 "estimated_cost": result.get("estimated_cost", 0),
-                "factual_question": should_use_external,
+                "routing_assessment": "meta_cognitive",
+                "recommended_external": should_use_external,
+                "consultation_metadata": result.get("consultation_metadata"),
             },
-            "approach": "direct",
+            "approach": "meta_cognitive",
         }
 
     def _build_context_summary(self) -> str:
         """Build a clean context summary for external LLM calls."""
         context_parts = []
         
-        # Add user information if available
-        if self.context.user_name:
-            context_parts.append(f"User name: {self.context.user_name}")
+        # Check if the current input (last conversation entry) has references
+        current_input = ""
+        if self.context.conversation_history:
+            for entry in reversed(self.context.conversation_history):
+                if entry["type"] == "user_input":
+                    current_input = entry["content"]
+                    break
         
-        # Add conversation topic if identified
-        if self.context.current_topic:
+        # Simple reference detection for context building
+        has_references = any(pronoun in current_input.lower() for pronoun in 
+                           ["он", "она", "оно", "они", "его", "её", "их", "им", "ей", "ему", "ими", "ним", "ней", "нём", 
+                            "это", "то", "такое", "этого", "того", "it", "that", "this", "them", "those"])
+        
+        if has_references and self.context.current_topic:
+            # This is a reference question - prioritize topic context
             context_parts.append(f"Topic: {self.context.current_topic}")
-        
-        # Add recent interaction summary (last 2-3 exchanges)
-        if self.task_history:
-            context_parts.append("Recent conversation:")
-            for i, task_record in enumerate(self.task_history[-2:], 1):
-                user_input = task_record['user_input'][:60]
-                response = task_record['result'].get('response', '')[:80]
-                
-                # Clean up the response preview
-                if len(response) > 80:
-                    response = response[:80] + "..."
-                
-                context_parts.append(f"{i}. User: {user_input}")
-                context_parts.append(f"   Assistant: {response}")
+            
+            # Add only the most recent relevant exchange about this topic
+            if self.task_history:
+                for task_record in reversed(self.task_history[-3:]):  # Check last 3 exchanges
+                    user_input = task_record['user_input'].lower()
+                    response = task_record['result'].get('response', '').lower()
+                    
+                    # Check if this exchange was about the current topic
+                    topic_lower = self.context.current_topic.lower()
+                    if (topic_lower in user_input or topic_lower in response or 
+                        any(keyword in user_input for keyword in ["водяной пар", "water vapor", "пар", "vapor"])):
+                        
+                        user_preview = task_record['user_input'][:100]
+                        response_preview = task_record['result'].get('response', '')[:120]
+                        
+                        context_parts.append(f"Previous exchange about {self.context.current_topic}:")
+                        context_parts.append(f"User: {user_preview}")
+                        context_parts.append(f"Assistant: {response_preview}")
+                        break  # Only include the most recent relevant exchange
+        else:
+            # Regular conversation - include minimal context
+            if self.context.current_topic:
+                context_parts.append(f"Topic: {self.context.current_topic}")
+            
+            # Only add user name if it's specifically relevant and not a reference question
+            if self.context.user_name and not has_references:
+                context_parts.append(f"User name: {self.context.user_name}")
         
         return "\n".join(context_parts) if context_parts else ""
 
@@ -419,18 +538,21 @@ Focus on creating a cohesive response that feels like a complete answer to the o
                 experience += f"Route: {details.get('route_used', 'unknown')}\n"
                 experience += f"Cost: ${details.get('estimated_cost', 0):.4f}\n"
 
+            # Prepare metadata with proper types (ChromaDB only accepts str, int, float, bool)
+            metadata = {
+                "session_id": self.session_id,
+                "approach": result.get("approach", "unknown"),
+                "task_type": result.get("type", "unknown"),
+                "user_input_length": len(user_input),
+                "user_name": self.context.user_name or "unknown",
+                "language": self.context.last_user_language,
+            }
+
             # Store in vector database
             await self.vector_store.store_memory(
                 content=experience,
                 memory_type="task_experience",
-                metadata={
-                    "session_id": self.session_id,
-                    "approach": result.get("approach"),
-                    "task_type": result.get("type"),
-                    "user_input_length": len(user_input),
-                    "user_name": self.context.user_name,
-                    "language": self.context.last_user_language,
-                },
+                metadata=metadata,
             )
 
         except Exception as e:

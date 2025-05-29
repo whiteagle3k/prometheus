@@ -119,46 +119,112 @@ class ConversationContext:
         return "en"
     
     def _extract_user_name(self, user_input: str) -> None:
-        """Extract user name from input if mentioned."""
+        """Extract user name from input using configured patterns."""
         patterns = self.conversation_config.get("name_extraction", {}).get("patterns", [])
+        
+        # Common directional/non-name words that should never be names
+        non_name_words = {
+            "вверх", "вниз", "влево", "вправо", "назад", "вперед", "туда", "сюда", "обратно",
+            "up", "down", "left", "right", "back", "forward", "there", "here",
+            "что", "как", "где", "когда", "почему", "зачем", "кто", "куда", "откуда",
+            "who", "what", "where", "when", "why", "how", "which", "whom",
+            "такое", "происходит", "образуется", "поднимается", "опускается"
+        }
         
         for pattern in patterns:
             match = re.search(pattern, user_input.lower())
             if match:
-                self.user_name = match.group(1).capitalize()
-                break
+                extracted_name = match.group(1).strip().capitalize()
+                # Only update if it's a reasonable name (not a common word or direction)
+                if (len(extracted_name) > 1 and 
+                    extracted_name.lower() not in non_name_words and
+                    # Additional check: don't extract if the current user already has a valid name
+                    (not self.user_name or self.user_name.lower() in {"unknown", "неизвестно"})):
+                    self.user_name = extracted_name
+                    print(f"👤 User name extracted: {self.user_name}")
+                    break
     
     def _update_topic_tracking(self, text: str, is_assistant: bool = False) -> None:
         """Update topic tracking from text."""
         # Extract important words/entities
         entities = self._extract_entities(text)
         
-        # Update entity frequency
+        # Filter out user names from topic tracking to avoid confusion
+        filtered_entities = []
         for entity in entities:
+            # Skip if this entity is the user's name
+            if self.user_name and entity.lower() == self.user_name.lower():
+                continue
+            filtered_entities.append(entity)
+        
+        # Update entity frequency
+        for entity in filtered_entities:
             self.entity_mentions[entity] = self.entity_mentions.get(entity, 0) + 1
         
         # Update current topic (most frequently mentioned entity recently)
-        if entities:
+        if filtered_entities:
             # Weight recent entities more heavily
             recent_weight = 2 if not is_assistant else 1
-            for entity in entities:
+            for entity in filtered_entities:
                 self.entity_mentions[entity] = self.entity_mentions.get(entity, 0) + recent_weight
             
-            # Set current topic to most frequent recent entity
+            # Set current topic to most frequent recent entity, but prefer scientific nouns over verbs
             sorted_entities = sorted(self.entity_mentions.items(), key=lambda x: x[1], reverse=True)
+            
+            # Define scientific nouns that should be preferred as topics
+            scientific_nouns = {"лёд", "лед", "ice", "пар", "vapor", "вода", "water", "газ", "gas", 
+                              "молекула", "атом", "энергия", "температура", "давление", "химия", "физика"}
+            
+            # Generic verbs that should not be topics
+            generic_verbs = {"образуется", "происходит", "состоит", "является", "делает", "creates", "forms", "happens"}
+            
             if sorted_entities:
-                self.current_topic = sorted_entities[0][0]
+                # First, try to find a scientific noun in the top entities
+                for entity, count in sorted_entities[:5]:  # Check top 5
+                    if (entity.lower() in scientific_nouns and 
+                        (not self.user_name or entity.lower() != self.user_name.lower())):
+                        self.current_topic = entity
+                        break
+                else:
+                    # If no scientific noun found, use the most frequent non-verb, non-username entity
+                    for entity, count in sorted_entities:
+                        if (entity.lower() not in generic_verbs and 
+                            (not self.user_name or entity.lower() != self.user_name.lower())):
+                            self.current_topic = entity
+                            break
     
     def _extract_entities(self, text: str) -> List[str]:
         """Extract potential entities/topics from text."""
-        # Simple entity extraction - important words longer than 3 chars
-        words = re.findall(r'\b\w{4,}\b', text.lower())
+        # Extract words of 3+ chars, but prioritize 4+ chars
+        words_4plus = re.findall(r'\b\w{4,}\b', text.lower())
+        words_3plus = re.findall(r'\b\w{3}\b', text.lower())
         
-        # Filter out common words
+        # Filter out common non-topical words but keep scientific/technical terms
         common_words = {"that", "this", "they", "them", "were", "been", "have", "will", "your", "with",
-                       "это", "эти", "были", "есть", "будет", "ваш", "для", "как", "что"}
+                       "это", "эти", "были", "есть", "будет", "ваш", "для", "как", "что", "есть", "может",
+                       "когда", "здравствуйте", "спасибо", "хочу", "меня", "зовут", "поговорить", "вопрос"}
         
-        entities = [word for word in words if word not in common_words]
+        # Scientific/technical terms that should always be preserved (including 3-char terms)
+        scientific_terms = {"водяной", "пар", "vapor", "химический", "физический", "молекула", "процесс", 
+                           "образуется", "температура", "конденсация", "осадки", "капли", "газообразный",
+                           "жидкий", "твердый", "энергия", "атмосфера", "облака", "испарение", 
+                           "лёд", "лед", "ice", "газ", "gas"}
+        
+        # Important 3-character scientific terms
+        important_3char = {"лёд", "лед", "пар", "газ", "ice", "gas"}
+        
+        entities = []
+        
+        # First, add 4+ character words
+        for word in words_4plus:
+            if word in scientific_terms or (word not in common_words):
+                entities.append(word)
+        
+        # Then, add important 3-character scientific terms
+        for word in words_3plus:
+            if word in important_3char and word not in entities:
+                entities.append(word)
+        
         return entities[:5]  # Return top 5 to avoid noise
     
     def _detect_references(self, user_input: str) -> Optional[Dict[str, Any]]:
@@ -173,12 +239,45 @@ class ConversationContext:
         continuation_phrases = self.conversation_config.get("reference_detection", {}).get("continuation_phrases", [])
         has_continuation = any(phrase in user_lower for phrase in continuation_phrases)
         
-        if has_pronouns or has_continuation:
+        # Check for implicit continuation patterns (questions starting with "а", "но", "если")
+        implicit_continuation_patterns = [
+            r'\bа\s+если\b',  # "а если" (but if)
+            r'\bно\s+если\b',  # "но если" (but if)
+            r'\bа\s+что\b',   # "а что" (and what)
+            r'\bа\s+как\b',   # "а как" (and how)
+            r'\bа\s+где\b',   # "а где" (and where)
+            r'\bа\s+когда\b', # "а когда" (and when)
+            r'^\s*(а|но|и)\s+', # Starting with "а", "но", "и" (and, but)
+            r'\bif\s+not\b',   # "if not"
+            r'\bbut\s+if\b',   # "but if"
+            r'\band\s+if\b',   # "and if"
+            r'\band\s+what\b', # "and what"
+            r'\band\s+how\b',  # "and how"
+        ]
+        has_implicit_continuation = any(re.search(pattern, user_lower) for pattern in implicit_continuation_patterns)
+        
+        # Check for topic-specific continuation (mentioning key terms from current topic)
+        has_topic_continuation = False
+        if self.current_topic:
+            topic_words = self.current_topic.lower().split()
+            # Also check for related terms
+            if any(word in topic_words for word in ["лед", "ice"]):
+                # Ice-related terms that might be continuations
+                ice_related = ["давление", "температура", "pressure", "temperature", "условия", "conditions"]
+                has_topic_continuation = any(term in user_lower for term in ice_related)
+            elif any(word in topic_words for word in ["вода", "water", "пар", "vapor"]):
+                # Water-related continuations
+                water_related = ["давление", "температура", "pressure", "temperature", "состояние", "state"]
+                has_topic_continuation = any(term in user_lower for term in water_related)
+        
+        if has_pronouns or has_continuation or has_implicit_continuation or has_topic_continuation:
             # Find what they might be referring to
             reference_target = self._find_reference_target(user_input)
             return {
                 "has_pronouns": has_pronouns,
                 "has_continuation": has_continuation,
+                "has_implicit_continuation": has_implicit_continuation,
+                "has_topic_continuation": has_topic_continuation,
                 "target": reference_target,
                 "current_topic": self.current_topic
             }
@@ -296,16 +395,79 @@ class ConversationContext:
         
         return ""
     
-    def should_use_external_routing(self, user_input: str) -> bool:
-        """Determine if input should be routed to external LLM."""
-        factual_indicators = self.routing_config.get("factual_indicators", [])
-        min_words = self.identity_config.get("operational_guidelines", {}).get("routing_policy", {}).get("thresholds", {}).get("factual_question_min_words", 5)
+    def build_routing_assessment_prompt(self, user_input: str) -> str:
+        """Build a prompt for the local LLM to assess if external routing is needed."""
+        is_russian = self.last_user_language == "ru"
         
-        user_lower = user_input.lower()
-        is_factual = any(indicator in user_lower for indicator in factual_indicators)
-        is_substantial = len(user_input.split()) > min_words
+        # Check if this is a follow-up to a scientific topic for context
+        is_scientific_context = False
+        if self.current_topic:
+            scientific_topics = [
+                "водяной", "пар", "снег", "лед", "температура", "физик", "химия", "биология",
+                "water", "vapor", "snow", "ice", "temperature", "physics", "chemistry", "biology",
+                "газ", "жидкость", "твердый", "состояние", "молекула", "атом", "давление",
+                "gas", "liquid", "solid", "state", "molecule", "atom", "pressure"
+            ]
+            topic_lower = self.current_topic.lower()
+            is_scientific_context = any(sci_word in topic_lower for sci_word in scientific_topics)
         
-        return is_factual and is_substantial
+        if is_russian:
+            context_note = ""
+            if is_scientific_context:
+                context_note = f" Текущая тема разговора: {self.current_topic}."
+            
+            routing_prompt = f"""Вопрос пользователя: "{user_input}"{context_note}
+
+Определи, нужно ли передать ЭТОТ КОНКРЕТНЫЙ ВОПРОС внешней модели.
+
+ОБЯЗАТЕЛЬНО отвечай [EXTERNAL] если вопрос требует:
+- Точных научных фактов (физика, химия, биология, медицина, астрономия)
+- Технических знаний (ракеты, топливо, двигатели, материалы, инженерия)
+- Специальных расчетов или формул
+- Актуальной информации (новости, статистика, события)
+- Сложных технических объяснений
+- Научных или технических определений ("что такое X", "из чего делают X")
+- Вопросов про состав, строение, принципы работы
+
+ОТВЕЧАЙ НОРМАЛЬНО (НЕ [EXTERNAL]) только если вопрос:
+- Простое приветствие ("привет", "как дела", "знакомство")
+- Простое общение ("хочу поболтать", "просто поговорить")
+- О твоих возможностях ("что умеешь", "кто ты")
+- Общие житейские темы без технических деталей
+- Простое продолжение разговора в том же стиле
+
+ВАЖНО: При любом сомнении о технических фактах - отвечай [EXTERNAL]!
+Лучше переспросить эксперта, чем дать неточную информацию."""
+
+        else:
+            context_note = ""
+            if is_scientific_context:
+                context_note = f" Current conversation topic: {self.current_topic}."
+            
+            routing_prompt = f"""User question: "{user_input}"{context_note}
+
+Determine if THIS SPECIFIC QUESTION needs external model.
+
+MUST respond [EXTERNAL] if question requires:
+- Precise scientific facts (physics, chemistry, biology, medicine, astronomy)
+- Technical knowledge (rockets, fuel, engines, materials, engineering)
+- Specific calculations or formulas
+- Current information (news, statistics, events)
+- Complex technical explanations
+- Scientific or technical definitions ("what is X", "what is X made of")
+- Questions about composition, structure, how things work
+
+RESPOND NORMALLY (NOT [EXTERNAL]) only if question is:
+- Simple greeting ("hello", "how are you", "introduction")
+- Casual conversation ("want to chat", "just talk")
+- About your capabilities ("what can you do", "who are you")
+- General everyday topics without technical details
+- Simple conversation continuation in same style
+
+IMPORTANT: When in doubt about technical facts - respond [EXTERNAL]!
+Better to ask an expert than give inaccurate information."""
+
+        return routing_prompt
     
     def should_plan_task(self, user_input: str) -> bool:
         """Determine if task requires planning."""
@@ -314,7 +476,7 @@ class ConversationContext:
         
         user_lower = user_input.lower()
         
-        # Check for planning indicators
+        # Check for explicit planning indicators (step by step, how to, etc.)
         has_planning_keywords = any(indicator in user_lower for indicator in planning_indicators)
         
         # Check if it's a dismissive phrase (but not if it's also a continuation phrase)
@@ -332,16 +494,23 @@ class ConversationContext:
                 for phrase in dismissive_phrases if len(phrase.split()) > 1
             )
         
-        # Very complex questions
-        is_very_complex = len(user_input.split()) > 30
+        # Very complex questions (significantly longer)
+        is_very_complex = len(user_input.split()) > 50  # Increased threshold
         
-        # Multiple parts/questions
-        has_multiple_parts = (
-            user_input.count('?') > 1 or
-            any(sep in user_input for sep in [" then ", " next ", " after that ", " затем ", " потом ", " далее "])
+        # Multiple distinct tasks/instructions (not just alternative phrasing)
+        has_sequential_tasks = any(sep in user_input for sep in [
+            " then ", " next ", " after that ", " затем ", " потом ", " далее ",
+            " сначала ", " first ", " во-первых ", " secondly ", " во-вторых "
+        ])
+        
+        # True multi-step requests (not just alternative question forms)
+        has_multi_step_indicators = (
+            has_sequential_tasks or
+            (user_input.count('?') > 2 and len(user_input.split()) > 20)  # 3+ questions AND substantial length
         )
         
-        return (has_planning_keywords or is_very_complex or has_multiple_parts) and not (is_dismissive and len(user_input.split()) < 10)
+        # Only trigger planning for genuine multi-step or instructional requests
+        return (has_planning_keywords or is_very_complex or has_multi_step_indicators) and not (is_dismissive and len(user_input.split()) < 10)
     
     def get_context_summary(self) -> Dict[str, Any]:
         """Get a summary of current context state."""
