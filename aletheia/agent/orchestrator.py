@@ -220,11 +220,11 @@ class AletheiaAgent:
         # Only trigger planning for clearly complex or multi-step tasks
         planning_indicators = [
             # Multi-word phrases that strongly indicate planning need
-            "step by step", "пошагово", "explain how to", "объясни как",
+            "step by step", "step-by-step", "пошагово", "explain how to", "объясни как",
             "teach me how", "научи меня как", "guide me through", "покажи как",
             "what steps", "какие шаги", "process of", "процесс создания",
-            "make a plan", "создай план", "составь план", "break down", "разбери детально",
-            "comprehensive guide", "полное руководство", "detailed explanation", "подробное объяснение",
+            "make a plan", "create a plan", "создай план", "составь план", "break down", "разбери детально",
+            "comprehensive guide", "comprehensive plan", "полное руководство", "detailed explanation", "подробное объяснение",
             "объясни как пошагово", "покажи пошагово"
         ]
 
