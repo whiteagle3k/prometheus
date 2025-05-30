@@ -225,39 +225,25 @@ class LLMRouter:
         # Get key personality traits
         personality_traits = ", ".join(identity.personality.personality[:3]) if identity.personality.personality else "technically precise, analytical"
         
-        # Build conversation context
-        context_parts = []
-        
-        if task.user_name:
-            context_parts.append(f"- User: {task.user_name}")
-        
-        # Extract current topic from conversation context
-        current_topic = "general conversation"
-        if task.conversation_context:
-            # Simple topic extraction from context
-            if "Topic:" in task.conversation_context:
-                topic_line = [line for line in task.conversation_context.split('\n') if line.strip().startswith('Topic:')]
-                if topic_line:
-                    current_topic = topic_line[0].replace('Topic:', '').strip()
-        
-        context_parts.append(f"- Current topic: {current_topic}")
-        
-        # Add conversation history summary if available
-        if task.conversation_context and "Previous exchange" in task.conversation_context:
-            context_parts.append("- Previous exchange: User asked about related scientific concepts")
-        
         # Detect language for response format
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in task.prompt.lower())
         response_language = "Russian" if is_russian else "English"
         
+        # Build the consultation prompt with comprehensive context
         consultation_prompt = f"""{aletheia_intro}
 
 My key traits: {personality_traits}
 
-Current conversation context:
-{chr(10).join(context_parts)}
+"""
+        
+        # Add comprehensive conversation context if available
+        if task.conversation_context and task.conversation_context.strip():
+            consultation_prompt += f"""CONVERSATION CONTEXT:
+{task.conversation_context}
 
-Question I need expert consultation on: "{task.prompt}"
+"""
+        
+        consultation_prompt += f"""Question I need expert consultation on: "{task.prompt}"
 
 This question requires deeper knowledge than I currently have. Please provide a structured consultation response:
 
@@ -265,7 +251,7 @@ This question requires deeper knowledge than I currently have. Please provide a 
 [Detailed explanation with scientific accuracy and relevant context]
 
 **2. USER RESPONSE** (for me to provide to the user):
-[Natural, conversational answer in {response_language} that maintains my personality: technically precise, concise, evidence-based, no flattery]
+[Natural, conversational answer in {response_language} that maintains my personality: technically precise, concise, evidence-based, no flattery. If the user's question references previous conversation, make sure to address those references appropriately.]
 
 **3. MEMORY POINTS** (key facts for my future reference):
 [3-5 bullet points of essential information I should remember]
@@ -284,36 +270,6 @@ When an AI agent requests consultation:
 3. Identify key information worth remembering
 
 Your role is to be a knowledgeable consultant, not to impersonate the requesting agent. Structure your responses clearly and be precise with scientific and factual information."""
-
-    async def _summarize_context(self, context: str) -> str:
-        """Create a brief summary of conversation context for external LLM."""
-        # For now, use a simple truncation with key information extraction
-        # In the future, this could use a summarization model
-        
-        if len(context) <= 300:
-            return context
-        
-        # Extract key information patterns
-        lines = context.split('\n')
-        important_lines = []
-        
-        for line in lines:
-            line = line.strip()
-            # Keep lines with key information
-            if any(keyword in line.lower() for keyword in [
-                'user:', 'пользователь:', 'name', 'имя', 'topic', 'тема', 
-                'question', 'вопрос', 'task', 'задача', 'problem', 'проблема'
-            ]):
-                important_lines.append(line)
-        
-        # If we have important lines, use them; otherwise truncate
-        if important_lines:
-            summary = '\n'.join(important_lines[:5])  # Top 5 important lines
-            if len(summary) > 300:
-                summary = summary[:300] + "..."
-            return summary
-        else:
-            return context[:300] + "..."
 
     async def _filter_external_response(self, external_response: str, original_prompt: str) -> tuple[str, dict]:
         """Parse structured consultation response and extract user response and consultation metadata."""

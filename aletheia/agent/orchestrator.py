@@ -354,10 +354,70 @@ class AletheiaAgent:
             }
 
     def _build_context_summary(self) -> str:
-        """Build a clean context summary for external LLM calls."""
+        """Build comprehensive conversation context for external LLM calls."""
+        if not self.task_history:
+            return ""
+        
         context_parts = []
         
-        # Check if the current input (last conversation entry) has references
+        # Start with user identification if available
+        if self.context.user_name:
+            context_parts.append(f"=== CONVERSATION CONTEXT ===")
+            context_parts.append(f"User: {self.context.user_name}")
+        else:
+            context_parts.append(f"=== CONVERSATION CONTEXT ===")
+        
+        # Add session information
+        context_parts.append(f"Session: {self.session_id}")
+        context_parts.append(f"Total interactions: {len(self.task_history)}")
+        
+        # Current topic if available
+        if self.context.current_topic:
+            context_parts.append(f"Current topic: {self.context.current_topic}")
+        
+        context_parts.append("") # Empty line for separation
+        
+        # Build comprehensive conversation summary
+        # For recent conversations (last 10 exchanges), include full context
+        # For older ones, include condensed summaries
+        
+        recent_exchanges = min(10, len(self.task_history))
+        
+        if recent_exchanges > 0:
+            context_parts.append("=== RECENT CONVERSATION ===")
+            
+            for i, task_record in enumerate(self.task_history[-recent_exchanges:]):
+                exchange_num = len(self.task_history) - recent_exchanges + i + 1
+                user_input = task_record['user_input']
+                response = task_record['result'].get('response', 'No response provided')
+                route = task_record['result'].get('execution_details', {}).get('route_used', 'unknown')
+                
+                # Format exchange clearly
+                context_parts.append(f"Exchange {exchange_num}:")
+                context_parts.append(f"  User: {user_input}")
+                context_parts.append(f"  Assistant ({route}): {response}")
+                context_parts.append("") # Empty line between exchanges
+        
+        # If we have older history, provide a summary
+        older_exchanges = len(self.task_history) - recent_exchanges
+        if older_exchanges > 0:
+            context_parts.append(f"=== EARLIER CONVERSATION ===")
+            context_parts.append(f"({older_exchanges} earlier exchanges covering various topics)")
+            
+            # Extract key topics from earlier exchanges
+            earlier_topics = []
+            for task_record in self.task_history[:-recent_exchanges]:
+                conv_context = task_record.get('conversation_context', {})
+                topic = conv_context.get('current_topic')
+                if topic and topic not in earlier_topics:
+                    earlier_topics.append(topic)
+            
+            if earlier_topics:
+                context_parts.append(f"Topics discussed: {', '.join(earlier_topics[:5])}")
+            
+            context_parts.append("")
+        
+        # Add current context indicators
         current_input = ""
         if self.context.conversation_history:
             for entry in reversed(self.context.conversation_history):
@@ -365,91 +425,69 @@ class AletheiaAgent:
                     current_input = entry["content"]
                     break
         
-        # Enhanced reference detection including implicit continuation patterns
-        has_references = any(pronoun in current_input.lower() for pronoun in 
-                           ["он", "она", "оно", "они", "его", "её", "их", "им", "ей", "ему", "ими", "ним", "ней", "нём", 
-                            "это", "то", "такое", "этого", "того", "it", "that", "this", "them", "those"])
-        
-        # Also check for implicit continuation patterns (questions starting with "а", "но", "если")
-        implicit_continuation_patterns = [
-            r'\bа\s+если\b',  # "а если" (but if)
-            r'\bа\s+что\b',   # "а что" (and what)
-            r'^\s*(а|но|и)\s+', # Starting with "а", "но", "и" (and, but)
-            r'\bкогда\s+(это|то)\b',  # "когда это/то" (when this/that)
-            r'\bгде\s+(это|то)\b',   # "где это/то" (where this/that)
-            r'\bпочему\s+(это|то)\b', # "почему это/то" (why this/that)
-        ]
-        has_implicit_continuation = any(re.search(pattern, current_input.lower()) for pattern in implicit_continuation_patterns)
-        
-        if has_references or has_implicit_continuation:
-            # This is a reference question - search for relevant context more thoroughly
-            if self.context.current_topic:
-                context_parts.append(f"Topic: {self.context.current_topic}")
+        # Detect if current question is a reference/continuation
+        if current_input:
+            has_references = any(pronoun in current_input.lower() for pronoun in 
+                               ["он", "она", "оно", "они", "его", "её", "их", "им", "ей", "ему", "ими", "ним", "ней", "нём", 
+                                "это", "то", "такое", "этого", "того", "it", "that", "this", "them", "those"])
             
-            # Search through task history for relevant exchanges
-            if self.task_history:
-                # Look for the most relevant previous exchange
-                best_match = None
-                best_score = 0
-                
-                for task_record in reversed(self.task_history[-5:]):  # Check last 5 exchanges
-                    user_input_prev = task_record['user_input'].lower()
-                    response = task_record['result'].get('response', '').lower()
-                    
-                    # Calculate relevance score based on multiple factors
-                    score = 0
-                    
-                    # 1. Topic word matching
-                    if self.context.current_topic:
-                        topic_words = self.context.current_topic.lower().split()
-                        topic_mentioned = any(word in user_input_prev or word in response for word in topic_words if len(word) > 2)
-                        if topic_mentioned:
-                            score += 3
-                    
-                    # 2. Word overlap between current input and previous exchanges
-                    current_words = set(word.lower().strip('.,!?;:') for word in current_input.split() if len(word) > 3)
-                    prev_words = set(word.lower().strip('.,!?;:') for word in task_record['user_input'].split() if len(word) > 3)
-                    response_words = set(word.lower().strip('.,!?;:') for word in task_record['result'].get('response', '').split() if len(word) > 3)
-                    
-                    word_overlap = len(current_words & (prev_words | response_words))
-                    score += word_overlap
-                    
-                    # 3. Check for common reference patterns
-                    reference_indicators = ["когда", "где", "почему", "как", "что", "кто", "when", "where", "why", "how", "what", "who"]
-                    has_reference_word = any(word in current_input.lower() for word in reference_indicators)
-                    if has_reference_word:
-                        score += 1
-                    
-                    # 4. Prefer more recent exchanges
-                    recency_bonus = len(self.task_history) - self.task_history.index(task_record)
-                    score += recency_bonus * 0.1
-                    
-                    # 5. Boost score if previous exchange contains substantial content
-                    if len(task_record['result'].get('response', '')) > 100:
-                        score += 1
-                    
-                    if score > best_score:
-                        best_score = score
-                        best_match = task_record
-                
-                # Include the best match if it's relevant enough
-                if best_match and best_score > 1:
-                    user_preview = best_match['user_input'][:100]
-                    response_preview = best_match['result'].get('response', '')[:120]
-                    
-                    context_parts.append(f"Previous exchange:")
-                    context_parts.append(f"User: {user_preview}")
-                    context_parts.append(f"Assistant: {response_preview}")
-        else:
-            # Regular conversation - include minimal context
-            if self.context.current_topic:
-                context_parts.append(f"Topic: {self.context.current_topic}")
+            implicit_continuation_patterns = [
+                r'\bа\s+если\b', r'\bа\s+что\b', r'^\s*(а|но|и)\s+',
+                r'\bкогда\s+(это|то)\b', r'\bгде\s+(это|то)\b', r'\bпочему\s+(это|то)\b'
+            ]
+            has_implicit_continuation = any(re.search(pattern, current_input.lower()) for pattern in implicit_continuation_patterns)
             
-            # Only add user name if it's specifically relevant and not a reference question
-            if self.context.user_name and not has_references and not has_implicit_continuation:
-                context_parts.append(f"User name: {self.context.user_name}")
+            if has_references or has_implicit_continuation:
+                context_parts.append("=== CONTEXT NOTE ===")
+                context_parts.append("The user's current question contains references to previous conversation.")
+                context_parts.append("Please maintain continuity and understand what they're referring to.")
+                context_parts.append("")
         
-        return "\n".join(context_parts) if context_parts else ""
+        context_parts.append("=== END CONTEXT ===")
+        context_parts.append("")
+        
+        full_context = "\n".join(context_parts)
+        
+        # With 128k context window, we can be generous, but still reasonable
+        # Limit to ~8000 characters to leave room for the actual question and response
+        if len(full_context) > 8000:
+            # If too long, keep the recent exchanges and trim older history
+            context_parts_trimmed = []
+            context_parts_trimmed.append("=== CONVERSATION CONTEXT ===")
+            if self.context.user_name:
+                context_parts_trimmed.append(f"User: {self.context.user_name}")
+            context_parts_trimmed.append(f"Total interactions: {len(self.task_history)} (showing recent)")
+            if self.context.current_topic:
+                context_parts_trimmed.append(f"Current topic: {self.context.current_topic}")
+            context_parts_trimmed.append("")
+            
+            # Keep last 8 exchanges in full detail
+            recent_exchanges = min(8, len(self.task_history))
+            context_parts_trimmed.append("=== RECENT CONVERSATION ===")
+            
+            for i, task_record in enumerate(self.task_history[-recent_exchanges:]):
+                exchange_num = len(self.task_history) - recent_exchanges + i + 1
+                user_input = task_record['user_input']
+                response = task_record['result'].get('response', 'No response provided')
+                route = task_record['result'].get('execution_details', {}).get('route_used', 'unknown')
+                
+                context_parts_trimmed.append(f"Exchange {exchange_num}:")
+                context_parts_trimmed.append(f"  User: {user_input}")
+                context_parts_trimmed.append(f"  Assistant ({route}): {response}")
+                context_parts_trimmed.append("")
+            
+            if has_references or has_implicit_continuation:
+                context_parts_trimmed.append("=== CONTEXT NOTE ===")
+                context_parts_trimmed.append("The user's current question contains references to previous conversation.")
+                context_parts_trimmed.append("Please maintain continuity and understand what they're referring to.")
+                context_parts_trimmed.append("")
+            
+            context_parts_trimmed.append("=== END CONTEXT ===")
+            context_parts_trimmed.append("")
+            
+            full_context = "\n".join(context_parts_trimmed)
+        
+        return full_context
 
     async def _execute_subtask(
         self,
