@@ -10,15 +10,6 @@ Identity-driven AI framework with hybrid LLM routing and conversational memory.
 - **Identity-driven**: Agent personality configured in JSON → easy to extend
 - **Conversational memory**: Persistent context with vector storage and compression
 
-## Quick Start (macOS)
-
-```bash
-git clone https://github.com/whiteagle3k/prometheus.git
-cd prometheus
-./scripts/install_mac.sh
-poetry run aletheia
-```
-
 ## Meet Aletheia 👩
 
 Aletheia is our first female AI agent - a thoughtful research assistant with:
@@ -59,6 +50,16 @@ Aletheia is our first female AI agent - a thoughtful research assistant with:
 - **Processing Pipeline**: Configurable text analysis (no hardcoded patterns)
 - **Multilingual Context**: Seamless Russian/English conversation flow
 - **Cost Optimization**: ~$0.01-0.03 per external consultation
+
+## Quick Start (macOS)
+
+```bash
+git clone https://github.com/whiteagle3k/prometheus.git
+cd prometheus
+./scripts/install_mac.sh
+poetry run aletheia
+```
+
 
 ## Configuration
 
