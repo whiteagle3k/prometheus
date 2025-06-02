@@ -307,4 +307,47 @@ class UserProfileStore:
             await self.save_user_profile(user_name, profile)
             print(f"🗑️  Cleaned {cleaned_count} old data points for {user_name}")
         
-        return cleaned_count 
+        return cleaned_count
+
+    async def reset_user_profile(self, user_name: str) -> bool:
+        """Reset/delete a specific user's profile data."""
+        if not user_name:
+            return False
+            
+        profile_path = self._get_profile_path(user_name)
+        
+        try:
+            if profile_path.exists():
+                profile_path.unlink()  # Delete the file
+                print(f"🗑️  Deleted profile for user: {user_name}")
+                return True
+            else:
+                print(f"ℹ️  No profile found for user: {user_name}")
+                return False
+        except Exception as e:
+            print(f"❌ Error deleting profile for {user_name}: {e}")
+            return False
+    
+    async def reset_all_profiles(self) -> int:
+        """Reset/delete all user profiles. Returns count of deleted profiles."""
+        if not self.storage_dir.exists():
+            return 0
+        
+        deleted_count = 0
+        
+        try:
+            # Find all .json files in the storage directory
+            for profile_file in self.storage_dir.glob("*.json"):
+                try:
+                    profile_file.unlink()
+                    deleted_count += 1
+                    print(f"🗑️  Deleted profile: {profile_file.name}")
+                except Exception as e:
+                    print(f"❌ Error deleting {profile_file.name}: {e}")
+            
+            print(f"🗑️  Reset complete: {deleted_count} profiles deleted")
+            return deleted_count
+            
+        except Exception as e:
+            print(f"❌ Error during profile reset: {e}")
+            return deleted_count 

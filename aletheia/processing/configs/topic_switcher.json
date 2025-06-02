@@ -1,0 +1,32 @@
+{
+  "name": "topic_switcher",
+  "version": "1.0.0",
+  "description": "Configuration for topic switching detection and entity filtering",
+  "parameters": {
+    "topic_change_indicators": [
+      "а теперь", "теперь", "now", 
+      "а что насчёт", "а что про", "что насчёт", "what about",
+      "давай поговорим про", "расскажи про", "tell me about", 
+      "хорошо", "ok", "ладно", 
+      "хватит", "enough", "переходим", "moving on", 
+      "а что", "and what"
+    ],
+    "non_meaningful_words": [
+      "насчёт", "про", "about", "для", "for", "в", "in", "на", "on", "с", "with",
+      "вдруг", "если", "when", "как", "how", "где", "where", "что", "what",
+      "живут", "живет", "есть", "are", "is", "была", "был", "были", "was", "were"
+    ],
+    "semantic_domains": {
+      "paleontology": ["динозавр", "dinosaur"],
+      "physics": ["квантов", "quantum", "кубит", "физик"],
+      "chemistry": ["химия", "chemistry"],
+      "biology": ["биология", "biology"],
+      "geology": ["земл", "earth", "плоск", "flat"]
+    },
+    "reference_words": [
+      "это", "то", "такое", "когда", "где", "что", 
+      "произошло", "случилось", "they", "it", "that", "this"
+    ],
+    "min_entity_length": 2
+  }
+} 

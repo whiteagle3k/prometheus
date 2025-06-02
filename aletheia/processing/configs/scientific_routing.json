@@ -1,0 +1,19 @@
+{
+  "name": "scientific_routing",
+  "version": "1.0.0", 
+  "description": "Configuration for detecting scientific queries that should route to external LLMs",
+  "parameters": {
+    "scientific_keywords": [
+      "квантов", "quantum", "физик", "physics", "химия", "chemistry", 
+      "биология", "biology", "математика", "math", "программирование", "programming", 
+      "инженерия", "engineering", "принципы", "principles", "механизм", "mechanism", 
+      "как работает", "how does", "объясни", "explain", "подробно", "detailed", 
+      "детально", "in detail"
+    ],
+    "complex_query_indicators": [
+      "подробно", "detailed", "принципы", "principles", "объясни", "explain"
+    ],
+    "distance_threshold": 0.7,
+    "memory_relevance_threshold": 0.8
+  }
+} 

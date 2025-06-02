@@ -239,6 +239,7 @@ prometheus/
 ## Documentation
 
 - **[Architecture](docs/architecture.md)** - Detailed system design and philosophy
+- **[Memory System](docs/memory.md)** - Three-tier memory architecture and safety features
 - **[Configuration](docs/configuration.md)** - Complete setup and customization guide  
 - **[Troubleshooting](docs/troubleshooting.md)** - Common issues and solutions
 

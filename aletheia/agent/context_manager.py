@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..processing.pipeline import create_context_analysis_pipeline
 from ..processing.extractors import EntityExtractor, NameExtractor
 from ..processing.detectors import ReferenceDetector
+from ..processing.config import get_processor_config
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,9 @@ class ContextManager:
         self.entity_extractor = EntityExtractor()
         self.name_extractor = NameExtractor()
         self.reference_detector = ReferenceDetector()
+        
+        # Load topic switching configuration
+        self.topic_config = get_processor_config("topic_switcher").parameters
         
         # Properties expected by orchestrator
         self.current_topic: Optional[str] = None
@@ -247,26 +251,94 @@ class ContextManager:
         else:
             self.last_user_language = "en"
         
-        # Check if this is a reference question
-        ref_result = self.reference_detector.process(user_input)
-        is_reference = ref_result.success and ref_result.data.get("has_references", False)
-        
-        # Extract entities and update current topic (but preserve topic for reference questions)
+        # Extract entities first
         entity_result = self.entity_extractor.process(user_input)
+        new_topic = None
+        new_entities = []
+        
         if entity_result.success and entity_result.data:
             new_entities = entity_result.data
             
-            # Don't overwrite current topic with reference words if this is a reference question
-            if not is_reference or not self.current_topic:
-                # Only update topic if it's not a reference question or we don't have a topic yet
-                self.current_topic = new_entities[0]
+            # Filter out non-meaningful words and prioritize nouns
+            meaningful_entities = []
+            non_meaningful_words = set(self.topic_config.get("non_meaningful_words", []))
+            min_length = self.topic_config.get("min_entity_length", 2)
+            
+            for entity in new_entities:
+                entity_lower = entity.lower()
+                # Skip prepositions, particles, and common verbs
+                if entity_lower not in non_meaningful_words and len(entity) > min_length:
+                    meaningful_entities.append(entity)
+            
+            # Use the first meaningful entity, or fall back to first entity if none found
+            if meaningful_entities:
+                new_topic = meaningful_entities[0]
             else:
-                # For reference questions, only update if the new entity is more specific
-                # (longer than current topic and not a common reference word)
-                reference_words = {"это", "то", "такое", "когда", "где", "что", "произошло", "случилось"}
-                if (new_entities[0].lower() not in reference_words and 
-                    len(new_entities[0]) > len(self.current_topic)):
-                    self.current_topic = new_entities[0]
+                new_topic = new_entities[0]
+        
+        # Check for explicit topic change indicators FIRST (higher priority than reference detection)
+        topic_change_indicators = self.topic_config.get("topic_change_indicators", [])
+        
+        user_input_lower = user_input.lower()
+        has_explicit_topic_change = any(indicator in user_input_lower for indicator in topic_change_indicators)
+        
+        # If there's an explicit topic change indicator, treat as topic change regardless of pronouns
+        if has_explicit_topic_change and new_topic:
+            self.current_topic = new_topic
+            print(f"🔄 Topic changed to: {new_topic}")
+            is_reference = False  # Override reference detection
+        else:
+            # Only check for references if no explicit topic change detected
+            ref_result = self.reference_detector.process(user_input)
+            is_reference = ref_result.success and ref_result.data.get("has_references", False)
+            
+            # Handle topic updates based on reference detection
+            if not is_reference and new_topic:
+                # Not a reference - check if we should update topic
+                if not self.current_topic:
+                    # No current topic, set the new one
+                    self.current_topic = new_topic
+                    print(f"🔄 Topic changed to: {new_topic}")
+                else:
+                    # Check if new topic is significantly different from current
+                    current_lower = self.current_topic.lower()
+                    new_lower = new_topic.lower()
+                    
+                    # Topics are different if:
+                    # 1. No common words (except short ones)
+                    # 2. Different semantic domains (detected by keywords)
+                    current_words = set(current_lower.split())
+                    new_words = set(new_lower.split())
+                    common_words = current_words & new_words
+                    meaningful_common = [w for w in common_words if len(w) > 3]
+                    
+                    # Check for semantic domain differences
+                    science_domains = self.topic_config.get("semantic_domains", {})
+                    
+                    current_domain = None
+                    new_domain = None
+                    
+                    for domain, keywords in science_domains.items():
+                        for keyword in keywords:
+                            if keyword in current_lower:
+                                current_domain = domain
+                            if keyword in new_lower:
+                                new_domain = domain
+                    
+                    # If domains are different or no meaningful overlap, change topic
+                    if (current_domain != new_domain and new_domain is not None) or not meaningful_common:
+                        self.current_topic = new_topic
+                        print(f"🔄 Topic switched from '{current_lower}' to '{new_topic}'")
+                    else:
+                        print(f"📝 Continuing topic: {self.current_topic}")
+            
+            elif is_reference:
+                # For reference questions, only update if current topic is very generic
+                reference_words = set(self.topic_config.get("reference_words", []))
+                if not self.current_topic or self.current_topic.lower() in reference_words:
+                    if new_topic:
+                        self.current_topic = new_topic
+                print(f"🔗 Reference to topic: {self.current_topic}")
         
         # Extract user name
         name_result = self.name_extractor.process(user_input)

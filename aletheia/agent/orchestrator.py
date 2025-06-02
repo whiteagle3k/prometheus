@@ -15,6 +15,7 @@ from ..memory.summariser import MemorySummariser
 from ..memory.vector_store import VectorStore
 from ..memory.hierarchical_store import HierarchicalMemoryStore
 from ..memory.user_profile_store import UserProfileStore
+from ..processing.config import get_processor_config
 from .context_manager import ConversationContext
 from .planner import Plan, SubTask, TaskPlanner
 from .reflexion import ReflectionEngine
@@ -55,6 +56,9 @@ class AletheiaAgent:
         # Load identity configuration
         self.identity_config = load_identity_config()
         self.validation_config = get_validation_config()
+        
+        # Load scientific routing configuration
+        self.scientific_config = get_processor_config("scientific_routing").parameters
 
         # Initialize conversation context manager
         self.context = ConversationContext(self.identity_config)
@@ -134,6 +138,18 @@ class AletheiaAgent:
 
             # Step 2: Determine if task needs planning
             needs_planning = self.context.should_plan_task(user_input)
+            
+            # Override planning for scientific/technical topics that should go to external LLM
+            # Check if this is a scientific/technical question that should use external LLM instead of planning
+            scientific_keywords = self.scientific_config.get("scientific_keywords", [])
+            
+            user_input_lower = user_input.lower()
+            is_scientific_query = any(keyword in user_input_lower for keyword in scientific_keywords)
+            
+            # If it's a scientific query with empty memory, prefer external LLM over planning
+            if is_scientific_query and len(relevant_memories) == 0:
+                needs_planning = False
+                print("🔬 Scientific query with empty memory - routing to external LLM instead of planning")
 
             if needs_planning:
                 # Complex task - use planning approach
@@ -193,22 +209,67 @@ class AletheiaAgent:
         """Retrieve relevant memories for context."""
 
         try:
+            # Enhanced query transformation for better memory matching
+            query_for_search = user_input
+            
+            # Special handling for identity/name questions
+            identity_keywords = [
+                "кто ты", "кто я", "who am i", "who are you", "напомни", "remind",
+                "мое имя", "my name", "как меня зовут", "what's my name"
+            ]
+            
+            user_input_lower = user_input.lower()
+            is_identity_query = any(keyword in user_input_lower for keyword in identity_keywords)
+            
+            if is_identity_query:
+                # For identity queries, search for introduction/name related content
+                if any(word in user_input_lower for word in ["кто я", "who am i", "меня зовут", "my name", "мое имя"]):
+                    query_for_search = "меня зовут имя name introduction знакомство"
+                    print(f"🔍 Identity query detected, using enhanced search: '{query_for_search}'")
+                elif any(word in user_input_lower for word in ["кто ты", "who are you"]):
+                    query_for_search = "Алетейя Aletheia agent агент introduction представление"
+                    print(f"🔍 Agent identity query, using enhanced search: '{query_for_search}'")
+            
             # Use hierarchical memory if available
             if self.hierarchical_memory:
                 memories = await self.hierarchical_memory.search_memories(
-                    query=user_input,
-                    n_results=3,  # Get fewer but more relevant memories
+                    query=query_for_search,
+                    n_results=5,  # Get more for identity queries
                 )
             else:
                 # Fallback to simple vector store
                 memories = await self.vector_store.search_memories(
-                    query=user_input,
-                    n_results=5,
+                    query=query_for_search,
+                    n_results=7,  # Increased from 5 for better coverage
                 )
 
             if memories:
                 print(f"📚 Retrieved {len(memories)} relevant memories")
-                return memories
+                
+                # Debug: show what memories were retrieved
+                for i, memory in enumerate(memories[:3]):  # Show first 3 for debugging
+                    content_preview = memory.get('content', '')[:100]
+                    distance = memory.get('distance', 'unknown')
+                    print(f"  Memory {i+1}: Distance={distance:.3f}, Content='{content_preview}...'")
+                
+                # For identity queries, be more permissive with distance threshold
+                distance_threshold = self.scientific_config.get("memory_relevance_threshold", 0.8) if is_identity_query else self.scientific_config.get("distance_threshold", 0.7)
+                
+                # Filter out memories that are too distant (less relevant)
+                # This helps prevent stale/irrelevant context contamination
+                filtered_memories = []
+                for memory in memories:
+                    distance = memory.get('distance', 1.0)
+                    # Only include memories with similarity > threshold
+                    if distance < distance_threshold:
+                        filtered_memories.append(memory)
+                    else:
+                        print(f"  🔍 Filtered out distant memory (distance={distance:.3f})")
+                
+                if len(filtered_memories) != len(memories):
+                    print(f"📚 After filtering: {len(filtered_memories)} relevant memories")
+                
+                return filtered_memories
 
         except Exception as e:
             print(f"⚠️  Error retrieving memories: {e}")
@@ -291,16 +352,50 @@ class AletheiaAgent:
         
         start_time = time.time()
         
+        # Check if this is a scientific/technical query for forced external routing
+        scientific_keywords = self.scientific_config.get("scientific_keywords", [])
+        
+        user_input_lower = user_input.lower()
+        is_scientific_query = any(keyword in user_input_lower for keyword in scientific_keywords)
+        
+        # Get user name for context
+        user_name = self.context.user_name
+        
         # Build context for the local LLM, including relevant memories
         context_prompt = self.context.build_context_prompt(user_input)
         
-        # Add user profile data to context if available
-        user_name = self.context.user_name
+        # Add user profile data to context if available and relevant
         user_profile_context = ""
         if user_name:
-            user_profile_context = await self.user_profile_store.get_user_data_context(user_name)
-            if user_profile_context:
-                context_prompt = f"{context_prompt}\n\n{user_profile_context}"
+            # Check if the current query is related to personal data or fitness
+            # Don't inject personal context for unrelated topics like dinosaurs, science, etc.
+            personal_data_keywords = [
+                "вес", "рост", "жир", "процент", "кг", "см", "данные", "профиль", "информация",
+                "тренировк", "диет", "питание", "похуд", "цел", "план", "здоровье",
+                "weight", "height", "fat", "data", "profile", "information", "training", 
+                "diet", "nutrition", "goal", "plan", "health", "fitness"
+            ]
+            
+            # Check if user input contains personal data keywords
+            input_lower = user_input.lower()
+            is_personal_query = any(keyword in input_lower for keyword in personal_data_keywords)
+            
+            # Also check if this is a general conversation starter that shouldn't get personal context
+            general_topics = [
+                "динозавр", "dinosaur", "наука", "science", "история", "history", 
+                "математика", "math", "физика", "physics", "химия", "chemistry",
+                "литература", "literature", "фильм", "movie", "книга", "book",
+                "погода", "weather", "новости", "news", "игра", "game"
+            ]
+            is_general_topic = any(topic in input_lower for topic in general_topics)
+            
+            if is_personal_query and not is_general_topic:
+                user_profile_context = await self.user_profile_store.get_user_data_context(user_name)
+                if user_profile_context:
+                    context_prompt = f"{context_prompt}\n\n{user_profile_context}"
+                    print("📊 Added user profile context (relevant to query)")
+            else:
+                print("🚫 Skipped user profile context (not relevant to current topic)")
         
         # Add relevant memories to the context if available
         memory_guidance = ""
@@ -404,6 +499,56 @@ You have access to relevant past experiences that may contain the information ne
                         "execution_time": execution_time,
                         "estimated_cost": external_result.get("estimated_cost", 0),
                         "routing_assessment": "structured_local",
+                        "local_confidence": structured_result['confidence'],
+                        "local_reasoning": structured_result['reasoning'],
+                        "consultation_metadata": external_result.get("consultation_metadata"),
+                        "memories_used": len(relevant_memories),
+                        "user_profile_used": bool(user_name and user_profile_context),
+                    },
+                    "approach": "structured_local",
+                }
+            # Force external routing for complex scientific topics with empty memory
+            elif is_scientific_query and len(relevant_memories) == 0 and any(word in user_input_lower for word in self.scientific_config.get("complex_query_indicators", [])):
+                print("🔬 Forcing external consultation for complex scientific topic with empty memory")
+                
+                # Route to external LLM with memory-enhanced context
+                enhanced_context = self._build_context_summary()
+                if relevant_memories:
+                    memory_context = self._format_memories_for_context(relevant_memories)
+                    enhanced_context = f"{enhanced_context}\n\n=== RELEVANT MEMORIES ===\n{memory_context}\n"
+                
+                # Add user profile context for external LLM too
+                if user_name:
+                    user_profile_context = await self.user_profile_store.get_user_data_context(user_name)
+                    if user_profile_context:
+                        enhanced_context = f"{enhanced_context}\n\n{user_profile_context}"
+                
+                task_context = TaskContext(
+                    prompt=user_input,
+                    max_tokens=1024,
+                    requires_deep_reasoning=True,
+                    conversation_context=enhanced_context,
+                    user_name=self.context.user_name,
+                    session_context={
+                        "session_id": self.session_id,
+                        "interaction_count": self.context.interaction_count,
+                        "language": self.context.last_user_language
+                    }
+                )
+                
+                external_result = await self.router.execute_task(task_context)
+                route_used = "external_forced"
+                response_text = external_result.get("result", "")
+                execution_time = time.time() - start_time
+                
+                return {
+                    "type": "simple_task",
+                    "response": response_text,
+                    "execution_details": {
+                        "route_used": route_used,
+                        "execution_time": execution_time,
+                        "estimated_cost": external_result.get("estimated_cost", 0),
+                        "routing_assessment": "forced_external_scientific",
                         "local_confidence": structured_result['confidence'],
                         "local_reasoning": structured_result['reasoning'],
                         "consultation_metadata": external_result.get("consultation_metadata"),
@@ -954,14 +1099,81 @@ Focus on creating a cohesive response that feels like a complete answer to the o
         }
 
     async def reset_memory(self) -> None:
-        """Reset all agent memory (for testing/debugging)."""
+        """Reset USER and ENV memory tiers while preserving CORE_SELF (Aletheia's learning)."""
 
-        print("🗑️  Resetting agent memory...")
-        await self.vector_store.reset_all()
-        self.task_history.clear()
+        print("🗑️  Resetting user and environment memory (preserving core self-learning)...")
+        
+        # Reset user profiles (always safe to reset)
+        profiles_deleted = await self.user_profile_store.reset_all_profiles()
+        print(f"🗑️  Reset {profiles_deleted} user profiles")
+        
         # Reset conversation context but keep identity config
         self.context = ConversationContext(self.identity_config)
-        print("✅ Memory reset complete")
+        print("✅ Conversation context reset")
+        
+        # Handle memory reset based on system type
+        if self.hierarchical_memory:
+            # For hierarchical memory, we need selective reset
+            # For now, we'll reset the entire vector store since hierarchical doesn't support tier-specific reset yet
+            print("⚠️  Note: Hierarchical memory doesn't support selective reset yet - using full reset")
+            await self.vector_store.reset_all()
+            self.hierarchical_memory = HierarchicalMemoryStore(self.vector_store)
+            print("✅ Hierarchical memory system reinitialized")
+        else:
+            # For simple vector store, reset everything (no tier support)
+            await self.vector_store.reset_all()
+            print("✅ Vector store reset complete")
+        
+        # Clear task history (this is session-specific, safe to reset)
+        self.task_history.clear()
+        print("✅ Task history cleared")
+        
+        # Force a small delay to ensure database operations complete
+        time.sleep(0.5)
+        
+        print("✅ Memory reset complete (CORE_SELF preserved)")
+
+    async def reset_all_memory(self) -> None:
+        """Reset ALL memory including CORE_SELF (development/debugging only)."""
+        
+        # Check if complete memory reset is allowed
+        if not config.allow_complete_memory_reset:
+            print("🚫 Complete memory reset is disabled in production mode")
+            print("💡 Use 'reset' to clear user/env memory while preserving core learning")
+            return
+        
+        if not config.development_mode:
+            print("⚠️  Complete memory reset is only allowed in development mode")
+            return
+        
+        print("🚨 FULL MEMORY RESET - This will delete Aletheia's learned knowledge!")
+        print("🚨 This should only be used during development!")
+        
+        # Complete reset of all systems
+        await self.vector_store.reset_all()
+        print("✅ Vector store completely reset")
+        
+        # If using hierarchical memory, reinitialize it after vector store reset
+        if self.hierarchical_memory:
+            self.hierarchical_memory = HierarchicalMemoryStore(self.vector_store)
+            print("✅ Hierarchical memory system reinitialized")
+        
+        # Clear task history
+        self.task_history.clear()
+        print("✅ Task history cleared")
+        
+        # Reset user profiles
+        profiles_deleted = await self.user_profile_store.reset_all_profiles()
+        print(f"🗑️  Reset {profiles_deleted} user profiles")
+        
+        # Reset conversation context but keep identity config
+        self.context = ConversationContext(self.identity_config)
+        print("✅ Conversation context reset")
+        
+        # Force a small delay to ensure database operations complete
+        time.sleep(0.5)
+        
+        print("✅ COMPLETE memory reset finished")
 
     async def _validate_factual_response(self, user_input: str, response_text: str) -> list[str]:
         """Validate a factual response for obvious accuracy issues using config."""
@@ -1105,7 +1317,9 @@ async def main() -> None:
         print("Commands:")
         print("  'quit' - Exit")
         print("  'status' - Show diagnostics")
-        print("  'reset' - Clear memory")
+        print("  'reset' - Clear user/env memory (preserves core learning)")
+        if config.allow_complete_memory_reset and config.development_mode:
+            print("  'reset_all' - Clear ALL memory including core learning (dev only)")
         print("  'plan: <task>' - Force planning mode")
         print("  'reflect: <task>' - Force reflection on task")
         print("  'context' - Show conversation history")
@@ -1129,6 +1343,10 @@ async def main() -> None:
 
                 elif user_input.lower() == "reset":
                     await agent.reset_memory()
+                    continue
+
+                elif user_input.lower() == "reset_all":
+                    await agent.reset_all_memory()
                     continue
 
                 elif user_input.lower() == "context":

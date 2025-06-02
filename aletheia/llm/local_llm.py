@@ -142,7 +142,12 @@ class LocalLLM:
     def _get_fallback_response(self, is_russian: bool) -> str:
         """Get fallback response based on identity configuration."""
         language = "ru" if is_russian else "en"
-        return identity.get_fallback_response(language)
+        
+        if is_russian:
+            # Use explicit feminine forms for Russian fallback
+            return f"Привет! Я {identity.name}, женский автономный агент. Готова помочь! Чем могу быть полезна?"
+        else:
+            return f"Hello! I'm {identity.name}, {identity.personality.summary.lower()}. How can I help you?"
 
     def _format_chat_prompt(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """Format prompt for Phi-3 chat format using identity configuration."""
@@ -345,8 +350,15 @@ class LocalLLM:
 - Если память содержит ответ, установи ВНЕШНИЙ_ЗАПРОС=нет
 - Если памяти недостаточно для полного ответа, установи ВНЕШНИЙ_ЗАПРОС=да
 
-Используй ВНЕШНИЙ_ЗАПРОС=да для: состав материалов, работа техники, научные факты.
-Используй ВНЕШНИЙ_ЗАПРОС=нет для: приветствий, общения, вопросов обо мне, данных из памяти.<|end|>
+КРИТЕРИИ ДЛЯ ВНЕШНЕЙ КОНСУЛЬТАЦИИ (ВНЕШНИЙ_ЗАПРОС=да):
+- Научные вопросы: физика, химия, биология, математика
+- Технические темы: квантовые вычисления, программирование, инженерия  
+- Сложные концепции: детальные объяснения процессов и механизмов
+- Фактические вопросы: даты, имена учёных, исторические события
+- Когда память пуста или не содержит достаточной информации
+- Слова "подробно", "детально", "принципы", "как работает" - почти всегда требуют внешней консультации
+
+ВНЕШНИЙ_ЗАПРОС=нет только для: приветствий, вопросов обо мне, данных из памяти, простого общения.<|end|>
 <|user|>{prompt}{context_section}<|end|>
 <|assistant|>"""
         else:
@@ -365,8 +377,15 @@ MEMORY USAGE RULES:
 - If memory contains the answer, set EXTERNAL_NEEDED=no
 - If memory is insufficient for complete answer, set EXTERNAL_NEEDED=yes
 
-Use EXTERNAL_NEEDED=yes for: material composition, how things work, scientific facts.
-Use EXTERNAL_NEEDED=no for: greetings, chat, questions about me, data from memory.<|end|>
+CRITERIA FOR EXTERNAL CONSULTATION (EXTERNAL_NEEDED=yes):
+- Scientific questions: physics, chemistry, biology, mathematics
+- Technical topics: quantum computing, programming, engineering
+- Complex concepts: detailed explanations of processes and mechanisms  
+- Factual questions: dates, scientist names, historical events
+- When memory is empty or lacks sufficient information
+- Words "detailed", "explain", "principles", "how does" - almost always require external consultation
+
+EXTERNAL_NEEDED=no only for: greetings, questions about me, data from memory, simple chat.<|end|>
 <|user|>{prompt}{context_section}<|end|>
 <|assistant|>"""
 
@@ -390,132 +409,139 @@ Use EXTERNAL_NEEDED=no for: greetings, chat, questions about me, data from memor
             "raw_response": raw_response
         }
 
-        # Try to parse structured format - handle both original and filtered versions
-        lines = response.replace('\n', ' ').split()  # Split by any whitespace
-        text_parts = []
-        
-        current_field = None
-        current_content = []
-        
-        for part in lines:
-            # Check if this is a field marker
-            if part.upper() in ('ОТВЕТ:', 'ANSWER:'):
-                if current_field and current_content:
-                    # Store previous field
-                    if current_field == 'answer':
-                        parsed["answer"] = ' '.join(current_content)
-                current_field = 'answer'
-                current_content = []
-            elif part.upper() in ('УВЕРЕННОСТЬ:', 'CONFIDENCE:'):
-                if current_field and current_content:
-                    # Store previous field
-                    if current_field == 'answer':
-                        parsed["answer"] = ' '.join(current_content)
-                current_field = 'confidence'
-                current_content = []
-            elif part.upper() in ('ОБОСНОВАНИЕ:', 'REASONING:'):
-                if current_field and current_content:
-                    # Store previous field
-                    if current_field == 'answer':
-                        parsed["answer"] = ' '.join(current_content)
-                    elif current_field == 'confidence':
-                        conf_text = ' '.join(current_content).lower()
-                        if 'высокая' in conf_text or 'high' in conf_text:
-                            parsed["confidence"] = "high"
-                        elif 'низкая' in conf_text or 'low' in conf_text:
-                            parsed["confidence"] = "low"
-                        else:
-                            parsed["confidence"] = "medium"
-                current_field = 'reasoning'
-                current_content = []
-            elif part.upper() in ('ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:'):
-                if current_field and current_content:
-                    # Store previous field
-                    if current_field == 'answer':
-                        parsed["answer"] = ' '.join(current_content)
-                    elif current_field == 'confidence':
-                        conf_text = ' '.join(current_content).lower()
-                        if 'высокая' in conf_text or 'high' in conf_text:
-                            parsed["confidence"] = "high"
-                        elif 'низкая' in conf_text or 'low' in conf_text:
-                            parsed["confidence"] = "low"
-                        else:
-                            parsed["confidence"] = "medium"
-                    elif current_field == 'reasoning':
-                        parsed["reasoning"] = ' '.join(current_content)
-                current_field = 'external_needed'
-                current_content = []
-            else:
-                # Add to current field content
-                if current_field:
-                    current_content.append(part)
-        
-        # Store final field
-        if current_field and current_content:
-            if current_field == 'answer':
-                parsed["answer"] = ' '.join(current_content)
-            elif current_field == 'confidence':
-                conf_text = ' '.join(current_content).lower()
+        # Try line-based parsing first (more reliable)
+        lines = response.split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Parse different fields
+            if line.startswith(('ОТВЕТ:', 'ANSWER:')):
+                answer_text = line.split(':', 1)[1].strip()
+                if answer_text:  # Only use if not empty
+                    parsed["answer"] = answer_text
+            elif line.startswith(('УВЕРЕННОСТЬ:', 'CONFIDENCE:')):
+                conf_text = line.split(':', 1)[1].strip().lower()
                 if 'высокая' in conf_text or 'high' in conf_text:
                     parsed["confidence"] = "high"
                 elif 'низкая' in conf_text or 'low' in conf_text:
                     parsed["confidence"] = "low"
                 else:
                     parsed["confidence"] = "medium"
-            elif current_field == 'reasoning':
+            elif line.startswith(('ОБОСНОВАНИЕ:', 'REASONING:')):
+                reasoning_text = line.split(':', 1)[1].strip()
+                if reasoning_text:
+                    parsed["reasoning"] = reasoning_text
+            elif line.startswith(('ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:')):
+                ext_text = line.split(':', 1)[1].strip().lower()
+                parsed["external_needed"] = 'да' in ext_text or 'yes' in ext_text
+
+        # If line-based parsing didn't find an answer, try space-based parsing
+        if not parsed["answer"]:
+            words = response.replace('\n', ' ').split()
+            text_parts = []
+            
+            current_field = None
+            current_content = []
+            
+            for word in words:
+                # Check if this is a field marker
+                if word.upper() in ('ОТВЕТ:', 'ANSWER:'):
+                    if current_field == 'answer' and current_content:
+                        parsed["answer"] = ' '.join(current_content)
+                    current_field = 'answer'
+                    current_content = []
+                elif word.upper() in ('УВЕРЕННОСТЬ:', 'CONFIDENCE:'):
+                    if current_field == 'answer' and current_content:
+                        parsed["answer"] = ' '.join(current_content)
+                    current_field = 'confidence'
+                    current_content = []
+                elif word.upper() in ('ОБОСНОВАНИЕ:', 'REASONING:'):
+                    if current_field == 'answer' and current_content:
+                        parsed["answer"] = ' '.join(current_content)
+                    elif current_field == 'confidence' and current_content:
+                        conf_text = ' '.join(current_content).lower()
+                        if 'высокая' in conf_text or 'high' in conf_text:
+                            parsed["confidence"] = "high"
+                        elif 'низкая' in conf_text or 'low' in conf_text:
+                            parsed["confidence"] = "low"
+                    current_field = 'reasoning'
+                    current_content = []
+                elif word.upper() in ('ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:'):
+                    if current_field == 'answer' and current_content:
+                        parsed["answer"] = ' '.join(current_content)
+                    elif current_field == 'reasoning' and current_content:
+                        parsed["reasoning"] = ' '.join(current_content)
+                    current_field = 'external_needed'
+                    current_content = []
+                else:
+                    # Add to current field content
+                    if current_field:
+                        current_content.append(word)
+            
+            # Store final field
+            if current_field == 'answer' and current_content:
+                parsed["answer"] = ' '.join(current_content)
+            elif current_field == 'reasoning' and current_content:
                 parsed["reasoning"] = ' '.join(current_content)
-            elif current_field == 'external_needed':
+            elif current_field == 'external_needed' and current_content:
                 ext_text = ' '.join(current_content).lower()
                 parsed["external_needed"] = 'да' in ext_text or 'yes' in ext_text
 
-        # Fallback parsing if structured parsing didn't work
+        # If still no structured answer found, look for any substantial text
         if not parsed["answer"]:
-            # Try old line-based approach
-            lines = response.split('\n')
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                    
-                # Parse different fields
-                if line.startswith(('ОТВЕТ:', 'ANSWER:')):
-                    parsed["answer"] = line.split(':', 1)[1].strip()
-                elif line.startswith(('УВЕРЕННОСТЬ:', 'CONFIDENCE:')):
-                    conf_text = line.split(':', 1)[1].strip().lower()
-                    if 'высокая' in conf_text or 'high' in conf_text:
-                        parsed["confidence"] = "high"
-                    elif 'низкая' in conf_text or 'low' in conf_text:
-                        parsed["confidence"] = "low"
-                    else:
-                        parsed["confidence"] = "medium"
-                elif line.startswith(('ОБОСНОВАНИЕ:', 'REASONING:')):
-                    parsed["reasoning"] = line.split(':', 1)[1].strip()
-                elif line.startswith(('ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:')):
-                    ext_text = line.split(':', 1)[1].strip().lower()
-                    parsed["external_needed"] = 'да' in ext_text or 'yes' in ext_text
-
-        # If still no structured answer found, use the whole response as answer
-        if not parsed["answer"]:
-            # Try to find a reasonable answer in the text
-            lines = response.split('\n')
+            # Look for non-empty lines that aren't field headers
             for line in lines:
                 line = line.strip()
                 if (line and 
-                    not line.startswith(('ОТВЕТ:', 'ANSWER:', 'УВЕРЕННОСТЬ:', 'CONFIDENCE:', 
+                    not line.upper().startswith(('ОТВЕТ:', 'ANSWER:', 'УВЕРЕННОСТЬ:', 'CONFIDENCE:', 
                                         'ОБОСНОВАНИЕ:', 'REASONING:', 'ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:')) and
-                    len(line) > 10):
+                    len(line) > 10 and 
+                    not line.startswith('<|') and  # Skip format tokens
+                    any(char.isalpha() for char in line)):  # Must contain letters
                     parsed["answer"] = line
                     break
+        
+        # Final cleanup: remove any remaining structured markers from the answer
+        if parsed["answer"]:
+            # Remove structured format markers that might have leaked through
+            import re
+            clean_answer = parsed["answer"]
             
-            # If still no answer, use cleaned response
-            if not parsed["answer"]:
-                parsed["answer"] = response
+            # Remove field markers and their content
+            clean_answer = re.sub(r'\b(?:ОТВЕТ|ANSWER|УВЕРЕННОСТЬ|CONFIDENCE|ОБОСНОВАНИЕ|REASONING|ВНЕШНИЙ_ЗАПРОС|EXTERNAL_NEEDED):\s*[^\n]*', '', clean_answer)
+            
+            # Remove standalone field markers
+            clean_answer = re.sub(r'\b(?:ОТВЕТ|ANSWER|УВЕРЕННОСТЬ|CONFIDENCE|ОБОСНОВАНИЕ|REASONING|ВНЕШНИЙ_ЗАПРОС|EXTERNAL_NEEDED):', '', clean_answer)
+            
+            # Clean up extra whitespace
+            clean_answer = re.sub(r'\s+', ' ', clean_answer).strip()
+            
+            if clean_answer and len(clean_answer) > 5:
+                parsed["answer"] = clean_answer
 
-        # Fallback for empty answers
-        if not parsed["answer"] or len(parsed["answer"]) < 3:
-            is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in original_prompt.lower())
-            parsed["answer"] = self._get_fallback_response(is_russian)
-            parsed["confidence"] = "low"
-            parsed["reasoning"] = "Fallback response due to parsing error"
+        # Final fallback: if still no answer, use the entire cleaned response
+        if not parsed["answer"] or len(parsed["answer"]) < 5:
+            # Try to extract meaningful content from the response
+            clean_response = response
+            # Remove format tokens and field headers
+            for token in ['<|system|>', '<|user|>', '<|assistant|>', '<|end|>']:
+                clean_response = clean_response.replace(token, '')
+            
+            # Remove field headers
+            import re
+            clean_response = re.sub(r'(?:ОТВЕТ|ANSWER|УВЕРЕННОСТЬ|CONFIDENCE|ОБОСНОВАНИЕ|REASONING|ВНЕШНИЙ_ЗАПРОС|EXTERNAL_NEEDED):\s*', '', clean_response)
+            
+            clean_response = clean_response.strip()
+            
+            if clean_response and len(clean_response) > 5:
+                parsed["answer"] = clean_response
+            else:
+                # Ultimate fallback
+                is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in original_prompt.lower())
+                parsed["answer"] = self._get_fallback_response(is_russian)
+                parsed["confidence"] = "low"
+                parsed["reasoning"] = "Fallback response due to parsing error"
 
         return parsed

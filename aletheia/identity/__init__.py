@@ -157,33 +157,53 @@ class Identity:
     def get_system_prompt(self, language: Optional[str] = None) -> str:
         """Get system prompt based on identity configuration.
         
-        System prompts are always based on English core identity for better model performance,
-        but can include language-specific instructions for user interaction.
+        Uses language-specific instructions for better performance in target language.
         """
-        # System prompts use English core identity for better model performance
+        target_language = language or self.primary_language
         prompt_parts = []
         
-        # Core identity (always English for system prompt)
-        prompt_parts.append(f"You are {self.name}, {self.personality.summary}.")
-        
-        # Personality traits
-        if self.personality.personality:
-            traits_text = ", ".join(self.personality.personality[:3])
-            prompt_parts.append(f"Key traits: {traits_text}.")
-        
-        # Core values (condensed)
-        if self.core_values:
-            values_text = ", ".join(self.core_values[:3])
-            prompt_parts.append(f"Core principles: {values_text}.")
-        
-        # Add language-specific user interaction instructions
-        target_language = language or self.primary_language
-        if target_language == "ru":
-            prompt_parts.append("When responding to users in Russian, maintain natural Russian grammar and cultural context while preserving your core personality.")
-        
-        # Add LLM instructions
-        if self.llm_instructions:
-            prompt_parts.append(self.llm_instructions)
+        if target_language == "ru" and "ru" in self.translations:
+            # Use Russian identity and instructions for Russian prompts
+            ru_data = self.translations["ru"]
+            ru_identity = ru_data.get("identity", {})
+            
+            # Core identity in Russian
+            ru_summary = ru_identity.get("summary", self.personality.summary)
+            prompt_parts.append(f"Ты — {self.name}, {ru_summary}.")
+            
+            # Russian personality traits
+            ru_personality = ru_identity.get("personality", self.personality.personality)
+            if ru_personality:
+                traits_text = ", ".join(ru_personality[:3])
+                prompt_parts.append(f"Ключевые черты: {traits_text}.")
+            
+            # Russian core values
+            ru_values = ru_data.get("core_values", self.core_values)
+            if ru_values:
+                values_text = ", ".join(ru_values[:3])
+                prompt_parts.append(f"Основные принципы: {values_text}.")
+            
+            # Use Russian LLM instructions
+            ru_llm_instructions = ru_data.get("llm_instructions", "")
+            if ru_llm_instructions:
+                prompt_parts.append(ru_llm_instructions)
+        else:
+            # Use English core identity for English or unsupported languages
+            prompt_parts.append(f"You are {self.name}, {self.personality.summary}.")
+            
+            # Personality traits
+            if self.personality.personality:
+                traits_text = ", ".join(self.personality.personality[:3])
+                prompt_parts.append(f"Key traits: {traits_text}.")
+            
+            # Core values (condensed)
+            if self.core_values:
+                values_text = ", ".join(self.core_values[:3])
+                prompt_parts.append(f"Core principles: {values_text}.")
+            
+            # Add LLM instructions
+            if self.llm_instructions:
+                prompt_parts.append(self.llm_instructions)
         
         return " ".join(prompt_parts)
     

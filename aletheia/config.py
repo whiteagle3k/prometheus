@@ -67,6 +67,10 @@ class AppSettings(BaseSettings):
 
     # Logging
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+    
+    # Development/Production mode
+    development_mode: bool = Field(default=True, validation_alias="DEVELOPMENT_MODE")
+    allow_complete_memory_reset: bool = Field(default=True, validation_alias="ALLOW_COMPLETE_MEMORY_RESET")
 
     # Pydantic v2 settings config
     model_config = SettingsConfigDict(

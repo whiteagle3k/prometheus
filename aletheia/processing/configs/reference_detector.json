@@ -14,13 +14,12 @@
       "можно подробнее", "can you elaborate", "поподробнее", "more details",
       "что дальше", "what's next", "а дальше", "and then", "что происходит", 
       "what happens", "как это", "how does this", "почему это", "why does this", 
-      "куда", "where does", "что с", "what about", "а что", "and what", 
+      "куда", "where does", "что с", "what about", 
       "что потом", "what then"
     ],
     "implicit_patterns": [
       "\\bа\\s+если\\b",
       "\\bно\\s+если\\b", 
-      "\\bа\\s+что\\b",
       "\\bа\\s+как\\b",
       "\\bа\\s+где\\b",
       "\\bа\\s+когда\\b",
@@ -28,7 +27,6 @@
       "\\bif\\s+not\\b",
       "\\bbut\\s+if\\b",
       "\\band\\s+if\\b",
-      "\\band\\s+what\\b",
       "\\band\\s+how\\b"
     ]
   }
