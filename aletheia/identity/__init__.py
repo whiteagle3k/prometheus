@@ -154,16 +154,44 @@ class Identity:
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in identity file: {e}")
     
-    def get_system_prompt(self, language: Optional[str] = None) -> str:
+    def get_system_prompt(self, language: Optional[str] = None, for_user_response: bool = False) -> str:
         """Get system prompt based on identity configuration.
         
-        Uses language-specific instructions for better performance in target language.
+        Args:
+            language: Target language for the response (detected from user input)
+            for_user_response: True if this prompt is for generating user-facing response,
+                             False for internal LLM communication (always English)
+        
+        Internal LLM communication uses English for consistency.
+        Russian instructions only used when generating user-facing responses in Russian.
         """
+        # Internal LLM communication is always in English for consistency
+        if not for_user_response:
+            prompt_parts = []
+            prompt_parts.append(f"You are {self.name}, {self.personality.summary}.")
+            
+            # Personality traits
+            if self.personality.personality:
+                traits_text = ", ".join(self.personality.personality[:3])
+                prompt_parts.append(f"Key traits: {traits_text}.")
+            
+            # Core values (condensed)
+            if self.core_values:
+                values_text = ", ".join(self.core_values[:3])
+                prompt_parts.append(f"Core principles: {values_text}.")
+            
+            # Add LLM instructions
+            if self.llm_instructions:
+                prompt_parts.append(self.llm_instructions)
+            
+            return " ".join(prompt_parts)
+        
+        # For user-facing responses, adapt based on detected language
         target_language = language or self.primary_language
         prompt_parts = []
         
-        if target_language == "ru" and "ru" in self.translations:
-            # Use Russian identity and instructions for Russian prompts
+        if target_language == "ru" and "ru" in self.translations and for_user_response:
+            # Use Russian identity and instructions for Russian user responses
             ru_data = self.translations["ru"]
             ru_identity = ru_data.get("identity", {})
             
@@ -183,7 +211,7 @@ class Identity:
                 values_text = ", ".join(ru_values[:3])
                 prompt_parts.append(f"Основные принципы: {values_text}.")
             
-            # Use Russian LLM instructions
+            # Use Russian LLM instructions for feminine forms
             ru_llm_instructions = ru_data.get("llm_instructions", "")
             if ru_llm_instructions:
                 prompt_parts.append(ru_llm_instructions)

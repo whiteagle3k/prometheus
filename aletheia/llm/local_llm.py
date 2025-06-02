@@ -163,7 +163,8 @@ class LocalLLM:
         else:
             # Get system prompt from identity configuration
             language = "ru" if is_russian else "en"
-            final_system_prompt = identity.get_system_prompt(language)
+            # For user-facing responses, use language-specific prompts (for gender forms)
+            final_system_prompt = identity.get_system_prompt(language, for_user_response=True)
 
         formatted += f"<|system|>{final_system_prompt}<|end|>\n"
         formatted += f"<|user|>{prompt}<|end|>\n<|assistant|>"
@@ -323,7 +324,7 @@ class LocalLLM:
         language = "ru" if is_russian else "en"
         
         # Get system prompt from identity
-        system_prompt = identity.get_system_prompt(language)
+        system_prompt = identity.get_system_prompt(language, for_user_response=True)
         
         # Build context section
         context_section = ""
