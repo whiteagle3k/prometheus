@@ -42,6 +42,15 @@ class AppSettings(BaseSettings):
     )
     reflection_enabled: bool = Field(default=True, validation_alias="REFLECTION_ENABLED")
 
+    # Hierarchical Memory Configuration
+    use_hierarchical_memory: bool = Field(default=True, validation_alias="USE_HIERARCHICAL_MEMORY")
+    raw_memory_limit: int = Field(default=200, validation_alias="RAW_MEMORY_LIMIT")
+    summary_memory_limit: int = Field(default=100, validation_alias="SUMMARY_MEMORY_LIMIT")
+    key_facts_limit: int = Field(default=50, validation_alias="KEY_FACTS_LIMIT")
+    memory_archive_days: int = Field(default=30, validation_alias="MEMORY_ARCHIVE_DAYS")
+    memory_compression_days: int = Field(default=7, validation_alias="MEMORY_COMPRESSION_DAYS")
+    memory_key_facts_days: int = Field(default=14, validation_alias="MEMORY_KEY_FACTS_DAYS")
+
     # Routing Configuration (can be overridden by identity.json)
     local_token_threshold: int = Field(default=1024, validation_alias="LOCAL_TOKEN_THRESHOLD")
     # Handle deep reasoning keywords as a string first, then convert to list

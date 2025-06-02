@@ -5,7 +5,7 @@ import re
 import traceback
 import warnings
 from datetime import datetime
-from typing import Any
+from typing import Any, Dict, List, Optional
 import time
 
 from ..config import config
@@ -13,6 +13,7 @@ from ..identity.loader import load_identity_config, get_validation_config
 from ..llm.router import LLMRouter, TaskContext
 from ..memory.summariser import MemorySummariser
 from ..memory.vector_store import VectorStore
+from ..memory.hierarchical_store import HierarchicalMemoryStore
 from .context_manager import ConversationContext
 from .planner import Plan, SubTask, TaskPlanner
 from .reflexion import ReflectionEngine
@@ -57,12 +58,20 @@ class AletheiaAgent:
         # Initialize conversation context manager
         self.context = ConversationContext(self.identity_config)
 
-        # Core components
+        # Initialize components
         self.vector_store = VectorStore()
         self.router = LLMRouter()
         self.planner = TaskPlanner(self.router)
         self.reflection_engine = ReflectionEngine(self.router, self.vector_store)
         self.memory_summariser = MemorySummariser(self.vector_store)
+        
+        # Initialize hierarchical memory if enabled
+        if config.use_hierarchical_memory:
+            self.hierarchical_memory = HierarchicalMemoryStore(self.vector_store)
+            print("🧠 Using hierarchical memory system")
+        else:
+            self.hierarchical_memory = None
+            print("💾 Using simple memory system")
 
         print("✅ Aletheia agent initialized")
 
@@ -138,22 +147,30 @@ class AletheiaAgent:
             return error_result
 
     async def _retrieve_relevant_memories(self, user_input: str) -> list[dict[str, Any]]:
-        """Retrieve relevant memories for the current task."""
+        """Retrieve relevant memories for context."""
 
         try:
-            memories = await self.vector_store.search_memories(
-                query=user_input,
-                n_results=5,
-            )
+            # Use hierarchical memory if available
+            if self.hierarchical_memory:
+                memories = await self.hierarchical_memory.search_memories(
+                    query=user_input,
+                    n_results=3,  # Get fewer but more relevant memories
+                )
+            else:
+                # Fallback to simple vector store
+                memories = await self.vector_store.search_memories(
+                    query=user_input,
+                    n_results=5,
+                )
 
             if memories:
-                print(f"📚 Found {len(memories)} relevant memories")
-
-            return memories
+                print(f"📚 Retrieved {len(memories)} relevant memories")
+                return memories
 
         except Exception as e:
             print(f"⚠️  Error retrieving memories: {e}")
-            return []
+
+        return []
 
     async def _handle_complex_task(
         self,
@@ -592,14 +609,33 @@ Focus on creating a cohesive response that feels like a complete answer to the o
                 "user_input_length": len(user_input),
                 "user_name": self.context.user_name or "unknown",
                 "language": self.context.last_user_language,
+                "current_topic": self.context.current_topic,
+                "route_used": result.get("execution_details", {}).get("route_used", "unknown"),
+                "execution_time": result.get("meta", {}).get("processing_time", 0.0),
             }
 
-            # Store in vector database
-            await self.vector_store.store_memory(
-                content=experience,
-                memory_type="task_experience",
-                metadata=metadata,
-            )
+            # Calculate importance score based on complexity and routing
+            importance_score = 0.5  # Base score
+            if len(user_input) > 100:  # Complex questions
+                importance_score += 0.2
+            if "external" in metadata.get("route_used", ""):  # External routing indicates complexity
+                importance_score += 0.3
+            
+            # Use hierarchical memory if available
+            if self.hierarchical_memory:
+                await self.hierarchical_memory.store_memory(
+                    content=experience,
+                    memory_type="task_experience",
+                    metadata=metadata,
+                    importance_score=importance_score,
+                )
+            else:
+                # Fallback to simple vector store
+                await self.vector_store.store_memory(
+                    content=experience,
+                    memory_type="task_experience",
+                    metadata=metadata,
+                )
 
         except Exception as e:
             print(f"⚠️  Error storing experience: {e}")
@@ -657,17 +693,24 @@ Focus on creating a cohesive response that feels like a complete answer to the o
         """Perform memory management tasks."""
 
         try:
-            # Check if summarization is needed
-            if await self.memory_summariser.should_summarize():
-                external_llm = await self.router.external_manager.get_best_available()
-                await self.memory_summariser.summarize_and_compress(external_llm)
+            if self.hierarchical_memory:
+                # Use hierarchical memory management (automatic tiering)
+                # The hierarchical memory store handles its own management automatically
+                # when new memories are stored, but we can also trigger it manually
+                await self.hierarchical_memory._manage_memory_tiers()
+            else:
+                # Fallback to simple memory management
+                # Check if summarization is needed
+                if await self.memory_summariser.should_summarize():
+                    external_llm = await self.router.external_manager.get_best_available()
+                    await self.memory_summariser.summarize_and_compress(external_llm)
 
-            # Cleanup old memories if needed
-            memory_count = await self.vector_store.get_memory_count()
-            if memory_count > config.max_memory_entries:
-                deleted = await self.vector_store.cleanup_old_memories()
-                if deleted > 0:
-                    print(f"🗑️  Cleaned up {deleted} old memories")
+                # Cleanup old memories if needed
+                memory_count = await self.vector_store.get_memory_count()
+                if memory_count > config.max_memory_entries:
+                    deleted = await self.vector_store.cleanup_old_memories()
+                    if deleted > 0:
+                        print(f"🗑️  Cleaned up {deleted} old memories")
 
         except Exception as e:
             print(f"⚠️  Error managing memory: {e}")
@@ -676,18 +719,26 @@ Focus on creating a cohesive response that feels like a complete answer to the o
         """Get current agent status and diagnostics."""
 
         router_health = await self.router.health_check()
-        memory_count = await self.vector_store.get_memory_count()
+        
+        # Get memory stats based on system type
+        if self.hierarchical_memory:
+            memory_stats = await self.hierarchical_memory.get_memory_stats()
+        else:
+            memory_count = await self.vector_store.get_memory_count()
+            memory_stats = {"total_memories": memory_count}
 
         return {
             "session_id": self.session_id,
             "tasks_completed": len(self.task_history),
-            "memory_entries": memory_count,
+            "memory_system": "hierarchical" if self.hierarchical_memory else "simple",
+            "memory_stats": memory_stats,
             "router_health": router_health,
             "conversation_context": self.context.get_context_summary(),
             "config": {
                 "reflection_enabled": config.reflection_enabled,
                 "max_memory_entries": config.max_memory_entries,
                 "local_token_threshold": config.local_token_threshold,
+                "use_hierarchical_memory": config.use_hierarchical_memory,
             },
         }
 
