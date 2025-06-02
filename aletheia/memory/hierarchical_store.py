@@ -89,24 +89,33 @@ class HierarchicalMemoryStore:
         
         all_results = []
         
-        for tier in include_tiers:
-            tier_results = await self.vector_store.search_memories(
-                query=query,
-                n_results=n_results,
-                memory_type=f"{tier.value}_*"  # Search within tier
-            )
+        # Search all memories and filter by tier
+        all_memories = await self.vector_store.search_memories(
+            query=query,
+            n_results=n_results * len(include_tiers),  # Get more to filter by tiers
+        )
+        
+        # Filter by requested tiers and add tier information
+        for memory in all_memories:
+            memory_tier = memory["metadata"].get("tier")
             
-            # Add tier information and boost score for higher tiers
-            for result in tier_results:
-                result["tier"] = tier.value
-                if tier == MemoryTier.RAW:
-                    result["tier_boost"] = 1.0
-                elif tier == MemoryTier.SUMMARY:
-                    result["tier_boost"] = 0.8
-                elif tier == MemoryTier.KEY_FACTS:
-                    result["tier_boost"] = 1.2  # Key facts are most important
-                
-                all_results.append(result)
+            # Check if this memory belongs to one of the requested tiers
+            for tier in include_tiers:
+                if memory_tier == tier.value:
+                    memory["tier"] = tier.value
+                    
+                    # Add tier boost for scoring
+                    if tier == MemoryTier.RAW:
+                        memory["tier_boost"] = 1.0
+                    elif tier == MemoryTier.SUMMARY:
+                        memory["tier_boost"] = 0.8
+                    elif tier == MemoryTier.KEY_FACTS:
+                        memory["tier_boost"] = 1.2  # Key facts are most important
+                    else:
+                        memory["tier_boost"] = 0.5
+                    
+                    all_results.append(memory)
+                    break
         
         # Sort by relevance with tier boosting
         all_results.sort(key=lambda x: (x.get("tier_boost", 0.5) * (1 - x.get("distance", 1.0))), reverse=True)
@@ -410,13 +419,13 @@ Success Patterns:
     async def _count_memories_by_tier(self, tier: MemoryTier) -> int:
         """Count memories in a specific tier."""
         
-        # Simplified count - would need better implementation
-        memories = await self.vector_store.search_memories(
-            query="*",
-            n_results=1000,  # Rough count
+        # Get all memories and count by tier metadata
+        all_memories = await self.vector_store.search_memories(
+            query="*",  # Get all memories
+            n_results=1000,  # Large number to get all
         )
         
-        return sum(1 for mem in memories if mem["metadata"].get("tier") == tier.value)
+        return sum(1 for mem in all_memories if mem["metadata"].get("tier") == tier.value)
 
     async def _delete_oldest_memories(self, tier: MemoryTier, count: int) -> None:
         """Delete oldest memories from a tier."""

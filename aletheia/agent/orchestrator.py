@@ -181,8 +181,13 @@ class AletheiaAgent:
 
         print("🎯 Handling complex task with planning...")
 
-        # Create a plan
-        plan = await self.planner.create_plan(user_input)
+        # Create a plan with memory context
+        enhanced_input = user_input
+        if relevant_memories:
+            memory_context = self._format_memories_for_context(relevant_memories)
+            enhanced_input = f"{user_input}\n\n{memory_context}"
+        
+        plan = await self.planner.create_plan(enhanced_input)
 
         if not plan:
             # Fallback to simple task handling
@@ -204,7 +209,7 @@ class AletheiaAgent:
 
             print(f"🔄 Executing: {next_task.description}")
 
-            # Execute sub-task
+            # Execute sub-task with memory context
             subtask_result = await self._execute_subtask(next_task, relevant_memories)
             execution_results.append({
                 "subtask": next_task,
@@ -213,9 +218,9 @@ class AletheiaAgent:
 
             completed_tasks.append(next_task.id)
 
-        # Synthesize final result
+        # Synthesize final result with memory context
         final_result = await self._synthesize_plan_results(
-            user_input, plan, execution_results
+            user_input, plan, execution_results, relevant_memories
         )
 
         return {
@@ -228,6 +233,10 @@ class AletheiaAgent:
                 "execution_results": execution_results,
             },
             "approach": "planning",
+            "execution_details": {
+                "memories_used": len(relevant_memories),
+                "planning_enhanced": bool(relevant_memories),
+            },
         }
 
     async def _handle_simple_task(
@@ -239,8 +248,13 @@ class AletheiaAgent:
         
         start_time = time.time()
         
-        # Build context for the local LLM
+        # Build context for the local LLM, including relevant memories
         context_prompt = self.context.build_context_prompt(user_input)
+        
+        # Add relevant memories to the context if available
+        if relevant_memories:
+            memory_context = self._format_memories_for_context(relevant_memories)
+            context_prompt = f"{context_prompt}\n\n{memory_context}"
         
         print("⚡ Handling simple task with structured local LLM...")
         
@@ -282,12 +296,17 @@ class AletheiaAgent:
             if structured_result['external_needed']:
                 print("🔬 Local LLM recommends external consultation - routing to external LLM")
                 
-                # Route to external LLM
+                # Route to external LLM with memory-enhanced context
+                enhanced_context = self._build_context_summary()
+                if relevant_memories:
+                    memory_context = self._format_memories_for_context(relevant_memories)
+                    enhanced_context = f"{enhanced_context}\n\n=== RELEVANT MEMORIES ===\n{memory_context}\n"
+                
                 task_context = TaskContext(
                     prompt=user_input,
                     max_tokens=1024,
                     requires_deep_reasoning=True,
-                    conversation_context=self._build_context_summary(),
+                    conversation_context=enhanced_context,
                     user_name=self.context.user_name,
                     session_context={
                         "session_id": self.session_id,
@@ -312,6 +331,7 @@ class AletheiaAgent:
                         "local_confidence": structured_result['confidence'],
                         "local_reasoning": structured_result['reasoning'],
                         "consultation_metadata": external_result.get("consultation_metadata"),
+                        "memories_used": len(relevant_memories),
                     },
                     "approach": "structured_local",
                 }
@@ -333,18 +353,24 @@ class AletheiaAgent:
                         "local_confidence": structured_result['confidence'],
                         "local_reasoning": structured_result['reasoning'],
                         "raw_response": structured_result.get('raw_response', ''),
+                        "memories_used": len(relevant_memories),
                     },
                     "approach": "structured_local",
                 }
                 
         except Exception as e:
             print(f"❌ Structured local LLM failed: {e}")
-            # Fallback to external LLM
+            # Fallback to external LLM with memory context
+            enhanced_context = self._build_context_summary()
+            if relevant_memories:
+                memory_context = self._format_memories_for_context(relevant_memories)
+                enhanced_context = f"{enhanced_context}\n\n=== RELEVANT MEMORIES ===\n{memory_context}\n"
+            
             task_context = TaskContext(
                 prompt=user_input,
                 max_tokens=1024,
                 requires_deep_reasoning=True,
-                conversation_context=self._build_context_summary(),
+                conversation_context=enhanced_context,
                 user_name=self.context.user_name,
                 session_context={
                     "session_id": self.session_id,
@@ -366,6 +392,7 @@ class AletheiaAgent:
                     "routing_assessment": "structured_local_failed",
                     "error": str(e),
                     "consultation_metadata": external_result.get("consultation_metadata"),
+                    "memories_used": len(relevant_memories),
                 },
                 "approach": "structured_local",
             }
@@ -513,13 +540,19 @@ class AletheiaAgent:
     ) -> dict[str, Any]:
         """Execute a single sub-task."""
 
+        # Build enhanced context with memories
+        conversation_context = self._build_context_summary()
+        if relevant_memories:
+            memory_context = self._format_memories_for_context(relevant_memories)
+            conversation_context = f"{conversation_context}\n\n=== RELEVANT MEMORIES FOR SUBTASK ===\n{memory_context}\n"
+
         # Create context for subtask
         task_context = TaskContext(
             prompt=subtask.description,
             max_tokens=600,
             requires_deep_reasoning=subtask.requires_external_llm,
             cost_sensitive=not subtask.requires_external_llm,
-            conversation_context=self._build_context_summary(),
+            conversation_context=conversation_context,
             user_name=self.context.user_name,
             session_context={
                 "session_id": self.session_id,
@@ -537,7 +570,8 @@ class AletheiaAgent:
         self,
         original_task: str,
         plan: Plan,
-        execution_results: list[dict[str, Any]]
+        execution_results: list[dict[str, Any]],
+        relevant_memories: list[dict[str, Any]]
     ) -> str:
         """Synthesize results from plan execution into final response."""
 
@@ -550,27 +584,39 @@ class AletheiaAgent:
             results_text += f"\n{i}. {subtask.description}\n"
             results_text += f"Result: {result.get('result', 'No result')}\n"
 
+        # Include memory context in synthesis if available
+        memory_context_text = ""
+        if relevant_memories:
+            memory_context_text = f"\n\nRelevant Past Experiences:\n{self._format_memories_for_context(relevant_memories)}"
+
         synthesis_prompt = f"""I need to synthesize the results from executing a complex task plan.
 
 Original Task: {original_task}
 
 Plan Execution Results:
-{results_text}
+{results_text}{memory_context_text}
 
 Please provide a comprehensive, well-structured response that:
 1. Directly answers the original question/task
 2. Integrates insights from all sub-task results
-3. Presents information in a logical, coherent manner
-4. Highlights key findings or recommendations
-5. Addresses any limitations or areas for further exploration
+3. Incorporates relevant information from past experiences when applicable
+4. Presents information in a logical, coherent manner
+5. Highlights key findings or recommendations
+6. Addresses any limitations or areas for further exploration
 
 Focus on creating a cohesive response that feels like a complete answer to the original task."""
+
+        # Build enhanced conversation context for synthesis
+        conversation_context = self._build_context_summary()
+        if relevant_memories:
+            memory_context = self._format_memories_for_context(relevant_memories)
+            conversation_context = f"{conversation_context}\n\n=== SYNTHESIS MEMORIES ===\n{memory_context}\n"
 
         synthesis_context = TaskContext(
             prompt=synthesis_prompt,
             max_tokens=1200,
             requires_deep_reasoning=True,
-            conversation_context=self._build_context_summary(),
+            conversation_context=conversation_context,
             user_name=self.context.user_name,
             session_context={
                 "session_id": self.session_id,
@@ -802,6 +848,40 @@ Focus on creating a cohesive response that feels like a complete answer to the o
                 issues.append("no_definition_provided")
         
         return issues
+
+    def _format_memories_for_context(self, memories: list[dict[str, Any]]) -> str:
+        """Format a list of memories into a context string."""
+        if not memories:
+            return ""
+        
+        context_parts = ["=== RELEVANT PAST EXPERIENCES ==="]
+        
+        for i, memory in enumerate(memories, 1):
+            content = memory.get('content', 'No content')
+            tier = memory.get('tier', 'unknown')
+            distance = memory.get('distance', 1.0)
+            relevance = 1.0 - distance  # Convert distance to relevance score
+            
+            # Extract key information from content
+            if content.startswith("Task:"):
+                # This is a task experience memory
+                lines = content.split('\n')
+                task_line = next((line for line in lines if line.startswith("Task:")), "")
+                response_line = next((line for line in lines if line.startswith("Response:")), "")
+                
+                context_parts.append(f"{i}. [{tier.upper()}] Previous Experience:")
+                context_parts.append(f"   {task_line}")
+                context_parts.append(f"   {response_line[:150]}...")
+                context_parts.append(f"   Relevance: {relevance:.2f}")
+            else:
+                # Other types of memories
+                context_parts.append(f"{i}. [{tier.upper()}] {content[:200]}...")
+                context_parts.append(f"   Relevance: {relevance:.2f}")
+            
+            context_parts.append("")  # Empty line between memories
+        
+        context_parts.append("=== END MEMORIES ===")
+        return "\n".join(context_parts)
 
 
 # Simple CLI interface for testing
