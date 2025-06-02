@@ -251,7 +251,12 @@ This question requires deeper knowledge than I currently have. Please provide a 
 [Detailed explanation with scientific accuracy and relevant context]
 
 **2. USER RESPONSE** (for me to provide to the user):
-[Natural, conversational answer in {response_language} that maintains my personality: technically precise, concise, evidence-based, no flattery. If the user's question references previous conversation, make sure to address those references appropriately.]
+[Natural, conversational answer in {response_language} that maintains my personality and response style. 
+IMPORTANT: Look at my previous responses in the conversation context above - match that same concise, direct style:
+- Keep responses brief and focused (1-2 sentences for simple facts)
+- Be technically precise but conversational like my other responses
+- Avoid excessive detail unless the question specifically asks for it
+- Match the length and tone of my previous local responses shown in the context]
 
 **3. MEMORY POINTS** (key facts for my future reference):
 [3-5 bullet points of essential information I should remember]
