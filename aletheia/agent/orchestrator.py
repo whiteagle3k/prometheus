@@ -14,6 +14,7 @@ from ..llm.router import LLMRouter, TaskContext
 from ..memory.summariser import MemorySummariser
 from ..memory.vector_store import VectorStore
 from ..memory.hierarchical_store import HierarchicalMemoryStore
+from ..memory.user_profile_store import UserProfileStore
 from .context_manager import ConversationContext
 from .planner import Plan, SubTask, TaskPlanner
 from .reflexion import ReflectionEngine
@@ -65,6 +66,9 @@ class AletheiaAgent:
         self.reflection_engine = ReflectionEngine(self.router, self.vector_store)
         self.memory_summariser = MemorySummariser(self.vector_store)
         
+        # Initialize user profile storage
+        self.user_profile_store = UserProfileStore()
+        
         # Initialize hierarchical memory if enabled
         if config.use_hierarchical_memory:
             self.hierarchical_memory = HierarchicalMemoryStore(self.vector_store)
@@ -86,6 +90,45 @@ class AletheiaAgent:
         self.context.update_from_input(user_input)
 
         try:
+            # Step 0: Extract and store user-provided information
+            user_name = self.context.user_name
+            is_providing_info = False
+            
+            if user_name:
+                # Check if user is providing information vs asking questions
+                is_providing_info = self.user_profile_store.extractor.is_information_providing(user_input)
+                
+                if is_providing_info:
+                    print("📊 Detected user providing information - extracting data...")
+                    await self.user_profile_store.update_user_data(
+                        user_name, 
+                        user_input, 
+                        context=f"Session {self.session_id}, Task #{len(self.task_history) + 1}"
+                    )
+                
+                # Check if this is a data query (only if not providing info)
+                elif await self.user_profile_store.is_data_query(user_input):
+                    print("🔍 Detected user data query - providing profile summary...")
+                    summary = await self.user_profile_store.get_user_data_summary(user_name)
+                    
+                    return {
+                        "type": "user_data_query",
+                        "response": summary,
+                        "execution_details": {
+                            "route_used": "user_profile",
+                            "execution_time": (datetime.now() - start_time).total_seconds(),
+                            "estimated_cost": 0,
+                            "data_source": "user_profile_store"
+                        },
+                        "approach": "user_data_retrieval",
+                        "meta": {
+                            "processing_time": (datetime.now() - start_time).total_seconds(),
+                            "session_id": self.session_id,
+                            "task_id": len(self.task_history) + 1,
+                            "user_data_query": True
+                        }
+                    }
+
             # Step 1: Retrieve relevant memories for better context
             relevant_memories = await self._retrieve_relevant_memories(user_input)
 
@@ -251,10 +294,37 @@ class AletheiaAgent:
         # Build context for the local LLM, including relevant memories
         context_prompt = self.context.build_context_prompt(user_input)
         
+        # Add user profile data to context if available
+        user_name = self.context.user_name
+        user_profile_context = ""
+        if user_name:
+            user_profile_context = await self.user_profile_store.get_user_data_context(user_name)
+            if user_profile_context:
+                context_prompt = f"{context_prompt}\n\n{user_profile_context}"
+        
         # Add relevant memories to the context if available
+        memory_guidance = ""
         if relevant_memories:
             memory_context = self._format_memories_for_context(relevant_memories)
-            context_prompt = f"{context_prompt}\n\n{memory_context}"
+            
+            # Analyze memory quality for external routing decision
+            high_value_memories = [m for m in relevant_memories 
+                                 if m.get('metadata', {}).get('importance_score', 0) > 0.6]
+            external_memories = [m for m in relevant_memories 
+                               if m.get('metadata', {}).get('llm_source') == 'external']
+            
+            if high_value_memories or external_memories:
+                memory_guidance = """
+
+MEMORY-BASED GUIDANCE:
+You have access to relevant past experiences that may contain the information needed to answer this question.
+- Review the memories carefully before deciding if external consultation is needed
+- If the memories contain sufficient information, you can provide a confident local response
+- External consultation should only be recommended if the memories lack crucial details
+- Consider the importance scores and sources when evaluating memory quality
+"""
+            
+            context_prompt = f"{context_prompt}\n\n{memory_context}{memory_guidance}"
         
         print("⚡ Handling simple task with structured local LLM...")
         
@@ -302,6 +372,12 @@ class AletheiaAgent:
                     memory_context = self._format_memories_for_context(relevant_memories)
                     enhanced_context = f"{enhanced_context}\n\n=== RELEVANT MEMORIES ===\n{memory_context}\n"
                 
+                # Add user profile context for external LLM too
+                if user_name:
+                    user_profile_context = await self.user_profile_store.get_user_data_context(user_name)
+                    if user_profile_context:
+                        enhanced_context = f"{enhanced_context}\n\n{user_profile_context}"
+                
                 task_context = TaskContext(
                     prompt=user_input,
                     max_tokens=1024,
@@ -332,6 +408,7 @@ class AletheiaAgent:
                         "local_reasoning": structured_result['reasoning'],
                         "consultation_metadata": external_result.get("consultation_metadata"),
                         "memories_used": len(relevant_memories),
+                        "user_profile_used": bool(user_name and user_profile_context),
                     },
                     "approach": "structured_local",
                 }
@@ -354,6 +431,7 @@ class AletheiaAgent:
                         "local_reasoning": structured_result['reasoning'],
                         "raw_response": structured_result.get('raw_response', ''),
                         "memories_used": len(relevant_memories),
+                        "user_profile_used": bool(user_name and user_profile_context),
                     },
                     "approach": "structured_local",
                 }
@@ -365,6 +443,12 @@ class AletheiaAgent:
             if relevant_memories:
                 memory_context = self._format_memories_for_context(relevant_memories)
                 enhanced_context = f"{enhanced_context}\n\n=== RELEVANT MEMORIES ===\n{memory_context}\n"
+            
+            # Add user profile context for fallback too
+            if user_name:
+                user_profile_context = await self.user_profile_store.get_user_data_context(user_name)
+                if user_profile_context:
+                    enhanced_context = f"{enhanced_context}\n\n{user_profile_context}"
             
             task_context = TaskContext(
                 prompt=user_input,
@@ -393,6 +477,7 @@ class AletheiaAgent:
                     "error": str(e),
                     "consultation_metadata": external_result.get("consultation_metadata"),
                     "memories_used": len(relevant_memories),
+                    "user_profile_used": bool(user_name and user_profile_context),
                 },
                 "approach": "structured_local",
             }
@@ -642,10 +727,30 @@ Focus on creating a cohesive response that feels like a complete answer to the o
             experience += f"Response: {result.get('response', 'No response')[:500]}...\n"
 
             # Add execution details
-            if "execution_details" in result:
-                details = result["execution_details"]
-                experience += f"Route: {details.get('route_used', 'unknown')}\n"
-                experience += f"Cost: ${details.get('estimated_cost', 0):.4f}\n"
+            execution_details = result.get("execution_details", {})
+            route_used = execution_details.get("route_used", "unknown")
+            
+            experience += f"Route: {route_used}\n"
+            experience += f"Cost: ${execution_details.get('estimated_cost', 0):.4f}\n"
+            
+            # Add consultation metadata if available (for external LLM tracking)
+            consultation_meta = execution_details.get("consultation_metadata", {})
+            if consultation_meta:
+                experience += f"External LLM: {consultation_meta.get('provider', 'unknown')}\n"
+                experience += f"Model: {consultation_meta.get('model', 'unknown')}\n"
+
+            # Determine detailed source information
+            llm_source = "local"
+            llm_provider = "phi3_medium"  # Default local model
+            llm_model = "phi-3-medium-4k-instruct"
+            
+            if "external" in route_used:
+                llm_source = "external"
+                llm_provider = consultation_meta.get("provider", "unknown_external")
+                llm_model = consultation_meta.get("model", "unknown_model")
+            elif route_used == "local":
+                llm_source = "local"
+                # Keep default local values
 
             # Prepare metadata with proper types (ChromaDB only accepts str, int, float, bool)
             metadata = {
@@ -656,16 +761,23 @@ Focus on creating a cohesive response that feels like a complete answer to the o
                 "user_name": self.context.user_name or "unknown",
                 "language": self.context.last_user_language,
                 "current_topic": self.context.current_topic,
-                "route_used": result.get("execution_details", {}).get("route_used", "unknown"),
+                "route_used": route_used,
                 "execution_time": result.get("meta", {}).get("processing_time", 0.0),
+                # Enhanced source tracking for multi-LLM architecture
+                "llm_source": llm_source,  # "local" or "external"
+                "llm_provider": llm_provider,  # "phi3_medium", "anthropic", "openai", etc.
+                "llm_model": llm_model,  # specific model name
+                "estimated_cost": float(execution_details.get("estimated_cost", 0.0)),
+                "local_confidence": execution_details.get("local_confidence", "unknown"),
             }
 
-            # Calculate importance score based on complexity and routing
-            importance_score = 0.5  # Base score
-            if len(user_input) > 100:  # Complex questions
-                importance_score += 0.2
-            if "external" in metadata.get("route_used", ""):  # External routing indicates complexity
-                importance_score += 0.3
+            # Enhanced importance scoring based on source and complexity
+            importance_score = self._calculate_memory_importance(
+                user_input=user_input,
+                route_used=route_used,
+                llm_source=llm_source,
+                execution_details=execution_details
+            )
             
             # Use hierarchical memory if available
             if self.hierarchical_memory:
@@ -685,6 +797,59 @@ Focus on creating a cohesive response that feels like a complete answer to the o
 
         except Exception as e:
             print(f"⚠️  Error storing experience: {e}")
+    
+    def _calculate_memory_importance(
+        self,
+        user_input: str,
+        route_used: str,
+        llm_source: str,
+        execution_details: dict[str, Any]
+    ) -> float:
+        """Calculate importance score for memory entry with enhanced scoring for external LLMs."""
+        
+        importance_score = 0.3  # Base score (reduced from 0.5)
+        
+        # Input complexity factor
+        input_length = len(user_input)
+        if input_length > 200:
+            importance_score += 0.3
+        elif input_length > 100:
+            importance_score += 0.2
+        elif input_length > 50:
+            importance_score += 0.1
+        
+        # LLM source factor (external much higher value)
+        if llm_source == "external":
+            importance_score += 0.5  # Significant boost for external LLM results
+            
+            # Additional boost based on estimated cost (higher cost = more complex)
+            cost = execution_details.get("estimated_cost", 0.0)
+            if cost > 0.01:  # High cost query
+                importance_score += 0.2
+            elif cost > 0.005:  # Medium cost query  
+                importance_score += 0.1
+                
+        elif llm_source == "local":
+            # Local results get smaller boost
+            confidence = execution_details.get("local_confidence", "unknown")
+            if confidence == "high":
+                importance_score += 0.1
+            elif confidence == "medium":
+                importance_score += 0.05
+        
+        # Route complexity factor
+        if "external_fallback" in route_used:
+            importance_score += 0.3  # Fallback situations are important to remember
+        elif "planning" in route_used:
+            importance_score += 0.2  # Complex planning tasks
+        
+        # Approach factor
+        approach = execution_details.get("approach", "")
+        if approach == "planning":
+            importance_score += 0.2
+        
+        # Cap at 1.0 to prevent extreme scores
+        return min(importance_score, 1.0)
 
     async def _maybe_reflect(self, user_input: str, result: dict[str, Any]) -> None:
         """Optionally perform reflection on the completed task."""
@@ -850,17 +1015,34 @@ Focus on creating a cohesive response that feels like a complete answer to the o
         return issues
 
     def _format_memories_for_context(self, memories: list[dict[str, Any]]) -> str:
-        """Format a list of memories into a context string."""
+        """Format a list of memories into a context string for LLM consumption."""
         if not memories:
             return ""
         
         context_parts = ["=== RELEVANT PAST EXPERIENCES ==="]
+        context_parts.append("(Use these experiences to inform your response, but don't copy them verbatim)")
+        context_parts.append("")
         
         for i, memory in enumerate(memories, 1):
             content = memory.get('content', 'No content')
             tier = memory.get('tier', 'unknown')
             distance = memory.get('distance', 1.0)
             relevance = 1.0 - distance  # Convert distance to relevance score
+            metadata = memory.get('metadata', {})
+            
+            # Get source information
+            llm_source = metadata.get('llm_source', 'unknown')
+            llm_provider = metadata.get('llm_provider', 'unknown')
+            llm_model = metadata.get('llm_model', 'unknown')
+            importance = metadata.get('importance_score', 0.0)
+            
+            # Create source attribution
+            if llm_source == "external":
+                source_info = f"External LLM ({llm_provider})"
+            elif llm_source == "local":
+                source_info = f"Local LLM ({llm_provider})"
+            else:
+                source_info = f"Unknown source"
             
             # Extract key information from content
             if content.startswith("Task:"):
@@ -868,19 +1050,47 @@ Focus on creating a cohesive response that feels like a complete answer to the o
                 lines = content.split('\n')
                 task_line = next((line for line in lines if line.startswith("Task:")), "")
                 response_line = next((line for line in lines if line.startswith("Response:")), "")
+                route_line = next((line for line in lines if line.startswith("Route:")), "")
                 
-                context_parts.append(f"{i}. [{tier.upper()}] Previous Experience:")
+                context_parts.append(f"{i}. [{tier.upper()}] Previous Experience (Importance: {importance:.2f}):")
+                context_parts.append(f"   Source: {source_info}")
                 context_parts.append(f"   {task_line}")
-                context_parts.append(f"   {response_line[:150]}...")
-                context_parts.append(f"   Relevance: {relevance:.2f}")
+                
+                # For data-related queries, show more of the response to capture specific information
+                if any(keyword in task_line.lower() for keyword in ["данные", "data", "рост", "вес", "weight", "height", "жир", "fat", "кг", "см", "процент"]):
+                    # Show more content for data queries (up to 500 characters)
+                    context_parts.append(f"   {response_line[:500]}...")
+                    context_parts.append(f"   ⚠️ KEY DATA: This memory may contain specific user information")
+                else:
+                    # Standard truncation for other queries
+                    context_parts.append(f"   {response_line[:200]}...")
+                
+                if route_line:
+                    context_parts.append(f"   {route_line}")
+                context_parts.append(f"   Relevance to current query: {relevance:.2f}")
+                
+                # Add learning note for high-importance external memories
+                if llm_source == "external" and importance > 0.7:
+                    context_parts.append(f"   📝 Note: High-value external consultation - consider this knowledge carefully")
+                
             else:
-                # Other types of memories
-                context_parts.append(f"{i}. [{tier.upper()}] {content[:200]}...")
+                # Other types of memories (summaries, key facts)
+                context_parts.append(f"{i}. [{tier.upper()}] {source_info} (Importance: {importance:.2f}):")
+                context_parts.append(f"   {content[:250]}...")
                 context_parts.append(f"   Relevance: {relevance:.2f}")
             
             context_parts.append("")  # Empty line between memories
         
+        context_parts.append("=== CONTEXT USAGE GUIDELINES ===")
+        context_parts.append("• Use this information to enhance your understanding and provide better responses")
+        context_parts.append("• If these experiences contain the answer, you may not need external consultation")
+        context_parts.append("• Pay special attention to KEY DATA memories containing specific user information")
+        context_parts.append("• Extract exact values (numbers, measurements) when available in memories")
+        context_parts.append("• Maintain your natural conversational style while incorporating relevant insights")
+        context_parts.append("• Higher importance scores indicate more valuable information")
         context_parts.append("=== END MEMORIES ===")
+        context_parts.append("")
+        
         return "\n".join(context_parts)
 
 

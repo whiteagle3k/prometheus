@@ -1,0 +1,166 @@
+{
+  "enabled": true,
+  "parameters": {
+    "physical_patterns": [
+      {
+        "pattern": "(?:я\\s+)?(?:вешу|весу|мой\\s+вес)\\s+(\\d+(?:[.,]\\d+)?)\\s*(?:кг|килограмм)",
+        "key": "weight",
+        "unit": "kg",
+        "confidence": 0.95
+      },
+      {
+        "pattern": "(?:при\\s+)?(?:росте|высота|рост)\\s+(\\d+(?:[.,]\\d+)?)\\s*(?:см|сантиметр|м|метр)",
+        "key": "height",
+        "unit": "cm",
+        "confidence": 0.95
+      },
+      {
+        "pattern": "(\\d+(?:[.,]\\d+)?)\\s*(?:см|сантиметр)(?:\\s+рост|роста)?",
+        "key": "height",
+        "unit": "cm",
+        "confidence": 0.9
+      },
+      {
+        "pattern": "(?:процент\\s+)?(?:жира|жир)\\s+(\\d+(?:[.,]\\d+)?)\\s*(?:%|процент)?",
+        "key": "body_fat_percentage",
+        "unit": "%",
+        "confidence": 0.9
+      },
+      {
+        "pattern": "(\\d+(?:[.,]\\d+)?)\\s*%?\\s*(?:жира|процент\\s+жира)",
+        "key": "body_fat_percentage",
+        "unit": "%",
+        "confidence": 0.85
+      },
+      {
+        "pattern": "(?:мне|возраст)\\s+(\\d+)\\s*(?:лет|год)",
+        "key": "age",
+        "unit": "years",
+        "confidence": 0.9
+      },
+      {
+        "pattern": "(?:I\\s+)?(?:weigh|weight\\s+is)\\s+(\\d+(?:[.,]\\d+)?)\\s*(?:kg|kilogram|lbs?|pound)",
+        "key": "weight",
+        "unit": "extracted",
+        "confidence": 0.95
+      },
+      {
+        "pattern": "(?:I(?:'m|\\s+am)\\s+)?(\\d+(?:[.,]\\d+)?)\\s*(?:cm|centimeter|ft|feet|inches?|m|meter)\\s*(?:tall|height)?",
+        "key": "height",
+        "unit": "extracted",
+        "confidence": 0.95
+      },
+      {
+        "pattern": "(?:body\\s+fat|fat\\s+percentage)\\s+(?:is\\s+)?(\\d+(?:[.,]\\d+)?)\\s*%",
+        "key": "body_fat_percentage",
+        "unit": "%",
+        "confidence": 0.9
+      },
+      {
+        "pattern": "(?:I(?:'m|\\s+am)\\s+)?(\\d+)\\s*(?:years?\\s+old|yo)",
+        "key": "age",
+        "unit": "years",
+        "confidence": 0.9
+      }
+    ],
+    "goal_patterns": [
+      {
+        "pattern": "(?:хочу|цель|планирую)\\s+(.+?)(?:\\.|!|$)",
+        "key": "fitness_goal",
+        "confidence": 0.8
+      },
+      {
+        "pattern": "(?:I\\s+want\\s+to|goal\\s+is\\s+to|planning\\s+to)\\s+(.+?)(?:\\.|!|$)",
+        "key": "fitness_goal",
+        "confidence": 0.8
+      }
+    ],
+    "preference_patterns": [
+      {
+        "pattern": "(?:я\\s+)?(?:люблю|нравится|предпочитаю)\\s+(.+?)(?:\\.|,|и|$)",
+        "key": "likes",
+        "confidence": 0.7
+      },
+      {
+        "pattern": "(?:я\\s+)?(?:не\\s+люблю|не\\s+нравится|не\\s+ем)\\s+(.+?)(?:\\.|,|и|$)",
+        "key": "dislikes",
+        "confidence": 0.7
+      },
+      {
+        "pattern": "(?:I\\s+)?(?:love|like|prefer|enjoy)\\s+(.+?)(?:\\.|,|and|$)",
+        "key": "likes",
+        "confidence": 0.7
+      },
+      {
+        "pattern": "(?:I\\s+)?(?:don't\\s+like|hate|dislike|avoid)\\s+(.+?)(?:\\.|,|and|$)",
+        "key": "dislikes",
+        "confidence": 0.7
+      }
+    ],
+    "personal_patterns": [
+      {
+        "pattern": "(?:работаю|профессия|специальность)\\s+(.+?)(?:\\.|,|$)",
+        "key": "profession",
+        "confidence": 0.8
+      },
+      {
+        "pattern": "(?:I\\s+work\\s+as|profession|job)\\s+(.+?)(?:\\.|,|$)",
+        "key": "profession",
+        "confidence": 0.8
+      },
+      {
+        "pattern": "(?:живу\\s+в|из\\s+города)\\s+(.+?)(?:\\.|,|$)",
+        "key": "location",
+        "confidence": 0.7
+      },
+      {
+        "pattern": "(?:I\\s+live\\s+in|from)\\s+(.+?)(?:\\.|,|$)",
+        "key": "location",
+        "confidence": 0.7
+      }
+    ],
+    "correction_patterns": [
+      {
+        "pattern": "(?:нет|не\\s+так|неправильно|ошибка|на\\s+самом\\s+деле)\\s+(.+)",
+        "type": "correction",
+        "confidence": 0.85
+      },
+      {
+        "pattern": "(?:no|not\\s+right|incorrect|wrong|actually)\\s+(.+)",
+        "type": "correction",
+        "confidence": 0.85
+      },
+      {
+        "pattern": "(?:правильно|точнее|вернее)\\s+(.+)",
+        "type": "clarification",
+        "confidence": 0.8
+      },
+      {
+        "pattern": "(?:correct|more\\s+accurate|actually)\\s+(.+)",
+        "type": "clarification",
+        "confidence": 0.8
+      }
+    ],
+    "information_providing_indicators": [
+      "(?:я\\s+)?(?:вешу|мой\\s+вес|рост|мне\\s+\\d+|люблю|не\\s+люблю)",
+      "(?:I\\s+)?(?:weigh|my\\s+weight|I(?:'m|\\s+am)\\s+\\d+|love|like|don't\\s+like)",
+      "\\d+\\s*(?:кг|см|лет|%|kg|cm|years|ft|lbs)",
+      "(?:нет|неправильно|на\\s+самом\\s+деле|no|wrong|actually)"
+    ],
+    "question_indicators": [
+      "(?:что|как|когда|где|почему|зачем|какой|сколько)\\s+",
+      "(?:what|how|when|where|why|which|who)\\s+",
+      "\\?",
+      "(?:можешь|можете|could\\s+you|can\\s+you)\\s+",
+      "(?:расскажи|объясни|покажи|tell\\s+me|explain|show)\\s+"
+    ],
+    "data_query_patterns": [
+      "(?:напомни|расскажи|покажи)\\s+(?:мне\\s+)?(?:мои\\s+)?(?:данные|информацию|профиль)",
+      "(?:remind|tell|show)\\s+(?:me\\s+)?(?:my\\s+)?(?:data|information|profile)",
+      "(?:какой\\s+)?(?:мой\\s+)?(?:рост|вес|возраст|процент\\s+жира)",
+      "(?:what(?:'s|\\s+is)\\s+)?(?:my\\s+)?(?:height|weight|age|body\\s+fat)",
+      "(?:мои\\s+)?(?:цели|предпочтения|что\\s+я\\s+люблю)",
+      "(?:my\\s+)?(?:goals|preferences|what\\s+I\\s+like)"
+    ]
+  }
+} 

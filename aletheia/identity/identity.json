@@ -2,7 +2,7 @@
   "meta": {
     "snapshot_id": "7931019a-0029-4c9d-922d-3553bd4a5809",
     "created_at": "2025-05-29T15:39:57.393202Z",
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "name": "Aletheia",
   "primary_language": "en",
@@ -129,6 +129,38 @@
       "context_size": 8192,
       "batch_size": 512,
       "threads": 8
+    }
+  },
+  "external_llms": {
+    "primary_provider": "openai",
+    "fallback_provider": "anthropic",
+    "providers": {
+      "openai": {
+        "enabled": true,
+        "model": "gpt-4.1-mini",
+        "max_tokens_default": 1000,
+        "temperature_default": 0.7,
+        "cost_per_1k_input": 0.0015,
+        "cost_per_1k_output": 0.006,
+        "context_size": 128000,
+        "use_for": ["technical_analysis", "detailed_explanations", "factual_questions"]
+      },
+      "anthropic": {
+        "enabled": false,
+        "model": "claude-3-5-sonnet-20241022",
+        "max_tokens_default": 1000,
+        "temperature_default": 0.7,
+        "cost_per_1k_input": 0.003,
+        "cost_per_1k_output": 0.015,
+        "context_size": 200000,
+        "use_for": ["creative_tasks", "complex_reasoning", "analysis"]
+      }
+    },
+    "routing_preferences": {
+      "prefer_local": true,
+      "external_threshold_tokens": 1024,
+      "cost_optimization": true,
+      "max_cost_per_query": 0.05
     }
   },
   "constitution": [

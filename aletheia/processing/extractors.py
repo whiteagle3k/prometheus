@@ -2,8 +2,171 @@
 
 import re
 from typing import Any, Dict, List, Optional
+from datetime import datetime
+from dataclasses import dataclass
+
 from .base import ExtractorProcessor
 from .config import get_processor_config
+
+
+@dataclass
+class UserDataPoint:
+    """Represents a piece of user-provided information."""
+    key: str
+    value: str
+    category: str
+    timestamp: datetime
+    source_context: str
+    confidence: float
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "key": self.key,
+            "value": self.value,
+            "category": self.category,
+            "timestamp": self.timestamp.isoformat(),
+            "source_context": self.source_context,
+            "confidence": self.confidence
+        }
+
+
+class UserDataExtractor(ExtractorProcessor):
+    """Extracts user-provided data and information from text."""
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        """Initialize user data extractor."""
+        if config is None:
+            config = get_processor_config("user_data_extractor").parameters
+        super().__init__(config)
+        
+        self.physical_patterns = self.config.get("physical_patterns", [])
+        self.goal_patterns = self.config.get("goal_patterns", [])
+        self.preference_patterns = self.config.get("preference_patterns", [])
+        self.personal_patterns = self.config.get("personal_patterns", [])
+        self.correction_patterns = self.config.get("correction_patterns", [])
+        self.info_providing_indicators = self.config.get("information_providing_indicators", [])
+        self.question_indicators = self.config.get("question_indicators", [])
+        self.data_query_patterns = self.config.get("data_query_patterns", [])
+    
+    def extract(self, text: str, context: Optional[Dict[str, Any]] = None) -> List[UserDataPoint]:
+        """Extract user data points from text."""
+        if not text:
+            return []
+        
+        data_points = []
+        timestamp = datetime.now()
+        context_str = context.get("source_context", text[:100]) if context else text[:100]
+        
+        print(f"  🔍 Analyzing input: '{text}'")
+        
+        # Extract physical data
+        for pattern_config in self.physical_patterns:
+            category = "physical"
+            data_points.extend(self._extract_pattern_matches(
+                text, pattern_config, category, timestamp, context_str
+            ))
+        
+        # Extract goals
+        for pattern_config in self.goal_patterns:
+            category = "goals"
+            data_points.extend(self._extract_pattern_matches(
+                text, pattern_config, category, timestamp, context_str
+            ))
+        
+        # Extract preferences
+        for pattern_config in self.preference_patterns:
+            category = "preferences"
+            data_points.extend(self._extract_pattern_matches(
+                text, pattern_config, category, timestamp, context_str
+            ))
+        
+        # Extract personal info
+        for pattern_config in self.personal_patterns:
+            category = "personal"
+            data_points.extend(self._extract_pattern_matches(
+                text, pattern_config, category, timestamp, context_str
+            ))
+        
+        # Extract corrections/feedback
+        for pattern_config in self.correction_patterns:
+            category = "feedback"
+            data_points.extend(self._extract_pattern_matches(
+                text, pattern_config, category, timestamp, context_str
+            ))
+        
+        print(f"  📊 Total extracted: {len(data_points)} data points")
+        
+        return data_points
+    
+    def _extract_pattern_matches(
+        self, 
+        text: str, 
+        pattern_config: Dict[str, Any], 
+        category: str,
+        timestamp: datetime, 
+        context_str: str
+    ) -> List[UserDataPoint]:
+        """Extract matches for a specific pattern configuration."""
+        matches = []
+        
+        try:
+            pattern = pattern_config["pattern"]
+            regex_matches = re.finditer(pattern, text, re.IGNORECASE)
+            
+            for match in regex_matches:
+                value = match.group(1).strip()
+                
+                print(f"  ✅ Pattern matched: {pattern_config['key']} = {value} (pattern: {pattern[:50]}...)")
+                
+                # Clean and normalize value
+                value = self._normalize_value(value, pattern_config, match.group(0))
+                
+                data_point = UserDataPoint(
+                    key=pattern_config["key"],
+                    value=value,
+                    category=category,
+                    timestamp=timestamp,
+                    source_context=context_str,
+                    confidence=pattern_config["confidence"]
+                )
+                matches.append(data_point)
+                
+        except re.error as e:
+            print(f"Invalid pattern '{pattern_config.get('pattern', 'unknown')}': {e}")
+        except Exception as e:
+            print(f"Error processing pattern: {e}")
+        
+        return matches
+    
+    def _normalize_value(self, value: str, pattern_config: Dict[str, Any], full_match: str) -> str:
+        """Normalize extracted values based on pattern configuration."""
+        unit = pattern_config.get("unit", "")
+        
+        if unit == "kg" and "." in value:
+            value = value.replace(",", ".")
+        elif unit == "cm":
+            # Convert meters to cm if needed
+            if "м" in full_match and float(value) < 10:
+                value = str(int(float(value) * 100))
+                print(f"  📏 Converted to cm: {value}")
+        
+        return value
+    
+    def is_information_providing(self, text: str) -> bool:
+        """Determine if user is providing information vs asking questions."""
+        providing_score = sum(1 for pattern in self.info_providing_indicators 
+                            if re.search(pattern, text, re.IGNORECASE))
+        question_score = sum(1 for pattern in self.question_indicators 
+                           if re.search(pattern, text, re.IGNORECASE))
+        
+        # If user provides specific data (numbers + units), it's likely information providing
+        has_data = bool(re.search(r"\d+\s*(?:кг|см|лет|%|kg|cm|years|ft|lbs)", text, re.IGNORECASE))
+        
+        return providing_score > question_score or has_data
+    
+    def is_data_query(self, text: str) -> bool:
+        """Determine if user is asking for their stored data."""
+        return any(re.search(pattern, text, re.IGNORECASE) for pattern in self.data_query_patterns)
 
 
 class EntityExtractor(ExtractorProcessor):

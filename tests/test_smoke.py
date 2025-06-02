@@ -9,7 +9,6 @@ pytest.importorskip("chromadb")  # Skip tests if ChromaDB not available
 
 from aletheia.llm.router import LLMRouter, TaskContext, RouteDecision
 from aletheia.llm.local_llm import LocalLLM
-from aletheia.llm.external_llm import ExternalLLMManager
 from aletheia.memory.vector_store import VectorStore
 from aletheia.agent.planner import TaskPlanner
 from aletheia.agent.reflexion import ReflectionEngine
@@ -215,7 +214,7 @@ class TestAletheiaAgent:
         
         assert "session_id" in status
         assert "tasks_completed" in status
-        assert "memory_entries" in status
+        assert "memory_stats" in status
         assert status["tasks_completed"] == 0  # New agent
 
     @pytest.mark.unit

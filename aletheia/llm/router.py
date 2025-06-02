@@ -7,7 +7,7 @@ from typing import Any, Optional, Union
 
 from ..config import config
 from ..identity import identity
-from .external_llm import ExternalLLM, ExternalLLMManager
+from ..llm.providers import ExternalLLMManager
 from .local_llm import LocalLLM
 
 
@@ -173,6 +173,21 @@ class LLMRouter:
                     
                     # Parse and filter response, also get consultation metadata
                     response, consultation_metadata = await self._filter_external_response(raw_response, task.prompt)
+                    
+                    # Enhance consultation metadata with provider information
+                    model_info = external_llm.get_model_info()
+                    
+                    if consultation_metadata is None:
+                        consultation_metadata = {}
+                    
+                    consultation_metadata.update({
+                        "provider": external_llm.provider_type.value,
+                        "model": model_info.get("model", "unknown_model"),
+                        "external_llm_type": external_llm.__class__.__name__,
+                        "context_size": model_info.get("capabilities", {}).get("max_context_size", 0),
+                        "cost_info": model_info.get("costs", {}),
+                    })
+                    
                     route_used = "external"
 
             execution_time = asyncio.get_event_loop().time() - start_time

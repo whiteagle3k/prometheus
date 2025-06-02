@@ -1,0 +1,39 @@
+{
+  "physical": {
+    "weight": {
+      "value": "80",
+      "timestamp": "2025-06-02T12:06:54.786350",
+      "confidence": 0.95,
+      "source": "Session 20250602_120654, Task #1..."
+    },
+    "height": {
+      "value": "190",
+      "timestamp": "2025-06-02T12:06:54.786350",
+      "confidence": 0.9,
+      "source": "Session 20250602_120654, Task #1..."
+    },
+    "body_fat_percentage": {
+      "value": "19",
+      "timestamp": "2025-06-02T12:06:54.786350",
+      "confidence": 0.9,
+      "source": "Session 20250602_120654, Task #1..."
+    }
+  },
+  "personal": {},
+  "goals": {
+    "fitness_goal": [
+      {
+        "value": "похудеть на 5кг",
+        "timestamp": "2025-06-02T12:06:54.786350",
+        "confidence": 0.8,
+        "source": "Session 20250602_120654, Task #1..."
+      }
+    ]
+  },
+  "preferences": {
+    "likes": [],
+    "dislikes": []
+  },
+  "feedback": [],
+  "last_updated": "2025-06-02T12:06:54.788202"
+}

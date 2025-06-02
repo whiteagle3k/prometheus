@@ -2,10 +2,11 @@
 
 ## Overview
 
-Prometheus is designed around three core principles:
+Prometheus is designed around four core principles:
 1. **Identity-driven configuration** - Agent personalities defined in JSON
 2. **Intelligent hybrid routing** - Local-first with smart external consultation
 3. **Persistent conversational memory** - RAG-powered context and learning
+4. **User data intelligence** - Automatic extraction and personalized responses
 
 ## System Architecture
 
@@ -33,27 +34,27 @@ Prometheus is designed around three core principles:
                      │ (JSON Config)    │
                      └──────────────────┘
                                │
-                     ┌─────────┴─────────┐
-                     ▼                   ▼
-             ┌──────────────┐    ┌──────────────┐
-             │ Conversation │    │   LLM Router │
-             │   Context    │    │   (Smart)    │
-             └──────────────┘    └──────────────┘
-                               │
-                     ┌─────────┴─────────┐
-                     ▼                   ▼
-             ┌──────────────┐    ┌──────────────┐
-             │  Local LLM   │    │ External LLM │
-             │ (Phi-3 Mini) │    │(Claude/GPT-4)│
-             └──────────────┘    └──────────────┘
-                               │
-                               ▼
-                     ┌──────────────────┐
-                     │  Vector Memory   │
-                     │   (ChromaDB)     │
-                     └──────────────────┘
-                               │
-                               ▼
+                     ┌─────────┼─────────┐
+                     ▼         ▼         ▼
+             ┌──────────┐ ┌────────┐ ┌──────────┐
+             │Processing│ │ Memory │ │LLM Router│
+             │ Pipeline │ │ System │ │ (Smart)  │
+             └──────────┘ └────────┘ └──────────┘
+                   │         │            │
+                   ▼         ▼            ▼
+             ┌──────────┐ ┌────────┐ ┌──────────┐
+             │Config-   │ │ User   │ │ Local    │
+             │Driven    │ │Profile │ │ LLM      │
+             │Patterns  │ │Store   │ │(Phi-3M)  │
+             └──────────┘ └────────┘ └──────────┘
+                             │            │
+                             ▼            ▼
+                     ┌────────────┐ ┌──────────┐
+                     │Vector Store│ │External  │
+                     │(ChromaDB)  │ │LLM       │
+                     └────────────┘ └──────────┘
+                             │
+                             ▼
                      ┌──────────────────┐
                      │   Reflection     │
                      │    Engine        │
@@ -76,38 +77,80 @@ Prometheus is designed around three core principles:
 
 ### 3. Conversational Memory System
 - **Vector-Based Retrieval**: RAG-powered memory with semantic search
+- **Hierarchical Storage**: Automatic tiering (raw → summary → key facts)
+- **User Profile Management**: Dedicated storage for personal data
 - **Context Continuity**: Maintains topic threads and reference resolution
 - **Automatic Compression**: Intelligent summarization to manage memory
 - **Learning Integration**: Stores successful interaction patterns
 
-### 4. Processing Pipeline
-- **Generic Architecture**: No hardcoded patterns - all JSON-configurable
+### 4. User Data Intelligence System
+- **Automatic Extraction**: Pattern-based detection of personal information
+- **Real-time Storage**: Instant saving to user profiles
+- **Zero-latency Queries**: Direct profile access without LLM calls
+- **Personalized Context**: User data integration into conversations
+- **Privacy-first Design**: Local storage with encryption support
+
+### 5. Modular Processing Pipeline
+- **Config-Driven Architecture**: All patterns defined in JSON configurations
 - **Modular Processors**: Filters, extractors, detectors, validators
+- **Extensible Design**: Easy addition of new data types and patterns
 - **Multilingual Support**: Consistent behavior across languages
 - **Performance Optimized**: Fast local processing with intelligent routing
 
 ## Agent Orchestrator Philosophy
 
-### The "Smart Conductor" Approach
+### The "Smart Conductor with Memory" Approach
 
 **Traditional AI**: Tries to know everything
 - Risk of confident misinformation
 - High computational costs
 - Limited adaptability
+- No personal context
 
-**Prometheus Approach**: Knows when to ask for help
+**Prometheus Approach**: Knows when to ask for help AND remembers users
 - Meta-cognitive assessment of competence
 - Intelligent orchestration of resources
 - Prevention of misinformation through humility
 - Cost-effective resource utilization
+- Personalized responses using stored user data
+- Instant access to user information
 
 ### Routing Strategy
 
-1. **Self-Assessment**: Local LLM evaluates its competence
-2. **Confidence Scoring**: Determines routing based on uncertainty
-3. **Scientific Detection**: Auto-routes factual/scientific questions
-4. **Context Awareness**: Considers conversation history
-5. **Default Local**: Simple conversations stay local
+1. **User Data Check**: First check if it's a data query (0.00s response)
+2. **Self-Assessment**: Local LLM evaluates its competence
+3. **Profile Integration**: Include user data in context when relevant
+4. **Confidence Scoring**: Determines routing based on uncertainty
+5. **Scientific Detection**: Auto-routes factual/scientific questions
+6. **Context Awareness**: Considers conversation history and user profile
+7. **Default Local**: Simple conversations stay local
+
+## Data Processing Architecture
+
+### User Data Extraction Pipeline
+
+```
+User Input → Pattern Matching → Data Extraction → Profile Update → Response
+     │              │               │               │             │
+     ▼              ▼               ▼               ▼             ▼
+┌─────────┐  ┌────────────┐  ┌─────────────┐  ┌──────────┐  ┌─────────┐
+│Natural  │  │Config-based│  │Structured   │  │JSON      │  │Enhanced │
+│Language │  │Regex       │  │Data Points  │  │Profile   │  │Context  │
+│Text     │  │Patterns    │  │w/Confidence │  │Storage   │  │Response │
+└─────────┘  └────────────┘  └─────────────┘  └──────────┘  └─────────┘
+```
+
+### Configuration Structure
+
+```
+aletheia/processing/configs/
+├── user_data_extractor.json    # Personal data patterns
+├── entity_extractor.json       # Topic/entity extraction  
+├── name_extractor.json         # User name detection
+├── reference_detector.json     # Context references
+├── complexity_detector.json    # Task complexity assessment
+└── factual_validator.json      # Response validation
+```
 
 ## File Structure
 
@@ -118,17 +161,20 @@ prometheus/
 │   │   ├── identity.json       # Agent personality configuration
 │   │   ├── loader.py          # Configuration loading
 │   │   └── validator.py       # Schema validation
-│   ├── processing/            # Generic text processing system
-│   │   ├── configs/           # JSON configuration files
+│   ├── processing/            # Modular text processing system
+│   │   ├── configs/           # JSON pattern configurations
+│   │   ├── extractors.py      # Data extraction engines
 │   │   ├── pipeline.py        # Processing pipeline
-│   │   └── *.py              # Processors (filters, extractors, etc.)
+│   │   └── *.py              # Processors (filters, detectors, etc.)
+│   ├── memory/                # Memory and persistence systems
+│   │   ├── vector_store.py    # ChromaDB wrapper
+│   │   ├── hierarchical_store.py # Advanced memory management
+│   │   ├── user_profile_store.py # User data storage
+│   │   └── summariser.py      # Memory compression
 │   ├── llm/                   # Language model management
 │   │   ├── router.py          # Intelligent routing logic
 │   │   ├── local_llm.py       # Local model wrapper
 │   │   └── external_llm.py    # External API clients
-│   ├── memory/                # Memory and persistence
-│   │   ├── vector_store.py    # ChromaDB wrapper
-│   │   └── summariser.py      # Memory compression
 │   └── agent/                 # Agent behavior
 │       ├── orchestrator.py    # Main orchestrator
 │       ├── context_manager.py # Conversation context
@@ -143,6 +189,7 @@ prometheus/
 ## Performance Characteristics
 
 ### Typical Usage Patterns
+- **User Data Queries**: 0.00s instant response from profile storage
 - **Local Processing**: 85% of interactions (greetings, simple questions)
 - **External Consultation**: 15% for scientific/factual accuracy
 - **Memory Efficiency**: Automatic compression keeps database under 100MB
@@ -153,10 +200,25 @@ prometheus/
 - **Recommended**: 32GB+ RAM for optimal performance
 - **Storage**: ~5GB (model + dependencies + data)
 
-## Future Vision: Knowledge Orchestra
+## Data Privacy & Security
 
-The framework envisions AI agents as intelligent coordinators rather than encyclopedias:
-- **Domain Specialists**: LoRA extensions for deep knowledge
-- **Service Integrators**: Coordination with external tools
-- **Learning Systems**: Continuous improvement through self-assessment
-- **Collaborative Networks**: Multi-agent coordination capabilities 
+### User Data Protection
+- **Local Storage**: All user data stored locally in JSON profiles
+- **No External Sharing**: User information never sent to external LLMs
+- **Encryption Ready**: Storage designed for easy encryption integration
+- **Granular Control**: Users can delete or modify their data anytime
+
+### Memory Management
+- **Hierarchical Tiering**: Automatic data archiving and compression
+- **Selective Retention**: Important user data preserved, temporary data cleaned
+- **Privacy Controls**: Easy profile deletion and data export
+
+## Future Vision: Knowledge Orchestra with Personal Memory
+
+The framework envisions AI agents as intelligent coordinators with persistent memory:
+- **Personal AI Assistants**: Deep understanding of individual users
+- **Domain Specialists**: LoRA extensions for specialized knowledge
+- **Service Integrators**: Coordination with external tools and APIs
+- **Learning Systems**: Continuous improvement through interaction patterns
+- **Collaborative Networks**: Multi-agent coordination with shared context
+- **Privacy-First Design**: User data sovereignty and control 

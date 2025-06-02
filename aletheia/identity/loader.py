@@ -37,4 +37,17 @@ def get_conversation_config() -> Dict[str, Any]:
 def get_validation_config() -> Dict[str, Any]:
     """Get validation patterns configuration section."""
     identity_config = load_identity_config()
-    return identity_config.get("validation_patterns", {}) 
+    return identity_config.get("validation_patterns", {})
+
+
+def get_external_llm_config() -> Dict[str, Any]:
+    """Get external LLM configuration section."""
+    identity_config = load_identity_config()
+    return identity_config.get("external_llms", {})
+
+
+def get_provider_config(provider_name: str) -> Dict[str, Any]:
+    """Get configuration for a specific external LLM provider."""
+    external_config = get_external_llm_config()
+    providers = external_config.get("providers", {})
+    return providers.get(provider_name, {}) 

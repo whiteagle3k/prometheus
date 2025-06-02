@@ -1,0 +1,157 @@
+"""Factory for creating external LLM provider instances."""
+
+from typing import Dict, Any, Optional, Type
+
+from ...identity.loader import get_provider_config
+from .base import ExternalLLMProvider, ProviderType
+from .openai_provider import OpenAIProvider
+from .anthropic_provider import AnthropicProvider
+
+
+class ProviderFactory:
+    """Factory for creating external LLM provider instances.
+    
+    Follows the Factory pattern to encapsulate provider creation logic.
+    Makes it easy to add new providers without modifying existing code.
+    """
+
+    # Registry of available provider classes
+    _PROVIDER_REGISTRY: Dict[ProviderType, Type[ExternalLLMProvider]] = {
+        ProviderType.OPENAI: OpenAIProvider,
+        ProviderType.ANTHROPIC: AnthropicProvider,
+        # Future providers can be registered here:
+        # ProviderType.GOOGLE: GoogleProvider,
+        # ProviderType.COHERE: CohereProvider,
+    }
+
+    @classmethod
+    def create_provider(
+        self, 
+        provider_type: ProviderType, 
+        provider_config: Optional[Dict[str, Any]] = None
+    ) -> ExternalLLMProvider:
+        """Create a provider instance by type.
+        
+        Args:
+            provider_type: The type of provider to create
+            provider_config: Optional provider configuration (will load from identity if not provided)
+        
+        Returns:
+            Configured provider instance
+            
+        Raises:
+            ValueError: If provider type is not supported
+            RuntimeError: If provider configuration is invalid
+        """
+        if provider_type not in self._PROVIDER_REGISTRY:
+            available_types = list(self._PROVIDER_REGISTRY.keys())
+            raise ValueError(f"Unsupported provider type: {provider_type}. Available: {available_types}")
+
+        # Load configuration from identity.json if not provided
+        if provider_config is None:
+            provider_config = get_provider_config(provider_type.value)
+            if not provider_config:
+                raise RuntimeError(f"No configuration found for provider: {provider_type.value}")
+
+        # Get the provider class and create instance
+        provider_class = self._PROVIDER_REGISTRY[provider_type]
+        try:
+            return provider_class(provider_config)
+        except Exception as e:
+            raise RuntimeError(f"Failed to create {provider_type.value} provider: {e}")
+
+    @classmethod
+    def create_provider_by_name(
+        self, 
+        provider_name: str, 
+        provider_config: Optional[Dict[str, Any]] = None
+    ) -> ExternalLLMProvider:
+        """Create a provider instance by name string.
+        
+        Args:
+            provider_name: Name of the provider ("openai", "anthropic", etc.)
+            provider_config: Optional provider configuration
+            
+        Returns:
+            Configured provider instance
+            
+        Raises:
+            ValueError: If provider name is not recognized
+        """
+        # Convert string name to ProviderType enum
+        try:
+            provider_type = ProviderType(provider_name.lower())
+        except ValueError:
+            available_names = [pt.value for pt in ProviderType]
+            raise ValueError(f"Unknown provider name: {provider_name}. Available: {available_names}")
+
+        return self.create_provider(provider_type, provider_config)
+
+    @classmethod
+    def get_available_providers(self) -> list[ProviderType]:
+        """Get list of all available provider types."""
+        return list(self._PROVIDER_REGISTRY.keys())
+
+    @classmethod
+    def get_available_provider_names(self) -> list[str]:
+        """Get list of all available provider names."""
+        return [pt.value for pt in self._PROVIDER_REGISTRY.keys()]
+
+    @classmethod
+    def register_provider(
+        self, 
+        provider_type: ProviderType, 
+        provider_class: Type[ExternalLLMProvider]
+    ) -> None:
+        """Register a new provider class.
+        
+        This allows for runtime registration of new providers,
+        useful for plugins or dynamic provider discovery.
+        
+        Args:
+            provider_type: The provider type enum
+            provider_class: The provider implementation class
+        """
+        if not issubclass(provider_class, ExternalLLMProvider):
+            raise TypeError(f"Provider class must inherit from ExternalLLMProvider")
+        
+        self._PROVIDER_REGISTRY[provider_type] = provider_class
+
+    @classmethod
+    def is_provider_supported(self, provider_type: ProviderType) -> bool:
+        """Check if a provider type is supported."""
+        return provider_type in self._PROVIDER_REGISTRY
+
+    @classmethod
+    def is_provider_name_supported(self, provider_name: str) -> bool:
+        """Check if a provider name is supported."""
+        try:
+            provider_type = ProviderType(provider_name.lower())
+            return self.is_provider_supported(provider_type)
+        except ValueError:
+            return False
+
+    @classmethod
+    def get_provider_capabilities_summary(self) -> Dict[str, Dict[str, Any]]:
+        """Get a summary of capabilities for all available providers.
+        
+        Useful for debugging and provider comparison.
+        """
+        summary = {}
+        
+        for provider_type in self._PROVIDER_REGISTRY:
+            try:
+                # Create a dummy instance to get capabilities
+                provider_config = get_provider_config(provider_type.value)
+                if provider_config:
+                    provider = self.create_provider(provider_type, provider_config)
+                    summary[provider_type.value] = {
+                        "capabilities": provider.capabilities.__dict__,
+                        "model": provider_config.get("model", "unknown"),
+                        "enabled": provider_config.get("enabled", False),
+                    }
+            except Exception:
+                # Skip providers that can't be created (missing config, etc.)
+                summary[provider_type.value] = {"error": "Failed to create instance"}
+        
+        return summary 

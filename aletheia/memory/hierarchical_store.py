@@ -277,10 +277,22 @@ class HierarchicalMemoryStore:
     ) -> List[Dict[str, Any]]:
         """Get memories from specific tier older than date."""
         
+        # Get actual collection size to avoid over-requesting
+        collection_count = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self.vector_store.memory_collection.count(),
+        )
+        
+        # Adjust limit to not exceed available entries
+        actual_limit = min(limit * 2, collection_count) if collection_count > 0 else 0
+        
+        if actual_limit == 0:
+            return []
+        
         # This is a simplified implementation - would need more sophisticated filtering
         all_memories = await self.vector_store.search_memories(
             query="*",  # Get all
-            n_results=limit * 2,  # Get extra to filter
+            n_results=actual_limit,  # Use adjusted limit
         )
         
         filtered = []
@@ -330,9 +342,18 @@ class HierarchicalMemoryStore:
         contents = [mem["content"] for mem in memories]
         timestamps = [mem["metadata"].get("timestamp", "") for mem in memories]
         
-        # Create summary content
+        # Analyze LLM sources in this group
+        llm_sources = {}
+        for mem in memories:
+            source = mem["metadata"].get("llm_source", "unknown")
+            provider = mem["metadata"].get("llm_provider", "unknown")
+            llm_sources[f"{source}_{provider}"] = llm_sources.get(f"{source}_{provider}", 0) + 1
+        
+        # Create summary content with enhanced source tracking
         summary_content = f"""Memory Summary ({len(memories)} entries)
 Time Range: {min(timestamps)} to {max(timestamps)}
+
+LLM Sources: {', '.join([f"{k}: {v}" for k, v in llm_sources.items()])}
 
 Key Interactions:
 {chr(10).join([f"- {content[:100]}..." for content in contents[:5]])}
@@ -340,17 +361,28 @@ Key Interactions:
 Common Patterns:
 - Session involved {len(set(mem['metadata'].get('session_id', '') for mem in memories))} sessions
 - Average response time: {sum(float(mem['metadata'].get('execution_time', 0)) for mem in memories) / len(memories):.2f}s
-- External routing: {sum(1 for mem in memories if 'external' in mem['metadata'].get('route_used', ''))}/{len(memories)} times
+- External routing: {sum(1 for mem in memories if mem['metadata'].get('llm_source') == 'external')}/{len(memories)} times
+- Average importance: {sum(float(mem['metadata'].get('importance_score', 0.5)) for mem in memories) / len(memories):.2f}
 """
         
-        # Calculate importance score (simplified)
-        importance_score = sum(float(mem["metadata"].get("importance_score", 0.5)) for mem in memories) / len(memories)
+        # Calculate importance score - boost if contains external LLM results
+        external_count = sum(1 for mem in memories if mem["metadata"].get("llm_source") == "external")
+        base_importance = sum(float(mem["metadata"].get("importance_score", 0.5)) for mem in memories) / len(memories)
+        
+        # Boost importance if this summary contains valuable external results
+        if external_count > 0:
+            external_ratio = external_count / len(memories)
+            importance_score = min(base_importance + (external_ratio * 0.3), 1.0)
+        else:
+            importance_score = base_importance
         
         return {
             "content": summary_content,
             "type": memories[0]["metadata"].get("memory_type", "general"),
             "importance_score": importance_score,
-            "time_range": f"{min(timestamps)} to {max(timestamps)}"
+            "time_range": f"{min(timestamps)} to {max(timestamps)}",
+            "llm_sources": llm_sources,
+            "external_ratio": external_count / len(memories) if memories else 0.0
         }
 
     async def _extract_essential_facts(self, summaries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -419,10 +451,19 @@ Success Patterns:
     async def _count_memories_by_tier(self, tier: MemoryTier) -> int:
         """Count memories in a specific tier."""
         
+        # Get actual collection size to avoid over-requesting
+        collection_count = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self.vector_store.memory_collection.count(),
+        )
+        
+        if collection_count == 0:
+            return 0
+        
         # Get all memories and count by tier metadata
         all_memories = await self.vector_store.search_memories(
             query="*",  # Get all memories
-            n_results=1000,  # Large number to get all
+            n_results=collection_count,  # Use actual collection size
         )
         
         return sum(1 for mem in all_memories if mem["metadata"].get("tier") == tier.value)

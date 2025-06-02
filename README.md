@@ -1,7 +1,7 @@
 # Prometheus ✨
 ![CI](https://github.com/whiteagle3k/prometheus/actions/workflows/ci.yml/badge.svg)
 
-Identity-driven AI framework with hybrid LLM routing and conversational memory.
+Identity-driven AI framework with hybrid LLM routing, conversational memory, and intelligent user data management.
 
 ## Why Prometheus?
 
@@ -9,6 +9,8 @@ Identity-driven AI framework with hybrid LLM routing and conversational memory.
 - **Smart routing**: External LLMs only when local model needs help  
 - **Identity-driven**: Agent personality configured in JSON → easy to extend
 - **Conversational memory**: Persistent context with vector storage and compression
+- **User data intelligence**: Automatic extraction and personalized responses
+- **Modular architecture**: Config-driven processing with clean separation of concerns
 
 ## Meet Aletheia 👩
 
@@ -17,6 +19,8 @@ Aletheia is our first female AI agent - a thoughtful research assistant with:
 - **Self-aware**: Knows when to ask external experts for help
 - **Context-aware**: Remembers conversations and understands references
 - **Learning**: Improves through reflection and experience
+- **Personal**: Remembers user data and provides personalized responses
+- **Instant recall**: Zero-latency access to user information
 
 ## Architecture
 
@@ -28,27 +32,44 @@ Aletheia is our first female AI agent - a thoughtful research assistant with:
                     ┌──────────┼──────────┐
                     ▼          ▼          ▼
             ┌───────────┐ ┌─────────┐ ┌──────────┐
-            │ Identity  │ │ Context │ │   LLM    │
-            │   JSON    │ │ Memory  │ │ Router   │
+            │ Identity  │ │ Memory  │ │   LLM    │
+            │   JSON    │ │ System  │ │ Router   │
             └───────────┘ └─────────┘ └──────────┘
+                              │           │
+                    ┌─────────┼─────┐     │
+                    ▼         ▼     ▼     ▼
+            ┌──────────┐ ┌────────┐ ┌──────────┐
+            │ Vector   │ │ User   │ │Processing│
+            │ Memory   │ │Profile │ │ Pipeline │
+            └──────────┘ └────────┘ └──────────┘
                                           │
                               ┌───────────┴───────────┐
                               ▼                       ▼
                       ┌───────────────┐      ┌──────────────┐
                       │   Local LLM   │      │ External LLM │
-                      │ (Phi-3 Mini)  │      │(Claude/GPT-4)│
+                      │ (Phi-3 Medium)│      │(Claude/GPT-4)│
                       └───────────────┘      └──────────────┘
 ```
 
 ## Core Features
 
+### 🧠 Intelligence & Memory
 - **Identity Management**: JSON-based personality configuration
 - **Meta-cognitive Routing**: Self-assessment for smart LLM selection  
 - **Vector Memory**: RAG-powered conversation history and learning
+- **User Profiles**: Automatic extraction and storage of personal data
+- **Instant Data Queries**: Zero-latency access to user information
+
+### 💬 Conversation & Context
 - **Reference Resolution**: Understands "it", "that", "tell me more"
-- **Reflection Engine**: Self-improvement through experience analysis
-- **Processing Pipeline**: Configurable text analysis (no hardcoded patterns)
 - **Multilingual Context**: Seamless Russian/English conversation flow
+- **Personalized Responses**: Context-aware using stored user data
+- **Conversation Continuity**: Maintains context across sessions
+
+### 🏗️ Architecture & Processing
+- **Modular Design**: Clean separation of concerns with configurable components
+- **Processing Pipeline**: Config-driven text analysis with JSON patterns
+- **Reflection Engine**: Self-improvement through experience analysis
 - **Cost Optimization**: ~$0.01-0.03 per external consultation
 
 ## Quick Start (macOS)
@@ -59,7 +80,6 @@ cd prometheus
 ./scripts/install_mac.sh
 poetry run aletheia
 ```
-
 
 ## Configuration
 
@@ -87,6 +107,23 @@ Agent personality is defined in `aletheia/identity/identity.json`:
 }
 ```
 
+### Processing Configuration
+Text processing patterns in `aletheia/processing/configs/`:
+```json
+{
+  "enabled": true,
+  "parameters": {
+    "physical_patterns": [
+      {
+        "pattern": "(?:я\\s+)?(?:вешу|весу)\\s+(\\d+)\\s*кг",
+        "key": "weight",
+        "confidence": 0.95
+      }
+    ]
+  }
+}
+```
+
 ### Hardware Requirements
 - **Minimum**: 16GB RAM, Apple Silicon M1/M2/M3
 - **Recommended**: 32GB+ RAM
@@ -94,34 +131,40 @@ Agent personality is defined in `aletheia/identity/identity.json`:
 
 ## Usage Examples
 
-### First Meeting
+### Personal Data Learning
 ```
-🧑 You: Привет! Меня зовут Игорь.
-🤖 Aletheia: Привет, Игорь! Я Алетейя, женский автономный исследователь-агент. 
-Рада познакомиться! Готова помочь с анализом и исследованиями.
-💭 Thoughts: 1.2s | Route: local
+🧑 You: Привет! Меня зовут Игорь. Сейчас я вешу 80кг при росте 190см.
+🤖 Aletheia: Привет, Игорь! Рада познакомиться! 
+📊 Extracted 3 user data points
+💭 Thoughts: 1.2s | Route: local | Data stored
+```
+
+### Instant Data Recall
+```
+🧑 You: напомни мне мои данные
+🤖 Aletheia: Profile for Игорь:
+
+Physical Data:
+• Weight: 80kg
+• Height: 190cm
+• Body Fat Percentage: 19%
+💭 Thoughts: 0.00s | Route: user_profile | Instant response
+```
+
+### Personalized Context
+```
+🧑 You: Как мне лучше тренироваться для похудения?
+🤖 Aletheia: Игорь, учитывая ваш вес 80кг и рост 190см, рекомендую...
+💭 Thoughts: 2.1s | Route: local | User profile integrated
 ```
 
 ### Smart Routing in Action
 ```
-🧑 You: Что такое водяной пар?
-🤖 Aletheia: [Self-assessment] → Scientific question → [Consulting external expert]
+🧑 You: Объясни биохимические процессы жиросжигания
+🤖 Aletheia: [Self-assessment] → Complex scientific question → [External expert]
 
-Водяной пар — это газообразное состояние воды, образующееся при испарении 
-или кипении. Он невидим глазу, но играет ключевую роль в атмосферных процессах.
-💭 Thoughts: 2.1s | Route: external | Scientific accuracy prioritized
-```
-
-### Context Continuity
-```
-🧑 You: А как он образуется?
-🤖 Aletheia: [Context: водяной пар] → Continuing scientific topic...
-
-Водяной пар образуется тремя способами:
-1. Испарение с поверхности воды
-2. Кипение при 100°C 
-3. Сублимация льда напрямую в пар
-💭 Thoughts: 1.8s | Route: external | Context maintained
+При кардио нагрузках жиры расщепляются через липолиз...
+💭 Thoughts: 3.2s | Route: external | $0.015 cost
 ```
 
 ## CLI Commands
@@ -139,13 +182,16 @@ Agent personality is defined in `aletheia/identity/identity.json`:
 - [x] Meta-cognitive routing with self-assessment
 - [x] Vector memory with conversation context
 - [x] Multilingual support (Russian/English)
-- [x] Generic processing pipeline (no hardcoded patterns)
+- [x] Modular processing pipeline (config-driven patterns)
+- [x] User data extraction and profile management
+- [x] Instant user data queries with zero latency
 
 ### Phase 2: Enhancement 🔄
 - [ ] Advanced context relationship graphs
 - [ ] Multi-agent template system
 - [ ] Enhanced memory compression
 - [ ] Domain-specific knowledge routing
+- [ ] Advanced user preference learning
 
 ### Phase 3: Ecosystem 🚀
 - [ ] Plugin architecture for specialized agents
@@ -159,14 +205,36 @@ Agent personality is defined in `aletheia/identity/identity.json`:
 prometheus/
 ├── aletheia/                   # Main agent implementation
 │   ├── identity/              # JSON-based personality system
-│   ├── processing/            # Configurable text processing
+│   ├── processing/            # Modular text processing
+│   │   ├── configs/           # Pattern configurations (JSON)
+│   │   └── extractors.py      # Data extraction engines
+│   ├── memory/                # Storage and retrieval systems
+│   │   ├── vector_store.py    # Vector memory storage
+│   │   ├── hierarchical_store.py # Advanced memory management
+│   │   └── user_profile_store.py # Personal data storage
 │   ├── llm/                   # Hybrid routing system
-│   ├── memory/                # Vector storage and RAG
 │   └── agent/                 # Orchestrator and context management
 ├── docs/                      # Detailed documentation
 ├── tests/                     # Comprehensive test suite
 └── scripts/                   # Setup and utilities
 ```
+
+## New in v0.4.0
+
+### 🎯 **User Data Intelligence**
+- **Automatic extraction** of personal information from natural conversation
+- **Instant data queries** with zero-latency profile access
+- **Personalized responses** using stored user context
+
+### 🏗️ **Modular Architecture** 
+- **Config-driven processing** with JSON pattern definitions
+- **Clean separation** of concerns (memory, processing, routing)
+- **Extensible extractors** for different data types
+
+### 💾 **Enhanced Memory System**
+- **User profile storage** in dedicated memory subsystem
+- **Hierarchical memory** with automatic tiering
+- **Profile-aware context** integration
 
 ## Documentation
 

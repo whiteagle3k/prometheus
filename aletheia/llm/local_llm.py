@@ -339,8 +339,14 @@ class LocalLLM:
 ОБОСНОВАНИЕ: [краткое объяснение]
 ВНЕШНИЙ_ЗАПРОС: [да для технических/научных вопросов, нет для общения]
 
+ПРАВИЛА РАБОТЫ С ПАМЯТЬЮ:
+- Если в RELEVANT PAST EXPERIENCES есть нужная информация (особенно с пометкой KEY DATA) - используй её
+- Для запросов о данных пользователя (рост, вес, процент жира) ищи конкретные цифры в памяти
+- Если память содержит ответ, установи ВНЕШНИЙ_ЗАПРОС=нет
+- Если памяти недостаточно для полного ответа, установи ВНЕШНИЙ_ЗАПРОС=да
+
 Используй ВНЕШНИЙ_ЗАПРОС=да для: состав материалов, работа техники, научные факты.
-Используй ВНЕШНИЙ_ЗАПРОС=нет для: приветствий, общения, вопросов обо мне.<|end|>
+Используй ВНЕШНИЙ_ЗАПРОС=нет для: приветствий, общения, вопросов обо мне, данных из памяти.<|end|>
 <|user|>{prompt}{context_section}<|end|>
 <|assistant|>"""
         else:
@@ -353,8 +359,14 @@ CONFIDENCE: [high/medium/low]
 REASONING: [brief explanation]
 EXTERNAL_NEEDED: [yes for technical/scientific, no for conversation]
 
+MEMORY USAGE RULES:
+- If RELEVANT PAST EXPERIENCES contains needed information (especially marked KEY DATA) - use it
+- For user data queries (height, weight, body fat percentage) look for specific numbers in memory
+- If memory contains the answer, set EXTERNAL_NEEDED=no
+- If memory is insufficient for complete answer, set EXTERNAL_NEEDED=yes
+
 Use EXTERNAL_NEEDED=yes for: material composition, how things work, scientific facts.
-Use EXTERNAL_NEEDED=no for: greetings, chat, questions about me.<|end|>
+Use EXTERNAL_NEEDED=no for: greetings, chat, questions about me, data from memory.<|end|>
 <|user|>{prompt}{context_section}<|end|>
 <|assistant|>"""
 

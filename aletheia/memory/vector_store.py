@@ -73,11 +73,24 @@ class VectorStore:
         if memory_type:
             where_filter["type"] = memory_type
 
+        # Get the actual collection size to avoid requesting more than available
+        collection_count = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self.memory_collection.count(),
+        )
+        
+        # Adjust n_results to not exceed available entries
+        actual_n_results = min(n_results, collection_count) if collection_count > 0 else 0
+        
+        # Skip search if no memories available
+        if actual_n_results == 0:
+            return []
+
         results = await asyncio.get_event_loop().run_in_executor(
             None,
             lambda: self.memory_collection.query(
                 query_texts=[query],
-                n_results=n_results,
+                n_results=actual_n_results,
                 where=where_filter if where_filter else None,
             ),
         )
