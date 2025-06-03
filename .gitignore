@@ -1,0 +1,267 @@
+# Aletheia - Local-First Thinking Agent
+# .gitignore - Exclude large files, external repos, secrets, and build artifacts
+
+# ==========================================
+# SECRETS & ENVIRONMENT
+# ==========================================
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+api_keys.txt
+secrets/
+
+# ==========================================
+# MODELS & LARGE FILES
+# ==========================================
+# Model files (usually multi-GB)
+models/*.gguf
+models/*.bin
+models/*.safetensors
+models/*.onnx
+models/*.pytorch
+models/*.pkl
+models/*.pt
+models/*.pth
+models/*.h5
+models/*.tflite
+models/*.ckpt
+
+# Model directories with downloaded weights
+models/*/
+!models/README.md
+!models/.gitkeep
+
+# ==========================================
+# EXTERNAL REPOSITORIES
+# ==========================================
+# llama.cpp repository (cloned externally)
+models/llama.cpp/
+llama.cpp/
+external/
+vendor/
+third_party/
+
+# ==========================================
+# DATABASES & DATA
+# ==========================================
+# ChromaDB vector database
+data/chroma_db/
+data/vector_store/
+data/memories/
+data/cache/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Runtime storage (personal data, calibrator logs, etc.)
+storage/
+
+# Temporary data files
+data/temp/
+data/tmp/
+data/logs/
+*.log
+*.log.*
+
+# ==========================================
+# PYTHON
+# ==========================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+cover/
+*.cover
+*.py,cover
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+#poetry.lock  # We include this for reproducible builds
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# ==========================================
+# DEVELOPMENT & TOOLS
+# ==========================================
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ==========================================
+# PROJECT SPECIFIC
+# ==========================================
+# Build artifacts
+build/
+dist/
+target/
+out/
+
+# Documentation builds
+docs/_build/
+docs/build/
+site/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Session and runtime files
+session_*.json
+runtime_*.log
+memory_dump_*.pkl
+
+# Model download scripts output
+models/download_*.log
+models/install_*.log
+
+# Performance profiling
+*.prof
+*.pstats
+
+# Memory usage reports
+*.memory
+*.memprof
+
+# ==========================================
+# SPECIFIC FILE PATTERNS
+# ==========================================
+# Exclude any file larger than 100MB (GitHub limit)
+*.[Bb][Ii][Nn]
+*.[Dd][Mp]
+*.[Ii][Mm][Gg]
+*.[Ii][Ss][Oo]
+
+# Compiled extensions
+*.dll
+*.dylib
+
+# Package files
+*.deb
+*.rpm
+*.pkg
+*.dmg
+
+# Archives (usually large)
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# ==========================================
+# INCLUDE IMPORTANT FILES
+# ==========================================
+# Force include essential config templates
+!.env.example
+!README.md
+!pyproject.toml
+!requirements*.txt
+!setup.py
+!setup.cfg
+!Makefile
+!Dockerfile
+!docker-compose.yml
+!.github/
+!scripts/
+!docs/
+!tests/
+!aletheia/
+
+# Include model download scripts but not the models themselves
+!scripts/download_models.sh
+!scripts/install_*.sh
+!models/README.md 
