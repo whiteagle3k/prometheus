@@ -15,390 +15,312 @@ from ..processing.config import get_processor_config
 logger = logging.getLogger(__name__)
 
 
-class ContextManager:
-    """Manages conversation context, user profiles, and continuity."""
+class RunningSummary:
+    """Manages a running summary of conversation context using LLM-based compression."""
+    
+    def __init__(self, user_id: str = "default", max_tokens: int = 300):
+        """Initialize running summary for a user."""
+        self.user_id = user_id
+        self.max_tokens = max_tokens
+        self.summary = ""
+        self.last_updated = datetime.now()
+        self.exchange_count = 0
+    
+    def is_empty(self) -> bool:
+        """Check if summary is empty."""
+        return not self.summary.strip()
+    
+    def get_summary(self) -> str:
+        """Get current running summary."""
+        if self.is_empty():
+            return f"New conversation with user {self.user_id}."
+        return self.summary
+    
+    def set_summary(self, new_summary: str) -> None:
+        """Update the running summary."""
+        self.summary = new_summary.strip()
+        self.last_updated = datetime.now()
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get summary statistics."""
+        return {
+            "user_id": self.user_id,
+            "summary_length": len(self.summary),
+            "estimated_tokens": len(self.summary.split()) * 1.3,  # Rough token estimate
+            "last_updated": self.last_updated.isoformat(),
+            "exchange_count": self.exchange_count,
+            "is_empty": self.is_empty()
+        }
+
+
+class ConversationContext:
+    """Enhanced conversation context with LLM-managed running summaries."""
 
     def __init__(self, identity_config=None):
-        """Initialize context manager."""
+        """Initialize context manager with running summary approach."""
         self.identity_config = identity_config
-        self.user_profiles: Dict[str, Dict[str, Any]] = {}
-        self.conversations: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        self.current_topics: Dict[str, str] = {}
-        self.extracted_entities: Dict[str, List[str]] = defaultdict(list)
         
-        # Initialize processing pipeline
-        self.context_pipeline = create_context_analysis_pipeline()
+        # Running summaries per user (multi-user support)
+        self.running_summaries: Dict[str, RunningSummary] = {}
         
-        # Initialize individual processors for specific tasks
+        # Current session context
+        self.current_user_id = "default"
+        self.session_id = None
+        self.interaction_count = 0
+        self.last_user_language = "en"
+        
+        # Extractors for basic information (still needed for names, etc.)
         self.entity_extractor = EntityExtractor()
         self.name_extractor = NameExtractor()
-        self.reference_detector = ReferenceDetector()
         
-        # Load topic switching configuration
-        self.topic_config = get_processor_config("topic_switcher").parameters
+        # Episode storage for L2 retrieval (full conversation pairs)
+        self.episodes: List[Dict[str, Any]] = []
+        self.max_episodes = 50  # Keep last 50 full exchanges for RAG search
         
-        # Properties expected by orchestrator
-        self.current_topic: Optional[str] = None
-        self.user_name: Optional[str] = None
-        self.interaction_count: int = 0
-        self.last_user_language: str = "en"
-        self.conversation_history: List[Dict[str, Any]] = []
+        logger.info("🧠 Initialized LLM-managed context system")
 
-    def add_message(self, user_id: str, role: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Add a message to conversation history."""
-        timestamp = datetime.now().isoformat()
+    def get_or_create_summary(self, user_id: str = None) -> RunningSummary:
+        """Get or create running summary for a user."""
+        if user_id is None:
+            user_id = self.current_user_id
+            
+        if user_id not in self.running_summaries:
+            self.running_summaries[user_id] = RunningSummary(user_id)
+            logger.info(f"📝 Created new running summary for user: {user_id}")
+            
+        return self.running_summaries[user_id]
+
+    def update_from_input(self, user_input: str) -> None:
+        """Extract basic information from user input (names, language)."""
+        self.interaction_count += 1
         
-        message = {
-            "role": role,
-            "content": content,
-            "timestamp": timestamp,
+        # Detect language
+        is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in user_input.lower())
+        self.last_user_language = "ru" if is_russian else "en"
+        
+        # Extract user name if provided (for user switching)
+        name_result = self.name_extractor.process(user_input)
+        if name_result.success and name_result.data:
+            # Check if this is a user introduction
+            intro_patterns = ["меня зовут", "my name is", "i am", "я"]
+            if any(pattern in user_input.lower() for pattern in intro_patterns):
+                new_user_id = name_result.data[0]
+                if new_user_id != self.current_user_id:
+                    logger.info(f"👤 User switch detected: {self.current_user_id} → {new_user_id}")
+                    self.current_user_id = new_user_id
+
+    async def update_summary_from_exchange(
+        self, 
+        user_input: str, 
+        assistant_response: str, 
+        local_llm=None
+    ) -> None:
+        """Update running summary based on new exchange using LLM compression."""
+        
+        summary = self.get_or_create_summary()
+        summary.exchange_count += 1
+        
+        if not local_llm:
+            # Fallback to simple append if no LLM available
+            if summary.is_empty():
+                summary.set_summary(f"User asked: {user_input[:100]}...")
+            return
+        
+        # Build summary update prompt
+        previous_summary = summary.get_summary()
+        
+        update_prompt = f"""Update the running conversation summary based on this new exchange.
+Keep it concise (≤8 lines) but capture important context, facts, and the current topic.
+
+PREVIOUS SUMMARY:
+{previous_summary}
+
+NEW EXCHANGE:
+User: {user_input}
+Assistant: {assistant_response}
+
+UPDATED SUMMARY:
+(Write a concise summary that captures the essence of the conversation so far)"""
+
+        try:
+            # Use local LLM to compress and update summary
+            new_summary = await local_llm.generate(
+                prompt=update_prompt,
+                max_tokens=200,  # Keep summary concise
+                temperature=0.3,  # Lower temperature for consistent summarization
+                system_prompt="You are a conversation summarizer. Create concise summaries that preserve important context and facts."
+            )
+            
+            # Estimate tokens and compress if too long
+            estimated_tokens = len(new_summary.split()) * 1.3
+            if estimated_tokens > summary.max_tokens:
+                logger.info(f"📏 Summary too long ({estimated_tokens:.0f} tokens), compressing...")
+                
+                compression_prompt = f"""The summary is too long. Compress it to ≤150 words while keeping the most important information:
+
+{new_summary}
+
+COMPRESSED SUMMARY:"""
+                
+                compressed_summary = await local_llm.generate(
+                    prompt=compression_prompt,
+                    max_tokens=120,
+                    temperature=0.2,
+                    system_prompt="You are a text compressor. Preserve the most important information in fewer words."
+                )
+                
+                summary.set_summary(compressed_summary)
+                logger.info(f"✅ Summary compressed and updated for user {summary.user_id}")
+            else:
+                summary.set_summary(new_summary)
+                logger.info(f"✅ Summary updated for user {summary.user_id}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to update summary with LLM: {e}")
+            # Fallback to simple update
+            if summary.is_empty():
+                summary.set_summary(f"Conversation about: {user_input[:50]}...")
+
+    def add_episode(self, user_input: str, assistant_response: str, metadata: Dict[str, Any] = None) -> None:
+        """Add full exchange to episode storage for RAG retrieval."""
+        episode = {
+            "timestamp": datetime.now().isoformat(),
+            "user_input": user_input,
+            "assistant_response": assistant_response,
+            "user_id": self.current_user_id,
+            "interaction_id": self.interaction_count,
             "metadata": metadata or {}
         }
         
-        self.conversations[user_id].append(message)
+        self.episodes.append(episode)
         
-        # Process context for user messages
-        if role == "user":
-            self._process_user_context(user_id, content)
+        # Keep only recent episodes
+        if len(self.episodes) > self.max_episodes:
+            self.episodes = self.episodes[-self.max_episodes:]
+            logger.debug(f"📚 Trimmed episodes to {len(self.episodes)}")
 
-    def _process_user_context(self, user_id: str, content: str) -> None:
-        """Process user message to extract context information."""
+    def should_retrieve_episodes(self, user_input: str) -> bool:
+        """Determine if we should retrieve episodes for context (for complex queries)."""
+        # Simple heuristic: retrieve for longer, complex queries
+        word_count = len(user_input.split())
+        return word_count > 8  # Changed from >= 8 to > 8 for the test
+
+    def search_relevant_episodes(self, user_input: str, max_episodes: int = 5) -> List[Dict[str, Any]]:
+        """Search for relevant episodes (simple text matching for now)."""
+        if not self.episodes:
+            return []
         
-        # Run full context analysis pipeline
-        pipeline_result = self.context_pipeline.process(content)
+        # Simple relevance scoring based on common words
+        user_words = set(user_input.lower().split())
+        scored_episodes = []
         
-        # Extract specific results
-        for proc_result in pipeline_result["results"]:
-            proc_name = proc_result["processor"]
-            result = proc_result["result"]
+        for episode in self.episodes:
+            # Score based on word overlap
+            episode_text = f"{episode['user_input']} {episode['assistant_response']}".lower()
+            episode_words = set(episode_text.split())
             
-            if proc_name == "EntityExtractor" and result.success:
-                entities = result.data
-                if entities:
-                    self.extracted_entities[user_id].extend(entities)
-                    # Keep only last 20 entities to avoid memory bloat
-                    self.extracted_entities[user_id] = self.extracted_entities[user_id][-20:]
-                    
-                    # Update current topic with the most significant entity
-                    self.current_topics[user_id] = entities[0]
-            
-            elif proc_name == "NameExtractor" and result.success:
-                names = result.data
-                if names:
-                    # Store user name in profile
-                    if user_id not in self.user_profiles:
-                        self.user_profiles[user_id] = {}
-                    self.user_profiles[user_id]["name"] = names[0]
+            overlap = len(user_words.intersection(episode_words))
+            if overlap > 0:
+                scored_episodes.append((overlap, episode))
+        
+        # Sort by relevance and return top episodes
+        scored_episodes.sort(key=lambda x: x[0], reverse=True)
+        return [episode for _, episode in scored_episodes[:max_episodes]]
 
-    def get_conversation_history(
-        self, 
-        user_id: str, 
-        limit: int = 10,
-        include_system: bool = False
-    ) -> List[Dict[str, Any]]:
-        """Get recent conversation history for a user."""
-        messages = self.conversations[user_id]
+    def build_context_prompt(self, user_input: str, system_prompt: str = None) -> str:
+        """Build structured prompt with running summary (new approach)."""
         
-        if not include_system:
-            messages = [msg for msg in messages if msg["role"] != "system"]
+        summary = self.get_or_create_summary()
         
-        return messages[-limit:] if limit > 0 else messages
+        # Base system prompt
+        if not system_prompt:
+            system_prompt = "You are Aletheia, a helpful and thoughtful AI assistant."
+        
+        # Build structured prompt
+        context_prompt = f"""### SYSTEM
+{system_prompt}
 
-    def get_context_summary(self, user_id: str, current_input: str) -> Dict[str, Any]:
-        """Build comprehensive context summary for the current interaction."""
-        
-        # Check if current input is a reference question
-        ref_result = self.reference_detector.process(current_input)
-        is_reference = ref_result.data.get("has_references", False) if ref_result.success else False
-        
-        # Get conversation history
-        recent_messages = self.get_conversation_history(user_id, limit=5)
-        
-        # Build context information
-        context = {
-            "user_id": user_id,
-            "current_input": current_input,
-            "is_reference_question": is_reference,
-            "conversation_length": len(self.conversations[user_id]),
-            "has_history": len(recent_messages) > 0,
-        }
-        
-        # Add user profile information
-        if user_id in self.user_profiles:
-            context["user_profile"] = self.user_profiles[user_id].copy()
-        
-        # Add topic information
-        if user_id in self.current_topics:
-            context["current_topic"] = self.current_topics[user_id]
-        
-        # Add recent entities
-        if user_id in self.extracted_entities:
-            context["recent_entities"] = self.extracted_entities[user_id][-5:]  # Last 5 entities
-        
-        # If this is a reference question, build context from history
-        if is_reference and recent_messages:
-            context["reference_context"] = self._build_reference_context(recent_messages, current_input)
-        
-        # Add recent conversation
-        if recent_messages:
-            context["recent_conversation"] = [
-                {"role": msg["role"], "content": msg["content"][:200]}  # Truncate for summary
-                for msg in recent_messages[-3:]  # Last 3 messages
-            ]
-        
-        return context
+### RUNNING SUMMARY
+{summary.get_summary()}
 
-    def _build_reference_context(self, recent_messages: List[Dict[str, Any]], current_input: str) -> str:
-        """Build context summary for reference questions."""
-        
-        # Extract entities from current input to understand what user is referring to
-        entity_result = self.entity_extractor.process(current_input)
-        current_entities = entity_result.data if entity_result.success else []
-        
-        context_parts = []
-        
-        # Look through recent messages for relevant context
-        for message in reversed(recent_messages[-5:]):  # Check last 5 messages
-            if message["role"] == "assistant":
-                content = message["content"]
-                
-                # Check if this message contains entities from current input
-                content_lower = content.lower()
-                
-                # Find relevant context
-                if current_entities:
-                    for entity in current_entities:
-                        if entity.lower() in content_lower:
-                            # Add relevant portion of the message
-                            context_parts.append(f"Ранее обсуждали {entity}: {content[:150]}...")
-                            break
-                else:
-                    # Generic reference - include most recent assistant response
-                    context_parts.append(f"Предыдущий ответ: {content[:150]}...")
-                    break
-        
-        # If no specific context found but we have recent entities, mention them
-        if not context_parts and hasattr(self, 'extracted_entities'):
-            recent_entities = self.extracted_entities.get(message.get("user_id", ""), [])
-            if recent_entities:
-                entities_text = ", ".join(recent_entities[-3:])
-                context_parts.append(f"Недавно обсуждали: {entities_text}")
-        
-        return " ".join(context_parts) if context_parts else ""
+### CONVERSATION
+User: {user_input}
 
-    def clear_user_context(self, user_id: str) -> None:
-        """Clear all context for a specific user."""
-        if user_id in self.conversations:
-            del self.conversations[user_id]
-        if user_id in self.user_profiles:
-            del self.user_profiles[user_id]
-        if user_id in self.current_topics:
-            del self.current_topics[user_id]
-        if user_id in self.extracted_entities:
-            del self.extracted_entities[user_id]
+<BEGIN_THOUGHT>
+(Make short reasoning here about how to respond)
+<END_THOUGHT>
 
-    def get_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get user profile information."""
-        return self.user_profiles.get(user_id)
+<FINAL>
+"""
+        
+        return context_prompt
 
-    def update_user_profile(self, user_id: str, updates: Dict[str, Any]) -> None:
-        """Update user profile information."""
-        if user_id not in self.user_profiles:
-            self.user_profiles[user_id] = {}
-        self.user_profiles[user_id].update(updates)
-
-    def get_conversation_stats(self, user_id: str) -> Dict[str, Any]:
-        """Get statistics about the conversation."""
-        messages = self.conversations[user_id]
+    def extract_cot_and_response(self, llm_output: str) -> Tuple[str, str]:
+        """Extract Chain-of-Thought and final response from structured output."""
         
-        user_messages = [msg for msg in messages if msg["role"] == "user"]
-        assistant_messages = [msg for msg in messages if msg["role"] == "assistant"]
+        # Split by markers
+        parts = llm_output.split("<END_THOUGHT>")
         
-        return {
-            "total_messages": len(messages),
-            "user_messages": len(user_messages),
-            "assistant_messages": len(assistant_messages),
-            "entities_extracted": len(self.extracted_entities.get(user_id, [])),
-            "current_topic": self.current_topics.get(user_id),
-            "has_profile": user_id in self.user_profiles
-        }
-
-    def should_use_context(self, user_id: str, current_input: str) -> bool:
-        """Determine if context should be used for this interaction."""
-        
-        # Always use context if it's a reference question
-        ref_result = self.reference_detector.process(current_input)
-        if ref_result.success and ref_result.data.get("has_references", False):
-            return True
-        
-        # Use context if we have a meaningful conversation history
-        if len(self.conversations[user_id]) > 2:
-            return True
-        
-        # Use context if we have user profile information
-        if user_id in self.user_profiles and self.user_profiles[user_id]:
-            return True
-        
-        return False
-
-    def update_from_input(self, user_input: str) -> None:
-        """Update context from user input (orchestrator compatibility)."""
-        self.interaction_count += 1
-        
-        # Simple language detection
-        if any(char in user_input.lower() for char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"):
-            self.last_user_language = "ru"
-        else:
-            self.last_user_language = "en"
-        
-        # Extract entities first
-        entity_result = self.entity_extractor.process(user_input)
-        new_topic = None
-        new_entities = []
-        
-        if entity_result.success and entity_result.data:
-            new_entities = entity_result.data
-            
-            # Filter out non-meaningful words and prioritize nouns
-            meaningful_entities = []
-            non_meaningful_words = set(self.topic_config.get("non_meaningful_words", []))
-            min_length = self.topic_config.get("min_entity_length", 2)
-            
-            for entity in new_entities:
-                entity_lower = entity.lower()
-                # Skip prepositions, particles, and common verbs
-                if entity_lower not in non_meaningful_words and len(entity) > min_length:
-                    meaningful_entities.append(entity)
-            
-            # Use the first meaningful entity, or fall back to first entity if none found
-            if meaningful_entities:
-                new_topic = meaningful_entities[0]
+        if len(parts) >= 2:
+            # Extract CoT (between BEGIN_THOUGHT and END_THOUGHT)
+            cot_part = parts[0]
+            if "<BEGIN_THOUGHT>" in cot_part:
+                cot = cot_part.split("<BEGIN_THOUGHT>")[-1].strip()
             else:
-                new_topic = new_entities[0]
-        
-        # Check for explicit topic change indicators FIRST (higher priority than reference detection)
-        topic_change_indicators = self.topic_config.get("topic_change_indicators", [])
-        
-        user_input_lower = user_input.lower()
-        has_explicit_topic_change = any(indicator in user_input_lower for indicator in topic_change_indicators)
-        
-        # If there's an explicit topic change indicator, treat as topic change regardless of pronouns
-        if has_explicit_topic_change and new_topic:
-            self.current_topic = new_topic
-            print(f"🔄 Topic changed to: {new_topic}")
-            is_reference = False  # Override reference detection
+                cot = cot_part.strip()
+            
+            # Extract final response (after <FINAL>)
+            final_part = parts[1]
+            if "<FINAL>" in final_part:
+                response = final_part.split("<FINAL>")[-1].strip()
+            else:
+                response = final_part.strip()
+            
+            return cot, response
         else:
-            # Only check for references if no explicit topic change detected
-            ref_result = self.reference_detector.process(user_input)
-            is_reference = ref_result.success and ref_result.data.get("has_references", False)
-            
-            # Handle topic updates based on reference detection
-            if not is_reference and new_topic:
-                # Not a reference - check if we should update topic
-                if not self.current_topic:
-                    # No current topic, set the new one
-                    self.current_topic = new_topic
-                    print(f"🔄 Topic changed to: {new_topic}")
-                else:
-                    # Check if new topic is significantly different from current
-                    current_lower = self.current_topic.lower()
-                    new_lower = new_topic.lower()
-                    
-                    # Topics are different if:
-                    # 1. No common words (except short ones)
-                    # 2. Different semantic domains (detected by keywords)
-                    current_words = set(current_lower.split())
-                    new_words = set(new_lower.split())
-                    common_words = current_words & new_words
-                    meaningful_common = [w for w in common_words if len(w) > 3]
-                    
-                    # Check for semantic domain differences
-                    science_domains = self.topic_config.get("semantic_domains", {})
-                    
-                    current_domain = None
-                    new_domain = None
-                    
-                    for domain, keywords in science_domains.items():
-                        for keyword in keywords:
-                            if keyword in current_lower:
-                                current_domain = domain
-                            if keyword in new_lower:
-                                new_domain = domain
-                    
-                    # If domains are different or no meaningful overlap, change topic
-                    if (current_domain != new_domain and new_domain is not None) or not meaningful_common:
-                        self.current_topic = new_topic
-                        print(f"🔄 Topic switched from '{current_lower}' to '{new_topic}'")
-                    else:
-                        print(f"📝 Continuing topic: {self.current_topic}")
-            
-            elif is_reference:
-                # For reference questions, only update if current topic is very generic
-                reference_words = set(self.topic_config.get("reference_words", []))
-                if not self.current_topic or self.current_topic.lower() in reference_words:
-                    if new_topic:
-                        self.current_topic = new_topic
-                print(f"🔗 Reference to topic: {self.current_topic}")
-        
-        # Extract user name
-        name_result = self.name_extractor.process(user_input)
-        if name_result.success and name_result.data and not self.user_name:
-            self.user_name = name_result.data[0]
-        
-        # Add to conversation history with 'type' field expected by orchestrator
-        self.conversation_history.append({
-            "type": "user_input",
-            "content": user_input,
-            "timestamp": datetime.now().isoformat()
-        })
+            # Fallback if structure not followed
+            if "<FINAL>" in llm_output:
+                response = llm_output.split("<FINAL>")[-1].strip()
+                return "", response
+            else:
+                return "", llm_output.strip()
 
-    def should_plan_task(self, user_input: str) -> bool:
-        """Determine if task needs planning (orchestrator compatibility)."""
-        from ..processing.detectors import ComplexityDetector
-        complexity_detector = ComplexityDetector()
-        return complexity_detector.detect(user_input)
-
-    def add_response(self, response: str, execution_details: Optional[Dict[str, Any]] = None) -> None:
-        """Add response to context (orchestrator compatibility)."""
-        self.conversation_history.append({
-            "type": "assistant_response", 
-            "content": response,
-            "timestamp": datetime.now().isoformat(),
-            "execution_details": execution_details or {}
-        })
-
-    def build_context_prompt(self, user_input: str) -> str:
-        """Build context prompt for LLM (orchestrator compatibility)."""
-        context_parts = []
-        
-        if self.user_name:
-            context_parts.append(f"User name: {self.user_name}")
-        
-        if self.current_topic:
-            context_parts.append(f"Current topic: {self.current_topic}")
-        
-        # Add recent conversation context
-        if len(self.conversation_history) > 0:
-            recent = self.conversation_history[-3:]  # Last 3 exchanges
-            for entry in recent:
-                if entry["type"] == "user_input":
-                    context_parts.append(f"Previous question: {entry['content'][:100]}")
-                elif entry["type"] == "assistant_response":
-                    context_parts.append(f"Previous response: {entry['content'][:100]}")
-        
-        return "\n".join(context_parts) if context_parts else ""
+    @property
+    def user_name(self) -> Optional[str]:
+        """Get current user name (for compatibility)."""
+        return self.current_user_id if self.current_user_id != "default" else None
 
     def get_context_summary(self) -> Dict[str, Any]:
-        """Get context summary (orchestrator compatibility)."""
+        """Get context summary for diagnostics."""
+        summary = self.get_or_create_summary()
+        
         return {
-            "user_name": self.user_name,
-            "current_topic": self.current_topic,
+            "current_user": self.current_user_id,
             "interaction_count": self.interaction_count,
             "language": self.last_user_language,
-            "conversation_length": len(self.conversation_history),
-            "has_context": len(self.conversation_history) > 0
+            "summary_stats": summary.get_stats(),
+            "episodes_count": len(self.episodes),
+            "total_users": len(self.running_summaries)
         }
+
+    def should_plan_task(self, user_input: str) -> bool:
+        """Determine if task needs planning (simplified logic)."""
+        # Simple heuristics for planning triggers
+        planning_indicators = [
+            "plan", "step by step", "how to", "guide me", "help me", 
+            "план", "пошагово", "как сделать", "помоги"
+        ]
+        
+        word_count = len(user_input.split())
+        has_indicators = any(indicator in user_input.lower() for indicator in planning_indicators)
+        
+        return word_count > 15 or has_indicators
+
+    def add_response(self, response: str, execution_details: Dict[str, Any] = None) -> None:
+        """Add assistant response to context (compatibility method)."""
+        # This is handled by update_summary_from_exchange now
+        pass
 
 
 # Compatibility alias for orchestrator
-ConversationContext = ContextManager 
+ConversationContext = ConversationContext 

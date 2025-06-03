@@ -348,7 +348,7 @@ class AletheiaAgent:
         user_input: str,
         relevant_memories: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Handle simple tasks with structured local LLM approach."""
+        """Handle simple tasks with enhanced LLM-managed context approach."""
         
         start_time = time.time()
         
@@ -359,16 +359,36 @@ class AletheiaAgent:
         is_scientific_query = any(keyword in user_input_lower for keyword in scientific_keywords)
         
         # Get user name for context
-        user_name = self.context.user_name
+        user_name = self.context.current_user_id
         
-        # Build context for the local LLM, including relevant memories
-        context_prompt = self.context.build_context_prompt(user_input)
+        # Check if we should retrieve episodes for additional context
+        should_retrieve = self.context.should_retrieve_episodes(user_input)
+        relevant_episodes = []
+        
+        if should_retrieve:
+            relevant_episodes = self.context.search_relevant_episodes(user_input, max_episodes=3)
+            print(f"📚 Retrieved {len(relevant_episodes)} relevant episodes for context")
+        
+        # Build enhanced context prompt with running summary
+        system_prompt = self.identity_config.get("llm_instructions", {}).get("en", "You are Aletheia, a helpful AI assistant.")
+        context_prompt = self.context.build_context_prompt(user_input, system_prompt)
+        
+        # Add episode context if available
+        if relevant_episodes:
+            episode_context = "\n".join([
+                f"Previous exchange: User asked '{ep['user_input'][:100]}...', I responded with '{ep['assistant_response'][:100]}...'"
+                for ep in relevant_episodes
+            ])
+            # Insert episode context before the conversation section
+            context_prompt = context_prompt.replace(
+                "### CONVERSATION", 
+                f"### RELEVANT EPISODES\n{episode_context}\n\n### CONVERSATION"
+            )
         
         # Add user profile data to context if available and relevant
         user_profile_context = ""
-        if user_name:
-            # Check if the current query is related to personal data or fitness
-            # Don't inject personal context for unrelated topics like dinosaurs, science, etc.
+        if user_name and user_name != "default":
+            # Check if the current query is related to personal data
             personal_data_keywords = [
                 "вес", "рост", "жир", "процент", "кг", "см", "данные", "профиль", "информация",
                 "тренировк", "диет", "питание", "похуд", "цел", "план", "здоровье",
@@ -376,159 +396,35 @@ class AletheiaAgent:
                 "diet", "nutrition", "goal", "plan", "health", "fitness"
             ]
             
-            # Check if user input contains personal data keywords
             input_lower = user_input.lower()
             is_personal_query = any(keyword in input_lower for keyword in personal_data_keywords)
             
-            # Also check if this is a general conversation starter that shouldn't get personal context
-            general_topics = [
-                "динозавр", "dinosaur", "наука", "science", "история", "history", 
-                "математика", "math", "физика", "physics", "химия", "chemistry",
-                "литература", "literature", "фильм", "movie", "книга", "book",
-                "погода", "weather", "новости", "news", "игра", "game"
-            ]
-            is_general_topic = any(topic in input_lower for topic in general_topics)
-            
-            if is_personal_query and not is_general_topic:
+            if is_personal_query:
                 user_profile_context = await self.user_profile_store.get_user_data_context(user_name)
                 if user_profile_context:
-                    context_prompt = f"{context_prompt}\n\n{user_profile_context}"
+                    context_prompt = context_prompt.replace(
+                        "### CONVERSATION",
+                        f"### USER PROFILE\n{user_profile_context}\n\n### CONVERSATION"
+                    )
                     print("📊 Added user profile context (relevant to query)")
-            else:
-                print("🚫 Skipped user profile context (not relevant to current topic)")
         
-        # Add relevant memories to the context if available
-        memory_guidance = ""
-        if relevant_memories:
-            memory_context = self._format_memories_for_context(relevant_memories)
-            
-            # Analyze memory quality for external routing decision
-            high_value_memories = [m for m in relevant_memories 
-                                 if m.get('metadata', {}).get('importance_score', 0) > 0.6]
-            external_memories = [m for m in relevant_memories 
-                               if m.get('metadata', {}).get('llm_source') == 'external']
-            
-            if high_value_memories or external_memories:
-                memory_guidance = """
-
-MEMORY-BASED GUIDANCE:
-You have access to relevant past experiences that may contain the information needed to answer this question.
-- Review the memories carefully before deciding if external consultation is needed
-- If the memories contain sufficient information, you can provide a confident local response
-- External consultation should only be recommended if the memories lack crucial details
-- Consider the importance scores and sources when evaluating memory quality
-"""
-            
-            context_prompt = f"{context_prompt}\n\n{memory_context}{memory_guidance}"
+        print("⚡ Handling simple task with LLM-managed context...")
         
-        print("⚡ Handling simple task with structured local LLM...")
-        
-        # Use structured generation instead of the old routing assessment
+        # Use the new structured generation approach
         try:
-            # Check if this is a reference question that needs context
-            context_info = None
-            current_input = user_input.lower()
-            
-            # Enhanced reference detection
-            has_references = any(pronoun in current_input for pronoun in 
-                               ["он", "она", "оно", "они", "его", "её", "их", "им", "ей", "ему", "ими", "ним", "ней", "нём", 
-                                "это", "то", "такое", "этого", "того", "it", "that", "this", "them", "those"])
-            
-            # Check for implicit continuation patterns
-            implicit_continuation_patterns = [
-                r'\bа\s+если\b',  # "а если" (but if)
-                r'\bа\s+что\b',   # "а что" (and what)
-                r'^\s*(а|но|и)\s+', # Starting with "а", "но", "и" (and, but)
-            ]
-            has_implicit_continuation = any(re.search(pattern, current_input) for pattern in implicit_continuation_patterns)
-            
-            # If this is a reference question, build context
-            if (has_references or has_implicit_continuation) and self.context.current_topic:
-                context_info = self._build_context_summary()
-            
-            structured_result = await self.router.local_llm.generate_structured(
-                prompt=context_prompt,
-                context=context_info,  # Pass context for reference questions
-                max_tokens=512,  # Reduced from 1024 for better performance
-                temperature=0.7
-            )
-            
-            print(f"🎯 Structured response - Confidence: {structured_result['confidence']}")
-            if structured_result['reasoning']:
-                print(f"💭 Reasoning: {structured_result['reasoning'][:100]}...")
-            
-            # Check if external consultation is recommended
-            if structured_result['external_needed']:
-                print("🔬 Local LLM recommends external consultation - routing to external LLM")
-                
-                # Route to external LLM with memory-enhanced context
-                enhanced_context = self._build_context_summary()
-                if relevant_memories:
-                    memory_context = self._format_memories_for_context(relevant_memories)
-                    enhanced_context = f"{enhanced_context}\n\n=== RELEVANT MEMORIES ===\n{memory_context}\n"
-                
-                # Add user profile context for external LLM too
-                if user_name:
-                    user_profile_context = await self.user_profile_store.get_user_data_context(user_name)
-                    if user_profile_context:
-                        enhanced_context = f"{enhanced_context}\n\n{user_profile_context}"
-                
-                task_context = TaskContext(
-                    prompt=user_input,
-                    max_tokens=1024,
-                    requires_deep_reasoning=True,
-                    conversation_context=enhanced_context,
-                    user_name=self.context.user_name,
-                    session_context={
-                        "session_id": self.session_id,
-                        "interaction_count": self.context.interaction_count,
-                        "language": self.context.last_user_language
-                    }
-                )
-                
-                external_result = await self.router.execute_task(task_context)
-                route_used = "external"
-                response_text = external_result.get("result", "")
-                execution_time = time.time() - start_time
-                
-                return {
-                    "type": "simple_task",
-                    "response": response_text,
-                    "execution_details": {
-                        "route_used": route_used,
-                        "execution_time": execution_time,
-                        "estimated_cost": external_result.get("estimated_cost", 0),
-                        "routing_assessment": "structured_local",
-                        "local_confidence": structured_result['confidence'],
-                        "local_reasoning": structured_result['reasoning'],
-                        "consultation_metadata": external_result.get("consultation_metadata"),
-                        "memories_used": len(relevant_memories),
-                        "user_profile_used": bool(user_name and user_profile_context),
-                    },
-                    "approach": "structured_local",
-                }
             # Force external routing for complex scientific topics with empty memory
-            elif is_scientific_query and len(relevant_memories) == 0 and any(word in user_input_lower for word in self.scientific_config.get("complex_query_indicators", [])):
-                print("🔬 Forcing external consultation for complex scientific topic with empty memory")
+            if is_scientific_query and len(relevant_memories) == 0 and any(word in user_input_lower for word in self.scientific_config.get("complex_query_indicators", [])):
+                print("🔬 Forcing external consultation for complex scientific topic")
                 
-                # Route to external LLM with memory-enhanced context
+                # Build enhanced context for external LLM
                 enhanced_context = self._build_context_summary()
-                if relevant_memories:
-                    memory_context = self._format_memories_for_context(relevant_memories)
-                    enhanced_context = f"{enhanced_context}\n\n=== RELEVANT MEMORIES ===\n{memory_context}\n"
-                
-                # Add user profile context for external LLM too
-                if user_name:
-                    user_profile_context = await self.user_profile_store.get_user_data_context(user_name)
-                    if user_profile_context:
-                        enhanced_context = f"{enhanced_context}\n\n{user_profile_context}"
                 
                 task_context = TaskContext(
                     prompt=user_input,
                     max_tokens=1024,
                     requires_deep_reasoning=True,
                     conversation_context=enhanced_context,
-                    user_name=self.context.user_name,
+                    user_name=user_name,
                     session_context={
                         "session_id": self.session_id,
                         "interaction_count": self.context.interaction_count,
@@ -539,6 +435,15 @@ You have access to relevant past experiences that may contain the information ne
                 external_result = await self.router.execute_task(task_context)
                 route_used = "external_forced"
                 response_text = external_result.get("result", "")
+                
+                # Add to episodes storage
+                self.context.add_episode(user_input, response_text, {"route": route_used})
+                
+                # Update running summary with the exchange
+                await self.context.update_summary_from_exchange(
+                    user_input, response_text, self.router.local_llm
+                )
+                
                 execution_time = time.time() - start_time
                 
                 return {
@@ -548,59 +453,72 @@ You have access to relevant past experiences that may contain the information ne
                         "route_used": route_used,
                         "execution_time": execution_time,
                         "estimated_cost": external_result.get("estimated_cost", 0),
-                        "routing_assessment": "forced_external_scientific",
-                        "local_confidence": structured_result['confidence'],
-                        "local_reasoning": structured_result['reasoning'],
+                        "approach": "llm_managed_context",
                         "consultation_metadata": external_result.get("consultation_metadata"),
-                        "memories_used": len(relevant_memories),
-                        "user_profile_used": bool(user_name and user_profile_context),
+                        "episodes_used": len(relevant_episodes),
+                        "user_profile_used": bool(user_profile_context),
                     },
-                    "approach": "structured_local",
+                    "approach": "llm_managed_context",
                 }
-            else:
-                print("💻 Local LLM confident in handling - using structured response")
-                
-                route_used = "local"
-                response_text = structured_result['answer']
-                execution_time = time.time() - start_time
-                
-                return {
-                    "type": "simple_task",
-                    "response": response_text,
-                    "execution_details": {
-                        "route_used": route_used,
-                        "execution_time": execution_time,
-                        "estimated_cost": 0,
-                        "routing_assessment": "structured_local",
-                        "local_confidence": structured_result['confidence'],
-                        "local_reasoning": structured_result['reasoning'],
-                        "raw_response": structured_result.get('raw_response', ''),
-                        "memories_used": len(relevant_memories),
-                        "user_profile_used": bool(user_name and user_profile_context),
-                    },
-                    "approach": "structured_local",
-                }
+            
+            # Use local LLM with structured CoT generation
+            print("💻 Using local LLM with Chain-of-Thought reasoning")
+            
+            raw_response = await self.router.local_llm.generate(
+                prompt=context_prompt,
+                max_tokens=1024,
+                temperature=0.7,
+                system_prompt=""  # System prompt is already in the context_prompt
+            )
+            
+            # Extract Chain-of-Thought and final response
+            cot_reasoning, response_text = self.context.extract_cot_and_response(raw_response)
+            
+            print(f"🧠 CoT reasoning: {cot_reasoning[:100]}..." if cot_reasoning else "🧠 No CoT structure detected")
+            
+            route_used = "local_cot"
+            
+            # Add to episodes storage
+            self.context.add_episode(user_input, response_text, {
+                "route": route_used,
+                "cot_reasoning": cot_reasoning,
+                "episodes_used": len(relevant_episodes)
+            })
+            
+            # Update running summary with the exchange
+            await self.context.update_summary_from_exchange(
+                user_input, response_text, self.router.local_llm
+            )
+            
+            execution_time = time.time() - start_time
+            
+            return {
+                "type": "simple_task",
+                "response": response_text,
+                "execution_details": {
+                    "route_used": route_used,
+                    "execution_time": execution_time,
+                    "estimated_cost": 0,
+                    "approach": "llm_managed_context",
+                    "cot_reasoning": cot_reasoning,
+                    "raw_response": raw_response,
+                    "episodes_used": len(relevant_episodes),
+                    "user_profile_used": bool(user_profile_context),
+                },
+                "approach": "llm_managed_context",
+            }
                 
         except Exception as e:
-            print(f"❌ Structured local LLM failed: {e}")
-            # Fallback to external LLM with memory context
+            print(f"❌ LLM-managed context failed: {e}")
+            # Fallback to external LLM
             enhanced_context = self._build_context_summary()
-            if relevant_memories:
-                memory_context = self._format_memories_for_context(relevant_memories)
-                enhanced_context = f"{enhanced_context}\n\n=== RELEVANT MEMORIES ===\n{memory_context}\n"
-            
-            # Add user profile context for fallback too
-            if user_name:
-                user_profile_context = await self.user_profile_store.get_user_data_context(user_name)
-                if user_profile_context:
-                    enhanced_context = f"{enhanced_context}\n\n{user_profile_context}"
             
             task_context = TaskContext(
                 prompt=user_input,
                 max_tokens=1024,
                 requires_deep_reasoning=True,
                 conversation_context=enhanced_context,
-                user_name=self.context.user_name,
+                user_name=user_name,
                 session_context={
                     "session_id": self.session_id,
                     "interaction_count": self.context.interaction_count,
@@ -611,20 +529,29 @@ You have access to relevant past experiences that may contain the information ne
             external_result = await self.router.execute_task(task_context)
             execution_time = time.time() - start_time
             
+            # Add to episodes storage
+            response_text = external_result.get("result", "")
+            self.context.add_episode(user_input, response_text, {"route": "external_fallback"})
+            
+            # Update running summary
+            await self.context.update_summary_from_exchange(
+                user_input, response_text, self.router.local_llm
+            )
+            
             return {
                 "type": "simple_task",
-                "response": external_result.get("result", ""),
+                "response": response_text,
                 "execution_details": {
                     "route_used": "external_fallback",
                     "execution_time": execution_time,
                     "estimated_cost": external_result.get("estimated_cost", 0),
-                    "routing_assessment": "structured_local_failed",
+                    "approach": "llm_managed_context",
                     "error": str(e),
                     "consultation_metadata": external_result.get("consultation_metadata"),
-                    "memories_used": len(relevant_memories),
-                    "user_profile_used": bool(user_name and user_profile_context),
+                    "episodes_used": len(relevant_episodes),
+                    "user_profile_used": bool(user_profile_context),
                 },
-                "approach": "structured_local",
+                "approach": "llm_managed_context",
             }
 
     def _build_context_summary(self) -> str:
