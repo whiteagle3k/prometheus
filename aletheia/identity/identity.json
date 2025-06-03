@@ -123,6 +123,7 @@
   "module_paths": {
     "local_llm_binary": "models/llama.cpp/build/bin/llama",
     "local_model_gguf": "models/Phi-3-medium-4k-instruct-Q4_K_M.gguf",
+    "utility_model_gguf": "models/phi-3-mini-3.8b-q4_k.gguf",
     "memory_dir": "storage/chroma",
     "performance_config": {
       "gpu_layers": 40,

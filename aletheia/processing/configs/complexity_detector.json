@@ -7,6 +7,23 @@
       "процесс", "process", "алгоритм", "algorithm", "метод", "method", "способ", "way",
       "последовательность", "sequence", "этапы", "stages", "фазы", "phases"
     ],
+    "explicit_planning_triggers": [
+      "step by step",
+      "пошагово", 
+      "шаг за шагом",
+      "guide me",
+      "покажи как", 
+      "научи как", 
+      "how do i",
+      "как мне", 
+      "как сделать",
+      "create a plan",
+      "составь план", 
+      "план действий",
+      "instructions",
+      "инструкция", 
+      "алгоритм"
+    ],
     "sequential_markers": [
       "сначала", "first", "затем", "then", "потом", "after", "далее", "next",
       "во-первых", "firstly", "во-вторых", "secondly", "в-третьих", "thirdly",

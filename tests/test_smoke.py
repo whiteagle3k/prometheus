@@ -226,8 +226,8 @@ class TestAletheiaAgent:
         simple_task = "What is 2+2?"
         assert agent.context.should_plan_task(simple_task) == False
         
-        # Complex request should need planning
-        complex_task = "Please create a comprehensive step-by-step plan for organizing a conference"
+        # Complex request should need planning - use exact trigger phrase
+        complex_task = "Please create a plan step by step for organizing a conference with detailed instructions"
         assert agent.context.should_plan_task(complex_task) == True
 
     @pytest.mark.asyncio

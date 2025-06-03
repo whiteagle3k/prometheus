@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "parameters": {
+    "thought_start_marker": "<BEGIN_THOUGHT>",
+    "thought_end_marker": "<END_THOUGHT>",
+    "clean_artifacts": true
+  }
+} 

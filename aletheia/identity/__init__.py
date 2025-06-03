@@ -55,6 +55,7 @@ class ModulePaths:
     local_llm_binary: str
     local_model_gguf: str
     memory_dir: str
+    utility_model_gguf: Optional[str] = None
     performance_config: Optional[Dict[str, Any]] = None
 
 
@@ -129,6 +130,7 @@ class Identity:
                 local_llm_binary=paths_data.get("local_llm_binary", ""),
                 local_model_gguf=paths_data.get("local_model_gguf", ""),
                 memory_dir=paths_data.get("memory_dir", "storage/chroma"),
+                utility_model_gguf=paths_data.get("utility_model_gguf", None),
                 performance_config=paths_data.get("performance_config", None)
             )
             

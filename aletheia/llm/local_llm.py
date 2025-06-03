@@ -319,58 +319,29 @@ class LocalLLM:
     def _format_structured_prompt(self, prompt: str, context: Optional[str] = None) -> str:
         """Format prompt to request structured response from local LLM."""
         
-        # Detect language
-        is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in prompt.lower())
-        language = "ru" if is_russian else "en"
-        
-        # Get system prompt from identity
+        # Always use English for system structure, let LLM respond in user's language naturally
+        language = "en"  # System is always English
         system_prompt = identity.get_system_prompt(language, for_user_response=True)
         
         # Build context section
         context_section = ""
         if context:
-            if is_russian:
-                context_section = f"\n\nКОНТЕКСТ: {context}"
-            else:
-                context_section = f"\n\nCONTEXT: {context}"
+            context_section = f"\n\nCONTEXT: {context}"
 
-        # Build structured instruction
-        if is_russian:
-            instruction = f"""<|system|>{system_prompt}
-
-Ответь в следующем формате:
-
-ОТВЕТ: [прямой ответ пользователю]
-УВЕРЕННОСТЬ: [высокая/средняя/низкая]
-ОБОСНОВАНИЕ: [краткое объяснение]
-ВНЕШНИЙ_ЗАПРОС: [да для технических/научных вопросов, нет для общения]
-
-ПРАВИЛА РАБОТЫ С ПАМЯТЬЮ:
-- Если в RELEVANT PAST EXPERIENCES есть нужная информация (особенно с пометкой KEY DATA) - используй её
-- Для запросов о данных пользователя (рост, вес, процент жира) ищи конкретные цифры в памяти
-- Если память содержит ответ, установи ВНЕШНИЙ_ЗАПРОС=нет
-- Если памяти недостаточно для полного ответа, установи ВНЕШНИЙ_ЗАПРОС=да
-
-КРИТЕРИИ ДЛЯ ВНЕШНЕЙ КОНСУЛЬТАЦИИ (ВНЕШНИЙ_ЗАПРОС=да):
-- Научные вопросы: физика, химия, биология, математика
-- Технические темы: квантовые вычисления, программирование, инженерия  
-- Сложные концепции: детальные объяснения процессов и механизмов
-- Фактические вопросы: даты, имена учёных, исторические события
-- Когда память пуста или не содержит достаточной информации
-- Слова "подробно", "детально", "принципы", "как работает" - почти всегда требуют внешней консультации
-
-ВНЕШНИЙ_ЗАПРОС=нет только для: приветствий, вопросов обо мне, данных из памяти, простого общения.<|end|>
-<|user|>{prompt}{context_section}<|end|>
-<|assistant|>"""
-        else:
-            instruction = f"""<|system|>{system_prompt}
+        # Single English-only structured instruction
+        instruction = f"""<|system|>{system_prompt}
 
 Respond in this format:
 
-ANSWER: [direct response to user]
+ANSWER: [direct response to user in their language]
 CONFIDENCE: [high/medium/low]
-REASONING: [brief explanation]
-EXTERNAL_NEEDED: [yes for technical/scientific, no for conversation]
+REASONING: [brief explanation in English]
+EXTERNAL_NEEDED: [yes for technical/scientific/reasoning/any specific knowledge, no for conversation]
+
+CONFIDENCE ASSESSMENT RULES:
+- LOW confidence: scientific concepts (quantum physics, relativity theory), complex technical questions, specialized knowledge, questions requiring precise facts, advanced reasoning
+- MEDIUM confidence: general topics I'm familiar with but may get details wrong
+- HIGH confidence: simple conversation, data from memory, personal preferences, basic facts
 
 MEMORY USAGE RULES:
 - If RELEVANT PAST EXPERIENCES contains needed information (especially marked KEY DATA) - use it
@@ -379,12 +350,14 @@ MEMORY USAGE RULES:
 - If memory is insufficient for complete answer, set EXTERNAL_NEEDED=yes
 
 CRITERIA FOR EXTERNAL CONSULTATION (EXTERNAL_NEEDED=yes):
-- Scientific questions: physics, chemistry, biology, mathematics
+- Scientific questions: physics, chemistry, biology, mathematics - ALWAYS require external consultation
 - Technical topics: quantum computing, programming, engineering
 - Complex concepts: detailed explanations of processes and mechanisms  
 - Factual questions: dates, scientist names, historical events
 - When memory is empty or lacks sufficient information
+- When requires reasoning or advanced knowledge
 - Words "detailed", "explain", "principles", "how does" - almost always require external consultation
+- IMPORTANT: for scientific topics set CONFIDENCE=low AND EXTERNAL_NEEDED=yes
 
 EXTERNAL_NEEDED=no only for: greetings, questions about me, data from memory, simple chat.<|end|>
 <|user|>{prompt}{context_section}<|end|>
@@ -410,139 +383,180 @@ EXTERNAL_NEEDED=no only for: greetings, questions about me, data from memory, si
             "raw_response": raw_response
         }
 
-        # Try line-based parsing first (more reliable)
+        # Try inline parsing first (for responses where everything is on one line)
+        self._parse_inline_format(response, parsed)
+        
+        # If inline parsing didn't work well, try line-based parsing
+        if not all([parsed["answer"], parsed["confidence"] != "medium"]):
+            self._parse_line_format(response, parsed)
+
+        # Critical: Clean any remaining structured markers from the answer
+        if parsed["answer"]:
+            parsed["answer"] = self._clean_answer_from_markers(parsed["answer"])
+
+        # Enhanced fallback and cleanup - preserve topic context
+        if not parsed["answer"] or len(parsed["answer"]) < 5:
+            self._extract_contextual_answer(response, parsed, original_prompt)
+            # Clean the fallback answer too
+            if parsed["answer"]:
+                parsed["answer"] = self._clean_answer_from_markers(parsed["answer"])
+
+        return parsed
+
+    def _clean_answer_from_markers(self, answer: str) -> str:
+        """Completely remove any structured field markers from the answer."""
+        import re
+        
+        # Remove structured field patterns (more aggressive)
+        cleaned = re.sub(r'\b(?:ANSWER|CONFIDENCE|REASONING|EXTERNAL_NEEDED):\s*[^\n]*\n?', '', answer, flags=re.IGNORECASE)
+        
+        # Remove any remaining field patterns at start/end
+        cleaned = re.sub(r'^(?:ANSWER|CONFIDENCE|REASONING|EXTERNAL_NEEDED):\s*', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'(?:CONFIDENCE|REASONING|EXTERNAL_NEEDED):\s*.*$', '', cleaned, flags=re.IGNORECASE)
+        
+        # Remove common contamination patterns at start of response
+        cleaned = re.sub(r'^[A-ZА-Я]{5,}:\s*', '', cleaned)  # Remove patterns like "AСОНАН:"
+        
+        # Clean up extra whitespace
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        
+        # Remove common contamination patterns
+        cleaned = re.sub(r'\b(high|medium|low)\s*confidence\b', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\b(yes|no)\s*external[_\s]*needed\b', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\breasoning:\s*', '', cleaned, flags=re.IGNORECASE)
+        
+        # Remove any remaining field markers that might be scattered in text
+        cleaned = re.sub(r'\bCONFIDENCE\b[:\s]*', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\bREASONING\b[:\s]*', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\bEXTERNAL_NEEDED\b[:\s]*', '', cleaned, flags=re.IGNORECASE)
+        
+        return cleaned.strip()
+
+    def _parse_inline_format(self, response: str, parsed: dict) -> None:
+        """Parse inline format where all fields are on one line."""
+        import re
+        
+        # Extract answer (from start to first field marker)
+        answer_match = re.search(r'ANSWER:\s*(.+?)(?=\s+(?:CONFIDENCE|REASONING|EXTERNAL_NEEDED):|$)', response, re.IGNORECASE)
+        if answer_match:
+            parsed["answer"] = answer_match.group(1).strip()
+        
+        # Extract confidence  
+        conf_match = re.search(r'CONFIDENCE:\s*(\w+)', response, re.IGNORECASE)
+        if conf_match:
+            conf_text = conf_match.group(1).lower()
+            if 'high' in conf_text:
+                parsed["confidence"] = "high"
+            elif 'low' in conf_text:
+                parsed["confidence"] = "low"
+            else:
+                parsed["confidence"] = "medium"
+        
+        # Extract reasoning
+        reason_match = re.search(r'REASONING:\s*(.+?)(?=\s+EXTERNAL_NEEDED:|$)', response, re.IGNORECASE)
+        if reason_match:
+            parsed["reasoning"] = reason_match.group(1).strip()
+        
+        # Extract external needed
+        ext_match = re.search(r'EXTERNAL_NEEDED:\s*(\w+)', response, re.IGNORECASE)
+        if ext_match:
+            ext_text = ext_match.group(1).lower()
+            parsed["external_needed"] = 'yes' in ext_text
+
+    def _parse_line_format(self, response: str, parsed: dict) -> None:
+        """Parse line-based format where each field is on a separate line."""
         lines = response.split('\n')
         for line in lines:
             line = line.strip()
             if not line:
                 continue
                 
-            # Parse different fields
-            if line.startswith(('ОТВЕТ:', 'ANSWER:')):
+            # Parse different fields (English only)
+            if line.startswith('ANSWER:'):
                 answer_text = line.split(':', 1)[1].strip()
-                if answer_text:  # Only use if not empty
+                if answer_text and not parsed["answer"]:  # Only use if not already set
                     parsed["answer"] = answer_text
-            elif line.startswith(('УВЕРЕННОСТЬ:', 'CONFIDENCE:')):
+            elif line.startswith('CONFIDENCE:'):
                 conf_text = line.split(':', 1)[1].strip().lower()
-                if 'высокая' in conf_text or 'high' in conf_text:
+                if 'high' in conf_text:
                     parsed["confidence"] = "high"
-                elif 'низкая' in conf_text or 'low' in conf_text:
+                elif 'low' in conf_text:
                     parsed["confidence"] = "low"
                 else:
                     parsed["confidence"] = "medium"
-            elif line.startswith(('ОБОСНОВАНИЕ:', 'REASONING:')):
+            elif line.startswith('REASONING:'):
                 reasoning_text = line.split(':', 1)[1].strip()
-                if reasoning_text:
+                if reasoning_text and not parsed["reasoning"]:
                     parsed["reasoning"] = reasoning_text
-            elif line.startswith(('ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:')):
+            elif line.startswith('EXTERNAL_NEEDED:'):
                 ext_text = line.split(':', 1)[1].strip().lower()
-                parsed["external_needed"] = 'да' in ext_text or 'yes' in ext_text
+                parsed["external_needed"] = 'yes' in ext_text
 
-        # If line-based parsing didn't find an answer, try space-based parsing
-        if not parsed["answer"]:
-            words = response.replace('\n', ' ').split()
-            text_parts = []
-            
-            current_field = None
-            current_content = []
-            
-            for word in words:
-                # Check if this is a field marker
-                if word.upper() in ('ОТВЕТ:', 'ANSWER:'):
-                    if current_field == 'answer' and current_content:
-                        parsed["answer"] = ' '.join(current_content)
-                    current_field = 'answer'
-                    current_content = []
-                elif word.upper() in ('УВЕРЕННОСТЬ:', 'CONFIDENCE:'):
-                    if current_field == 'answer' and current_content:
-                        parsed["answer"] = ' '.join(current_content)
-                    current_field = 'confidence'
-                    current_content = []
-                elif word.upper() in ('ОБОСНОВАНИЕ:', 'REASONING:'):
-                    if current_field == 'answer' and current_content:
-                        parsed["answer"] = ' '.join(current_content)
-                    elif current_field == 'confidence' and current_content:
-                        conf_text = ' '.join(current_content).lower()
-                        if 'высокая' in conf_text or 'high' in conf_text:
-                            parsed["confidence"] = "high"
-                        elif 'низкая' in conf_text or 'low' in conf_text:
-                            parsed["confidence"] = "low"
-                    current_field = 'reasoning'
-                    current_content = []
-                elif word.upper() in ('ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:'):
-                    if current_field == 'answer' and current_content:
-                        parsed["answer"] = ' '.join(current_content)
-                    elif current_field == 'reasoning' and current_content:
-                        parsed["reasoning"] = ' '.join(current_content)
-                    current_field = 'external_needed'
-                    current_content = []
-                else:
-                    # Add to current field content
-                    if current_field:
-                        current_content.append(word)
-            
-            # Store final field
-            if current_field == 'answer' and current_content:
-                parsed["answer"] = ' '.join(current_content)
-            elif current_field == 'reasoning' and current_content:
-                parsed["reasoning"] = ' '.join(current_content)
-            elif current_field == 'external_needed' and current_content:
-                ext_text = ' '.join(current_content).lower()
-                parsed["external_needed"] = 'да' in ext_text or 'yes' in ext_text
-
-        # If still no structured answer found, look for any substantial text
-        if not parsed["answer"]:
-            # Look for non-empty lines that aren't field headers
-            for line in lines:
-                line = line.strip()
-                if (line and 
-                    not line.upper().startswith(('ОТВЕТ:', 'ANSWER:', 'УВЕРЕННОСТЬ:', 'CONFIDENCE:', 
-                                        'ОБОСНОВАНИЕ:', 'REASONING:', 'ВНЕШНИЙ_ЗАПРОС:', 'EXTERNAL_NEEDED:')) and
-                    len(line) > 10 and 
-                    not line.startswith('<|') and  # Skip format tokens
-                    any(char.isalpha() for char in line)):  # Must contain letters
-                    parsed["answer"] = line
-                    break
+    def _extract_contextual_answer(self, response: str, parsed: dict, original_prompt: str) -> None:
+        """Extract answer with better context preservation, avoiding topic loss."""
         
-        # Final cleanup: remove any remaining structured markers from the answer
-        if parsed["answer"]:
-            # Remove structured format markers that might have leaked through
-            import re
-            clean_answer = parsed["answer"]
-            
-            # Remove field markers and their content
-            clean_answer = re.sub(r'\b(?:ОТВЕТ|ANSWER|УВЕРЕННОСТЬ|CONFIDENCE|ОБОСНОВАНИЕ|REASONING|ВНЕШНИЙ_ЗАПРОС|EXTERNAL_NEEDED):\s*[^\n]*', '', clean_answer)
-            
-            # Remove standalone field markers
-            clean_answer = re.sub(r'\b(?:ОТВЕТ|ANSWER|УВЕРЕННОСТЬ|CONFIDENCE|ОБОСНОВАНИЕ|REASONING|ВНЕШНИЙ_ЗАПРОС|EXTERNAL_NEEDED):', '', clean_answer)
-            
-            # Clean up extra whitespace
-            clean_answer = re.sub(r'\s+', ' ', clean_answer).strip()
-            
-            if clean_answer and len(clean_answer) > 5:
-                parsed["answer"] = clean_answer
+        # First, try to find any substantial content that could be an answer
+        lines = response.split('\n')
+        potential_answers = []
+        
+        for line in lines:
+            line = line.strip()
+            if (line and 
+                not line.upper().startswith(('ANSWER:', 'CONFIDENCE:', 'REASONING:', 'EXTERNAL_NEEDED:')) and
+                len(line) > 15 and  # Increase minimum length
+                not line.startswith('<|') and  # Skip format tokens
+                any(char.isalpha() for char in line) and  # Must contain letters
+                not line.startswith(('Привет!', 'Hello!', 'Здравствуйте'))):  # Skip generic greetings
+                potential_answers.append(line)
+        
+        # Pick the longest substantial answer
+        if potential_answers:
+            parsed["answer"] = max(potential_answers, key=len)
+            parsed["confidence"] = "low"  # Set low confidence for extracted answers
+            parsed["reasoning"] = "Answer extracted from unstructured response"
+            return
+        
+        # If still no good answer, try to find any content at all
+        all_text = ' '.join(lines).strip()
+        # Remove structured markers
+        import re
+        clean_text = re.sub(r'\b(?:ANSWER|CONFIDENCE|REASONING|EXTERNAL_NEEDED):\s*[^\n]*', '', all_text)
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+        
+        if clean_text and len(clean_text) > 20:
+            parsed["answer"] = clean_text
+            parsed["confidence"] = "low"
+            parsed["reasoning"] = "Fallback extraction from response"
+            return
+        
+        # Last resort: Generate contextual fallback instead of generic greeting
+        is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in original_prompt.lower())
+        parsed["answer"] = self._get_contextual_fallback(original_prompt, is_russian)
+        parsed["confidence"] = "low"
+        parsed["reasoning"] = "Contextual fallback due to parsing failure"
 
-        # Final fallback: if still no answer, use the entire cleaned response
-        if not parsed["answer"] or len(parsed["answer"]) < 5:
-            # Try to extract meaningful content from the response
-            clean_response = response
-            # Remove format tokens and field headers
-            for token in ['<|system|>', '<|user|>', '<|assistant|>', '<|end|>']:
-                clean_response = clean_response.replace(token, '')
-            
-            # Remove field headers
-            import re
-            clean_response = re.sub(r'(?:ОТВЕТ|ANSWER|УВЕРЕННОСТЬ|CONFIDENCE|ОБОСНОВАНИЕ|REASONING|ВНЕШНИЙ_ЗАПРОС|EXTERNAL_NEEDED):\s*', '', clean_response)
-            
-            clean_response = clean_response.strip()
-            
-            if clean_response and len(clean_response) > 5:
-                parsed["answer"] = clean_response
+    def _get_contextual_fallback(self, original_prompt: str, is_russian: bool) -> str:
+        """Generate contextual fallback response instead of generic greeting."""
+        
+        # Detect topic/domain from the prompt for better fallbacks
+        prompt_lower = original_prompt.lower()
+        
+        # Technical/scientific topics
+        if any(word in prompt_lower for word in ['двигатель', 'тепловой', 'квантов', 'физик', 'engine', 'thermal', 'quantum', 'physics']):
+            if is_russian:
+                return f"Извините, у меня возникли сложности с ответом на ваш технический вопрос. Возможно, стоит обратиться к внешним источникам для получения более точной информации."
             else:
-                # Ultimate fallback
-                is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in original_prompt.lower())
-                parsed["answer"] = self._get_fallback_response(is_russian)
-                parsed["confidence"] = "low"
-                parsed["reasoning"] = "Fallback response due to parsing error"
-
-        return parsed
+                return f"I'm having difficulty providing a complete answer to your technical question. You might want to consult external sources for more accurate information."
+        
+        # Questions about processes or explanations
+        if any(word in prompt_lower for word in ['как', 'что такое', 'расскажи', 'объясни', 'how', 'what is', 'explain', 'tell me']):
+            if is_russian:
+                return f"Извините, мне нужно больше времени, чтобы правильно ответить на ваш вопрос. Можете переформулировать его или обратиться за более подробной информацией?"
+            else:
+                return f"I need more time to properly answer your question. Could you rephrase it or seek more detailed information elsewhere?"
+        
+        # Generic fallback (last resort)
+        if is_russian:
+            return f"Извините, я испытываю технические трудности с обработкой вашего запроса. Попробуйте переформулировать вопрос."
+        else:
+            return f"I'm experiencing technical difficulties processing your request. Please try rephrasing your question."

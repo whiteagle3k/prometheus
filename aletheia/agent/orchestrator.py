@@ -11,6 +11,7 @@ import time
 from ..config import config
 from ..identity.loader import load_identity_config, get_validation_config
 from ..llm.router import LLMRouter, TaskContext
+from ..llm.utility_llm import UtilityLLM
 from ..memory.summariser import MemorySummariser
 from ..memory.vector_store import VectorStore
 from ..memory.hierarchical_store import HierarchicalMemoryStore
@@ -66,6 +67,7 @@ class AletheiaAgent:
         # Initialize components
         self.vector_store = VectorStore()
         self.router = LLMRouter()
+        self.utility_llm = UtilityLLM()  # NEW: Fast utility model
         self.planner = TaskPlanner(self.router)
         self.reflection_engine = ReflectionEngine(self.router, self.vector_store)
         self.memory_summariser = MemorySummariser(self.vector_store)
@@ -136,26 +138,17 @@ class AletheiaAgent:
             # Step 1: Retrieve relevant memories for better context
             relevant_memories = await self._retrieve_relevant_memories(user_input)
 
-            # Step 2: Determine if task needs planning
+            # Step 2: Determine routing strategy using LLM-managed approach
             needs_planning = self.context.should_plan_task(user_input)
             
-            # Override planning for scientific/technical topics that should go to external LLM
-            # Check if this is a scientific/technical question that should use external LLM instead of planning
-            scientific_keywords = self.scientific_config.get("scientific_keywords", [])
+            # Let LLM router make all routing decisions without hardcoded keywords
+            # Planning vs routing is determined by explicit procedural language only
             
-            user_input_lower = user_input.lower()
-            is_scientific_query = any(keyword in user_input_lower for keyword in scientific_keywords)
-            
-            # If it's a scientific query with empty memory, prefer external LLM over planning
-            if is_scientific_query and len(relevant_memories) == 0:
-                needs_planning = False
-                print("🔬 Scientific query with empty memory - routing to external LLM instead of planning")
-
             if needs_planning:
-                # Complex task - use planning approach
+                # Explicit step-by-step/procedural tasks - use planning approach
                 result = await self._handle_complex_task(user_input, relevant_memories)
             else:
-                # Simple task - direct execution
+                # Everything else - let LLM router decide (local vs external)
                 result = await self._handle_simple_task(user_input, relevant_memories)
 
             # Step 3: Store experience in memory
@@ -206,68 +199,40 @@ class AletheiaAgent:
             return error_result
 
     async def _retrieve_relevant_memories(self, user_input: str) -> list[dict[str, Any]]:
-        """Retrieve relevant memories for context."""
+        """Retrieve relevant memories for context with enhanced query processing."""
 
         try:
-            # Enhanced query transformation for better memory matching
-            query_for_search = user_input
-            
-            # Special handling for identity/name questions
-            identity_keywords = [
-                "кто ты", "кто я", "who am i", "who are you", "напомни", "remind",
-                "мое имя", "my name", "как меня зовут", "what's my name"
-            ]
-            
-            user_input_lower = user_input.lower()
-            is_identity_query = any(keyword in user_input_lower for keyword in identity_keywords)
-            
-            if is_identity_query:
-                # For identity queries, search for introduction/name related content
-                if any(word in user_input_lower for word in ["кто я", "who am i", "меня зовут", "my name", "мое имя"]):
-                    query_for_search = "меня зовут имя name introduction знакомство"
-                    print(f"🔍 Identity query detected, using enhanced search: '{query_for_search}'")
-                elif any(word in user_input_lower for word in ["кто ты", "who are you"]):
-                    query_for_search = "Алетейя Aletheia agent агент introduction представление"
-                    print(f"🔍 Agent identity query, using enhanced search: '{query_for_search}'")
+            # Enhanced query preprocessing for better semantic matching
+            processed_query = await self._preprocess_memory_query(user_input)
             
             # Use hierarchical memory if available
             if self.hierarchical_memory:
                 memories = await self.hierarchical_memory.search_memories(
-                    query=query_for_search,
-                    n_results=5,  # Get more for identity queries
+                    query=processed_query,
+                    n_results=8,  # Get more initially for better filtering
                 )
             else:
                 # Fallback to simple vector store
                 memories = await self.vector_store.search_memories(
-                    query=query_for_search,
-                    n_results=7,  # Increased from 5 for better coverage
+                    query=processed_query,
+                    n_results=10,
                 )
 
             if memories:
-                print(f"📚 Retrieved {len(memories)} relevant memories")
+                print(f"📚 Retrieved {len(memories)} initial memories")
                 
-                # Debug: show what memories were retrieved
-                for i, memory in enumerate(memories[:3]):  # Show first 3 for debugging
+                # Enhanced filtering with semantic categorization
+                filtered_memories = await self._filter_memories_by_relevance(memories, user_input)
+                
+                # Debug: show what memories were retrieved after filtering
+                for i, memory in enumerate(filtered_memories[:3]):  # Show first 3 for debugging
                     content_preview = memory.get('content', '')[:100]
                     distance = memory.get('distance', 'unknown')
-                    print(f"  Memory {i+1}: Distance={distance:.3f}, Content='{content_preview}...'")
-                
-                # For identity queries, be more permissive with distance threshold
-                distance_threshold = self.scientific_config.get("memory_relevance_threshold", 0.8) if is_identity_query else self.scientific_config.get("distance_threshold", 0.7)
-                
-                # Filter out memories that are too distant (less relevant)
-                # This helps prevent stale/irrelevant context contamination
-                filtered_memories = []
-                for memory in memories:
-                    distance = memory.get('distance', 1.0)
-                    # Only include memories with similarity > threshold
-                    if distance < distance_threshold:
-                        filtered_memories.append(memory)
-                    else:
-                        print(f"  🔍 Filtered out distant memory (distance={distance:.3f})")
+                    category = memory.get('semantic_category', 'unknown')
+                    print(f"  Memory {i+1}: Distance={distance:.3f}, Category={category}, Content='{content_preview}...'")
                 
                 if len(filtered_memories) != len(memories):
-                    print(f"📚 After filtering: {len(filtered_memories)} relevant memories")
+                    print(f"📚 After semantic filtering: {len(filtered_memories)} relevant memories")
                 
                 return filtered_memories
 
@@ -275,6 +240,141 @@ class AletheiaAgent:
             print(f"⚠️  Error retrieving memories: {e}")
 
         return []
+
+    async def _preprocess_memory_query(self, user_input: str) -> str:
+        """Preprocess user query for better memory retrieval using utility model."""
+        
+        # Use utility model for fast concept expansion
+        try:
+            concepts = await self.utility_llm.expand_query_concepts(user_input)
+            
+            if concepts:
+                # Create expanded query with concepts
+                enhanced_query = f"{user_input} {' '.join(concepts[:5])}"  # Limit to 5 concepts
+                return enhanced_query
+        except Exception as e:
+            print(f"⚠️ Utility model concept expansion failed: {e}")
+        
+        return user_input
+
+    def _categorize_query(self, query: str) -> str:
+        """Categorize user query for semantic matching using utility model."""
+        # This will be called from async context, so we need to handle it
+        # For now, return a default and let the async version handle it
+        return 'general'
+
+    async def _categorize_query_async(self, query: str) -> str:
+        """Async version of query categorization using utility model."""
+        try:
+            category = await self.utility_llm.classify_query(query)
+            return category
+        except Exception as e:
+            print(f"⚠️ Utility model query classification failed: {e}")
+            # Fallback to rule-based
+            category = self.utility_llm._fallback_classify_query(query)
+            print(f"🔧 Fallback classification: {category}")
+            return category
+
+    async def _categorize_memory_content_async(self, content: str) -> str:
+        """Async version of memory content categorization using utility model (debug version)."""
+        try:
+            # Only log for debugging purposes
+            content_preview = content[:30].replace('\n', ' ')
+            print(f"🔧 Utility model categorizing: '{content_preview}...'")
+            category = await self.utility_llm.classify_memory_content(content)
+            print(f"🔧 → {category}")
+            return category
+        except Exception as e:
+            print(f"⚠️ Utility model memory classification failed: {e}")
+            # Fallback to rule-based
+            category = self.utility_llm._fallback_classify_memory(content)
+            print(f"🔧 Fallback: {category}")
+            return category
+
+    def _categorize_memory_content(self, content: str) -> str:
+        """Synchronous memory content categorization (fallback)."""
+        # For sync calls, use rule-based fallback
+        return self.utility_llm._fallback_classify_memory(content)
+
+    async def _filter_memories_by_relevance(self, memories: list[dict[str, Any]], user_input: str) -> list[dict[str, Any]]:
+        """Filter memories using semantic categorization and relevance scoring with utility model."""
+        
+        # Use utility model for fast query categorization
+        print(f"🔧 Utility model: Classifying query for memory filtering...")
+        query_category = await self._categorize_query_async(user_input)
+        print(f"🔧 Query categorized as: {query_category}")
+        
+        filtered_memories = []
+        print(f"🔧 Utility model: Categorizing {len(memories)} memories...")
+        
+        for i, memory in enumerate(memories):
+            # Use utility model for memory categorization - limit debug output
+            if i < 3:  # Only show debug for first 3 memories
+                memory_category = await self._categorize_memory_content_async(memory.get('content', ''))
+            else:
+                # Silent categorization for remaining memories
+                memory_category = await self.utility_llm.classify_memory_content(memory.get('content', ''))
+            
+            memory['semantic_category'] = memory_category
+            
+            # Calculate semantic relevance score
+            relevance_score = self._calculate_semantic_relevance(
+                query_category, memory_category, memory.get('distance', 1.0)
+            )
+            memory['relevance_score'] = relevance_score
+            
+            # Apply enhanced filtering criteria
+            if self._should_include_memory(memory, query_category, relevance_score):
+                filtered_memories.append(memory)
+            else:
+                print(f"  🔍 Filtered out: {memory_category} memory (relevance={relevance_score:.3f})")
+        
+        print(f"🔧 Utility model: Filtering complete. {len(filtered_memories)}/{len(memories)} memories passed filtering")
+        
+        # Sort by relevance score
+        filtered_memories.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
+        
+        # Return top 5 most relevant
+        return filtered_memories[:5]
+
+    def _calculate_semantic_relevance(self, query_category: str, memory_category: str, distance: float) -> float:
+        """Calculate semantic relevance score between query and memory."""
+        
+        # Base relevance from vector similarity (1 - distance)
+        base_relevance = max(0, 1 - distance)
+        
+        # Category matching bonus/penalty
+        if query_category == memory_category:
+            category_bonus = 0.3  # Same category gets significant boost
+        elif (query_category == 'technical' and memory_category == 'explanation') or \
+             (query_category == 'explanation' and memory_category == 'technical'):
+            category_bonus = 0.1  # Related categories get small boost
+        elif query_category == 'conversational' and memory_category != 'conversational':
+            category_bonus = -0.4  # Strong penalty for category mismatch
+        elif query_category in ['technical', 'explanation'] and memory_category == 'conversational':
+            category_bonus = -0.5  # Very strong penalty for technical queries getting conversational memories
+        else:
+            category_bonus = -0.1  # Small penalty for unrelated categories
+        
+        final_score = base_relevance + category_bonus
+        return max(0, min(1, final_score))  # Clamp to [0, 1]
+
+    def _should_include_memory(self, memory: dict, query_category: str, relevance_score: float) -> bool:
+        """Determine if memory should be included based on relevance criteria."""
+        
+        # Strict filtering for technical queries
+        if query_category in ['technical', 'explanation']:
+            # For technical queries, require high relevance OR same category
+            if relevance_score >= 0.4 or memory.get('semantic_category') in ['technical', 'explanation']:
+                return True
+            return False
+        
+        # For conversational queries, be more permissive but still filter out very irrelevant
+        if query_category == 'conversational':
+            return relevance_score >= 0.2
+        
+        # General threshold for other query types
+        return relevance_score >= 0.3
 
     async def _handle_complex_task(
         self,
@@ -338,8 +438,11 @@ class AletheiaAgent:
             },
             "approach": "planning",
             "execution_details": {
+                "route_used": "planning_with_synthesis",
                 "memories_used": len(relevant_memories),
                 "planning_enhanced": bool(relevant_memories),
+                "subtasks_executed": len(completed_tasks),
+                "synthesis_route": "external",
             },
         }
 
@@ -351,12 +454,6 @@ class AletheiaAgent:
         """Handle simple tasks with enhanced LLM-managed context approach."""
         
         start_time = time.time()
-        
-        # Check if this is a scientific/technical query for forced external routing
-        scientific_keywords = self.scientific_config.get("scientific_keywords", [])
-        
-        user_input_lower = user_input.lower()
-        is_scientific_query = any(keyword in user_input_lower for keyword in scientific_keywords)
         
         # Get user name for context
         user_name = self.context.current_user_id
@@ -388,102 +485,44 @@ class AletheiaAgent:
         # Add user profile data to context if available and relevant
         user_profile_context = ""
         if user_name and user_name != "default":
-            # Check if the current query is related to personal data
-            personal_data_keywords = [
-                "вес", "рост", "жир", "процент", "кг", "см", "данные", "профиль", "информация",
-                "тренировк", "диет", "питание", "похуд", "цел", "план", "здоровье",
-                "weight", "height", "fat", "data", "profile", "information", "training", 
-                "diet", "nutrition", "goal", "plan", "health", "fitness"
-            ]
-            
-            input_lower = user_input.lower()
-            is_personal_query = any(keyword in input_lower for keyword in personal_data_keywords)
-            
-            if is_personal_query:
-                user_profile_context = await self.user_profile_store.get_user_data_context(user_name)
-                if user_profile_context:
-                    context_prompt = context_prompt.replace(
-                        "### CONVERSATION",
-                        f"### USER PROFILE\n{user_profile_context}\n\n### CONVERSATION"
-                    )
-                    print("📊 Added user profile context (relevant to query)")
+            # Let LLM router decide if user profile context is relevant
+            # No hardcoded keywords - use intelligent context assessment
+            user_profile_context = await self.user_profile_store.get_user_data_context(user_name)
+            if user_profile_context:
+                context_prompt = context_prompt.replace(
+                    "### CONVERSATION",
+                    f"### USER PROFILE\n{user_profile_context}\n\n### CONVERSATION"
+                )
+                print("📊 Added user profile context (available for LLM assessment)")
         
         print("⚡ Handling simple task with LLM-managed context...")
         
         # Use the new structured generation approach
         try:
-            # Force external routing for complex scientific topics with empty memory
-            if is_scientific_query and len(relevant_memories) == 0 and any(word in user_input_lower for word in self.scientific_config.get("complex_query_indicators", [])):
-                print("🔬 Forcing external consultation for complex scientific topic")
-                
-                # Build enhanced context for external LLM
-                enhanced_context = self._build_context_summary()
-                
-                task_context = TaskContext(
-                    prompt=user_input,
-                    max_tokens=1024,
-                    requires_deep_reasoning=True,
-                    conversation_context=enhanced_context,
-                    user_name=user_name,
-                    session_context={
-                        "session_id": self.session_id,
-                        "interaction_count": self.context.interaction_count,
-                        "language": self.context.last_user_language
-                    }
-                )
-                
-                external_result = await self.router.execute_task(task_context)
-                route_used = "external_forced"
-                response_text = external_result.get("result", "")
-                
-                # Add to episodes storage
-                self.context.add_episode(user_input, response_text, {"route": route_used})
-                
-                # Update running summary with the exchange
-                await self.context.update_summary_from_exchange(
-                    user_input, response_text, self.router.local_llm
-                )
-                
-                execution_time = time.time() - start_time
-                
-                return {
-                    "type": "simple_task",
-                    "response": response_text,
-                    "execution_details": {
-                        "route_used": route_used,
-                        "execution_time": execution_time,
-                        "estimated_cost": external_result.get("estimated_cost", 0),
-                        "approach": "llm_managed_context",
-                        "consultation_metadata": external_result.get("consultation_metadata"),
-                        "episodes_used": len(relevant_episodes),
-                        "user_profile_used": bool(user_profile_context),
-                    },
-                    "approach": "llm_managed_context",
-                }
+            # Let LLM router make intelligent routing decision based on conversation context
+            # Build enhanced context for router decision
+            enhanced_context = self._build_context_summary()
             
-            # Use local LLM with structured CoT generation
-            print("💻 Using local LLM with Chain-of-Thought reasoning")
-            
-            raw_response = await self.router.local_llm.generate(
-                prompt=context_prompt,
+            task_context = TaskContext(
+                prompt=user_input,
                 max_tokens=1024,
-                temperature=0.7,
-                system_prompt=""  # System prompt is already in the context_prompt
+                requires_deep_reasoning=False,  # Let router decide based on content
+                conversation_context=enhanced_context,
+                user_name=user_name,
+                session_context={
+                    "session_id": self.session_id,
+                    "interaction_count": self.context.interaction_count,
+                    "language": self.context.last_user_language
+                }
             )
             
-            # Extract Chain-of-Thought and final response
-            cot_reasoning, response_text = self.context.extract_cot_and_response(raw_response)
-            
-            print(f"🧠 CoT reasoning: {cot_reasoning[:100]}..." if cot_reasoning else "🧠 No CoT structure detected")
-            
-            route_used = "local_cot"
+            # Router makes intelligent local vs external decision
+            result = await self.router.execute_task(task_context)
+            route_used = result.get("route_used", "router_decision")
+            response_text = result.get("result", "")
             
             # Add to episodes storage
-            self.context.add_episode(user_input, response_text, {
-                "route": route_used,
-                "cot_reasoning": cot_reasoning,
-                "episodes_used": len(relevant_episodes)
-            })
+            self.context.add_episode(user_input, response_text, {"route": route_used})
             
             # Update running summary with the exchange
             await self.context.update_summary_from_exchange(
@@ -498,12 +537,12 @@ class AletheiaAgent:
                 "execution_details": {
                     "route_used": route_used,
                     "execution_time": execution_time,
-                    "estimated_cost": 0,
+                    "estimated_cost": result.get("estimated_cost", 0),
                     "approach": "llm_managed_context",
-                    "cot_reasoning": cot_reasoning,
-                    "raw_response": raw_response,
+                    "consultation_metadata": result.get("consultation_metadata"),
                     "episodes_used": len(relevant_episodes),
                     "user_profile_used": bool(user_profile_context),
+                    "routing_decision": "llm_router_intelligence",
                 },
                 "approach": "llm_managed_context",
             }
@@ -623,30 +662,16 @@ class AletheiaAgent:
             
             context_parts.append("")
         
-        # Add current context indicators
+        # Get last user input from episodes for context flow assessment
         current_input = ""
         if hasattr(self.context, 'episodes') and self.context.episodes:
             # Get last user input from episodes
             last_episode = self.context.episodes[-1]
             current_input = last_episode.get('user_input', '')
         
-        # Detect if current question is a reference/continuation
-        if current_input:
-            has_references = any(pronoun in current_input.lower() for pronoun in 
-                               ["он", "она", "оно", "они", "его", "её", "их", "им", "ей", "ему", "ими", "ним", "ней", "нём", 
-                                "это", "то", "такое", "этого", "того", "it", "that", "this", "them", "those"])
-            
-            implicit_continuation_patterns = [
-                r'\bа\s+если\b', r'\bа\s+что\b', r'^\s*(а|но|и)\s+',
-                r'\bкогда\s+(это|то)\b', r'\bгде\s+(это|то)\b', r'\bпочему\s+(это|то)\b'
-            ]
-            has_implicit_continuation = any(re.search(pattern, current_input.lower()) for pattern in implicit_continuation_patterns)
-            
-            if has_references or has_implicit_continuation:
-                context_parts.append("=== CONTEXT NOTE ===")
-                context_parts.append("The user's current question contains references to previous conversation.")
-                context_parts.append("Please maintain continuity and understand what they're referring to.")
-                context_parts.append("")
+        # Let LLM understand context flow naturally through conversation history
+        # No need for hardcoded pattern detection - the full conversation context
+        # provides all necessary information for understanding references and continuations
         
         context_parts.append("=== END CONTEXT ===")
         context_parts.append("")
@@ -684,12 +709,6 @@ class AletheiaAgent:
                 context_parts_trimmed.append(f"Exchange {exchange_num}:")
                 context_parts_trimmed.append(f"  User: {user_input}")
                 context_parts_trimmed.append(f"  Assistant ({route}): {response}")
-                context_parts_trimmed.append("")
-            
-            if has_references or has_implicit_continuation:
-                context_parts_trimmed.append("=== CONTEXT NOTE ===")
-                context_parts_trimmed.append("The user's current question contains references to previous conversation.")
-                context_parts_trimmed.append("Please maintain continuity and understand what they're referring to.")
                 context_parts_trimmed.append("")
             
             context_parts_trimmed.append("=== END CONTEXT ===")
@@ -833,6 +852,9 @@ Focus on creating a cohesive response that feels like a complete answer to the o
                 llm_source = "local"
                 # Keep default local values
 
+            # Use utility model for fast topic extraction
+            current_topic = await self._extract_topic_from_summary_async()
+
             # Prepare metadata with proper types (ChromaDB only accepts str, int, float, bool)
             metadata = {
                 "session_id": self.session_id,
@@ -841,7 +863,7 @@ Focus on creating a cohesive response that feels like a complete answer to the o
                 "user_input_length": len(user_input),
                 "user_name": self.context.user_name or "unknown",
                 "language": self.context.last_user_language,
-                "current_topic": self._extract_topic_from_summary(),  # Get topic from running summary
+                "current_topic": current_topic,  # Now uses utility model
                 "route_used": route_used,
                 "execution_time": result.get("meta", {}).get("processing_time", 0.0),
                 # Enhanced source tracking for multi-LLM architecture
@@ -933,12 +955,25 @@ Focus on creating a cohesive response that feels like a complete answer to the o
         return min(importance_score, 1.0)
 
     def _extract_topic_from_summary(self) -> str:
-        """Extract the current topic from the running summary."""
+        """Extract the current topic from the running summary using utility model."""
         summary = self.context.get_or_create_summary()
         if not summary.is_empty():
-            # Extract first 50 characters of summary as topic
+            # For sync calls, use simple fallback
             current_summary = summary.get_summary()
-            return current_summary[:50] + "..." if len(current_summary) > 50 else current_summary
+            return self.utility_llm._fallback_extract_topic(current_summary, 50)
+        else:
+            return "general_conversation"
+
+    async def _extract_topic_from_summary_async(self) -> str:
+        """Async version of topic extraction using utility model."""
+        summary = self.context.get_or_create_summary()
+        if not summary.is_empty():
+            try:
+                current_summary = summary.get_summary()
+                return await self.utility_llm.extract_topic(current_summary, 50)
+            except Exception as e:
+                print(f"⚠️ Utility model topic extraction failed: {e}")
+                return self.utility_llm._fallback_extract_topic(current_summary, 50)
         else:
             return "general_conversation"
 

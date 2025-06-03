@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "parameters": {
+    "artifact_patterns": [
+      "<BEGIN_THOUGHT>.*?<END_THOUGHT>",
+      "<BEGIN_THOUGHT>.*?$",
+      "<FINAL>.*?</FINAL>",
+      "<FINAL>.*?$",
+      "^<FINAL>\\s*",
+      "<END_FINAL>.*?$",
+      "<RESPONSE>.*?</RESPONSE>",
+      "\\(Translation:.*?\\)$",
+      "<END>\\s*$",
+      "</END>\\s*$"
+    ],
+    "whitespace_cleanup": true,
+    "max_consecutive_newlines": 2
+  }
+} 

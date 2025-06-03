@@ -5,10 +5,12 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
+import re
 
 from ..processing.pipeline import create_context_analysis_pipeline
 from ..processing.extractors import EntityExtractor, NameExtractor
-from ..processing.detectors import ReferenceDetector
+from ..processing.detectors import ReferenceDetector, ComplexityDetector
+from ..processing.cleaners import ChainOfThoughtExtractor
 from ..processing.config import get_processor_config
 
 
@@ -73,6 +75,10 @@ class ConversationContext:
         self.entity_extractor = EntityExtractor()
         self.name_extractor = NameExtractor()
         
+        # Initialize processing components for pattern handling
+        self.complexity_detector = ComplexityDetector()
+        self.cot_extractor = ChainOfThoughtExtractor()
+        
         # Episode storage for L2 retrieval (full conversation pairs)
         self.episodes: List[Dict[str, Any]] = []
         self.max_episodes = 50  # Keep last 50 full exchanges for RAG search
@@ -101,10 +107,12 @@ class ConversationContext:
         # Extract user name if provided (for user switching)
         name_result = self.name_extractor.process(user_input)
         if name_result.success and name_result.data:
-            # Check if this is a user introduction
-            intro_patterns = ["меня зовут", "my name is", "i am", "я"]
+            # Check if this is a user introduction using processing config
+            name_config = get_processor_config("name_extractor").parameters
+            intro_patterns = name_config.get("introduction_patterns", [])
+            
             if any(pattern in user_input.lower() for pattern in intro_patterns):
-                new_user_id = name_result.data[0]
+                new_user_id = name_result.data[0] if isinstance(name_result.data, list) else name_result.data
                 if new_user_id != self.current_user_id:
                     logger.info(f"👤 User switch detected: {self.current_user_id} → {new_user_id}")
                     self.current_user_id = new_user_id
@@ -236,7 +244,7 @@ COMPRESSED SUMMARY:"""
         if not system_prompt:
             system_prompt = "You are Aletheia, a helpful and thoughtful AI assistant."
         
-        # Build structured prompt
+        # Build structured prompt without problematic <FINAL> tag
         context_prompt = f"""### SYSTEM
 {system_prompt}
 
@@ -246,44 +254,19 @@ COMPRESSED SUMMARY:"""
 ### CONVERSATION
 User: {user_input}
 
+Please respond with the following structure:
 <BEGIN_THOUGHT>
-(Make short reasoning here about how to respond)
+(Brief reasoning about how to respond)
 <END_THOUGHT>
 
-<FINAL>
-"""
+(Your actual response here, without any additional tags)"""
         
         return context_prompt
 
-    def extract_cot_and_response(self, llm_output: str) -> Tuple[str, str]:
-        """Extract Chain-of-Thought and final response from structured output."""
-        
-        # Split by markers
-        parts = llm_output.split("<END_THOUGHT>")
-        
-        if len(parts) >= 2:
-            # Extract CoT (between BEGIN_THOUGHT and END_THOUGHT)
-            cot_part = parts[0]
-            if "<BEGIN_THOUGHT>" in cot_part:
-                cot = cot_part.split("<BEGIN_THOUGHT>")[-1].strip()
-            else:
-                cot = cot_part.strip()
-            
-            # Extract final response (after <FINAL>)
-            final_part = parts[1]
-            if "<FINAL>" in final_part:
-                response = final_part.split("<FINAL>")[-1].strip()
-            else:
-                response = final_part.strip()
-            
-            return cot, response
-        else:
-            # Fallback if structure not followed
-            if "<FINAL>" in llm_output:
-                response = llm_output.split("<FINAL>")[-1].strip()
-                return "", response
-            else:
-                return "", llm_output.strip()
+    def extract_cot_and_response(self, raw_response: str) -> tuple[str, str]:
+        """Extract Chain-of-Thought reasoning and final response from LLM output."""
+        # Use the processing module for CoT extraction
+        return self.cot_extractor.extract_cot_and_response(raw_response)
 
     @property
     def user_name(self) -> Optional[str]:
@@ -304,17 +287,22 @@ User: {user_input}
         }
 
     def should_plan_task(self, user_input: str) -> bool:
-        """Determine if task needs planning (simplified logic)."""
-        # Simple heuristics for planning triggers
-        planning_indicators = [
-            "plan", "step by step", "how to", "guide me", "help me", 
-            "план", "пошагово", "как сделать", "помоги"
-        ]
+        """Determine if task needs planning using processing config patterns."""
         
-        word_count = len(user_input.split())
-        has_indicators = any(indicator in user_input.lower() for indicator in planning_indicators)
+        user_input_lower = user_input.lower()
         
-        return word_count > 15 or has_indicators
+        # Get explicit planning triggers from processing config
+        complexity_config = get_processor_config("complexity_detector").parameters
+        explicit_planning_triggers = complexity_config.get("explicit_planning_triggers", [])
+        
+        # Check for explicit planning language only
+        has_explicit_planning = any(trigger in user_input_lower for trigger in explicit_planning_triggers)
+        
+        # Simple length check for procedural requests
+        is_substantial_request = len(user_input.split()) >= 8
+        
+        # Only trigger planning for very explicit procedural requests
+        return has_explicit_planning and is_substantial_request
 
     def add_response(self, response: str, execution_details: Dict[str, Any] = None) -> None:
         """Add assistant response to context (compatibility method)."""

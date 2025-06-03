@@ -9,6 +9,7 @@ from ..config import config
 from ..identity import identity
 from ..llm.providers import ExternalLLMManager
 from .local_llm import LocalLLM
+from .utility_llm import UtilityLLM
 from .confidence_calibrator import calibrator
 
 
@@ -40,6 +41,7 @@ class LLMRouter:
     def __init__(self) -> None:
         """Initialize the router."""
         self.local_llm = LocalLLM()
+        self.utility_llm = UtilityLLM()  # NEW: Fast utility model
         self.external_manager = ExternalLLMManager()
         self.use_calibrator = True  # Enable calibrated routing
         self._routing_stats: dict[str, int] = {
@@ -106,6 +108,7 @@ class LLMRouter:
             task.requires_deep_reasoning = True
 
         # Rule 3: Explicit deep reasoning requirement - use identity configuration
+        # This should NOT be overridden by calibrator for scientific accuracy
         if task.requires_deep_reasoning and identity.should_require_deep_reasoning():
             return RouteDecision.EXTERNAL
 
@@ -130,17 +133,55 @@ class LLMRouter:
         if total_estimated_tokens > local_context * 0.8:  # 80% threshold
             return RouteDecision.EXTERNAL
 
-        # Rule 9: Confidence calibrator decision (NEW!)
-        if self.use_calibrator:
-            try:
-                # Get local LLM's confidence assessment first
-                structured_result = await self.local_llm.generate_structured(
-                    prompt=task.prompt,
-                    max_tokens=128,  # Small response for routing decision
-                    temperature=0.3   # Lower temperature for more consistent routing
-                )
+        # Rule 9: Local LLM self-assessment (NEW!)
+        # Ask the local LLM if it thinks external consultation is needed
+        try:
+            # Enhanced context for better self-assessment
+            assessment_context = self._build_assessment_context(task)
+            
+            structured_result = await self.local_llm.generate_structured(
+                prompt=task.prompt,
+                max_tokens=128,  # Small response for routing decision
+                temperature=0.2,  # Lower temperature for more consistent routing
+                context=assessment_context
+            )
+            
+            local_confidence = structured_result.get('confidence', 'medium')
+            external_needed = structured_result.get('external_needed', False)
+            reasoning = structured_result.get('reasoning', '')
+            
+            # Enhanced validation of self-assessment for consistency
+            assessment_valid = self._validate_self_assessment(
+                task.prompt, local_confidence, external_needed, reasoning
+            )
+            
+            if not assessment_valid:
+                print(f"⚠️ Inconsistent self-assessment detected, applying rules-based override")
+                # Override with rules-based assessment for technical topics
+                local_confidence, external_needed = self._rules_based_assessment(task.prompt)
+            
+            # If local LLM explicitly says external consultation is needed, respect that
+            if external_needed:
+                print(f"🧠 Local LLM self-assessment: external consultation needed (confidence: {local_confidence})")
+                return RouteDecision.EXTERNAL
                 
-                local_confidence = structured_result.get('confidence', 'medium')
+            # Store confidence for potential calibrator use
+            task.local_confidence = local_confidence
+                
+        except Exception as e:
+            print(f"⚠️ Local LLM self-assessment failed: {e}")
+            # Apply fallback rules-based assessment
+            local_confidence, external_needed = self._rules_based_assessment(task.prompt)
+            if external_needed:
+                return RouteDecision.EXTERNAL
+            task.local_confidence = local_confidence
+
+        # Rule 10: Confidence calibrator decision (only for non-deep-reasoning tasks)
+        # Scientific and complex topics should bypass calibrator to ensure accuracy
+        if self.use_calibrator and not task.requires_deep_reasoning:
+            try:
+                # Use stored confidence if available, otherwise get it fresh
+                local_confidence = getattr(task, 'local_confidence', 'medium')
                 
                 # Calculate entropy-like measure from confidence
                 confidence_to_entropy = {'high': 0.8, 'medium': 0.5, 'low': 0.2}
@@ -576,3 +617,93 @@ Response:"""
         # For error cases
         else:
             return False
+
+    def _build_assessment_context(self, task: TaskContext) -> str:
+        """Build enhanced context for local LLM self-assessment."""
+        
+        context_parts = []
+        
+        # Add conversation context if available
+        if task.conversation_context:
+            context_parts.append(f"CONVERSATION CONTEXT:\n{task.conversation_context}")
+        
+        # Add assessment guidelines
+        context_parts.append("""
+SELF-ASSESSMENT GUIDELINES:
+- Scientific topics (physics, chemistry, engineering): ALWAYS require external consultation
+- Technical explanations requiring precision: Use external consultation
+- Mathematical calculations or formulas: Use external consultation  
+- Complex processes or mechanisms: Consider external consultation
+- Simple conversations or personal topics: Can handle locally
+- Questions about your capabilities: Can handle locally
+""")
+        
+        return "\n\n".join(context_parts) if context_parts else ""
+
+    def _validate_self_assessment(self, prompt: str, confidence: str, external_needed: bool, reasoning: str) -> bool:
+        """Validate self-assessment for consistency with topic requirements."""
+        
+        prompt_lower = prompt.lower()
+        
+        # Scientific/technical topics should have low confidence and external_needed=True
+        scientific_keywords = [
+            'квантов', 'физик', 'двигатель', 'тепловой', 'механизм', 'энергия', 'принцип',
+            'quantum', 'physics', 'engine', 'thermal', 'mechanism', 'energy', 'principle',
+            'химия', 'биология', 'математика', 'формула', 'уравнение',
+            'chemistry', 'biology', 'mathematics', 'formula', 'equation'
+        ]
+        
+        is_scientific = any(keyword in prompt_lower for keyword in scientific_keywords)
+        
+        if is_scientific:
+            # For scientific topics, we expect low confidence and external_needed=True
+            if confidence == 'high' or not external_needed:
+                print(f"🔍 Inconsistent assessment: Scientific topic with confidence={confidence}, external_needed={external_needed}")
+                return False
+        
+        # Explanation/process questions should generally require external consultation
+        explanation_keywords = ['как', 'что такое', 'расскажи', 'объясни', 'устроен', 'работает', 'how', 'what is', 'explain', 'works']
+        is_explanation = any(keyword in prompt_lower for keyword in explanation_keywords)
+        
+        if is_explanation and is_scientific:
+            # Scientific explanations should definitely use external
+            if not external_needed:
+                print(f"🔍 Inconsistent assessment: Scientific explanation without external consultation")
+                return False
+        
+        return True
+
+    def _rules_based_assessment(self, prompt: str) -> tuple[str, bool]:
+        """Fallback rules-based assessment for consistency."""
+        
+        prompt_lower = prompt.lower()
+        
+        # Scientific/technical topics
+        scientific_keywords = [
+            'квантов', 'физик', 'двигатель', 'тепловой', 'механизм', 'энергия', 'принцип',
+            'quantum', 'physics', 'engine', 'thermal', 'mechanism', 'energy', 'principle',
+            'химия', 'биология', 'математика', 'формула', 'уравнение',
+            'chemistry', 'biology', 'mathematics', 'formula', 'equation'
+        ]
+        
+        is_scientific = any(keyword in prompt_lower for keyword in scientific_keywords)
+        
+        if is_scientific:
+            return 'low', True  # Low confidence, external needed
+        
+        # Complex explanation topics
+        explanation_keywords = ['как', 'что такое', 'расскажи', 'объясни', 'устроен', 'работает', 'how', 'what is', 'explain', 'works']
+        is_explanation = any(keyword in prompt_lower for keyword in explanation_keywords)
+        
+        if is_explanation:
+            return 'medium', True  # Medium confidence, but external recommended
+        
+        # Simple conversational topics
+        conversational_keywords = ['привет', 'как дела', 'кто', 'меня зовут', 'hello', 'how are', 'who are', 'my name']
+        is_conversational = any(keyword in prompt_lower for keyword in conversational_keywords)
+        
+        if is_conversational:
+            return 'high', False  # High confidence, no external needed
+        
+        # Default: medium confidence, consider external
+        return 'medium', False

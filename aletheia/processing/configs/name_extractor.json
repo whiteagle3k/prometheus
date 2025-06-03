@@ -14,6 +14,12 @@
       "i am\\s+([A-Z][a-z]+)",
       "это\\s+([A-ZА-Я][a-zа-я]+)"
     ],
+    "introduction_patterns": [
+      "меня зовут",
+      "my name is", 
+      "i am",
+      "я"
+    ],
     "exclude_words": [
       "вверх", "вниз", "влево", "вправо", "назад", "вперед", "туда", "сюда", "обратно",
       "up", "down", "left", "right", "back", "forward", "there", "here",
