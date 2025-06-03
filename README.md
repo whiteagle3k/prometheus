@@ -83,12 +83,46 @@ Aletheia is our first autonomous AI entity - a thoughtful research assistant wit
 ## Quick Start (macOS)
 
 ```bash
+# Clone and setup
 git clone https://github.com/whiteagle3k/prometheus.git
 cd prometheus
 ./scripts/install_mac.sh
 ./scripts/download_models.sh  # Downloads both required models
+
+# Start Aletheia entity
 poetry run python prometheus.py --entity aletheia
+
+# Alternative: Direct Python execution
+python prometheus.py --entity aletheia
 ```
+
+Once running, you can interact with Aletheia in natural language:
+```
+🤖 Aletheia: Привет! Я Алетейя, готова помочь. Как дела?
+🧑 You: расскажи про квантовую механику
+🤖 Aletheia: [Intelligent routing to external expert, then personalized response]
+```
+
+## Documentation
+
+For detailed information, see our comprehensive documentation:
+
+### 📚 Core Documentation
+- **[Architecture Guide](docs/architecture.md)** - Framework design, entity system, and component relationships
+- **[Memory System](docs/memory.md)** - Vector storage, user profiles, context management, and three-tier memory
+- **[Configuration Reference](docs/configuration.md)** - Identity setup, model configuration, and customization options
+- **[Troubleshooting](docs/troubleshooting.md)** - Common issues, debugging, and performance optimization
+
+### 🏗️ Development Guides
+- **Entity Development** - Creating new autonomous agents (see `docs/architecture.md`)
+- **Core Extension** - Adding framework components and capabilities
+- **Memory Integration** - Implementing custom memory and learning systems
+- **LLM Integration** - Adding new local or external model providers
+
+### 📖 Quick Reference
+- **CLI Commands** - Interactive commands and debugging utilities
+- **Configuration Examples** - Sample entity configurations and setups
+- **API Reference** - Core component interfaces and usage patterns
 
 ## Configuration
 
@@ -231,6 +265,8 @@ class MyAgentEntity(BaseEntity):
         # Return complete identity config
 ```
 
+See [docs/architecture.md](docs/architecture.md) for detailed entity development guide.
+
 ### Testing
 ```bash
 poetry run pytest tests/
@@ -238,3 +274,5 @@ poetry run pytest tests/
 
 ### Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines and the clean architecture principles.
+
+For detailed framework documentation, start with [docs/architecture.md](docs/architecture.md).
