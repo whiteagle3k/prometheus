@@ -572,9 +572,11 @@ class AletheiaAgent:
         context_parts.append(f"Session: {self.session_id}")
         context_parts.append(f"Total interactions: {len(self.task_history)}")
         
-        # Current topic if available
-        if self.context.current_topic:
-            context_parts.append(f"Current topic: {self.context.current_topic}")
+        # Current topic from running summary if available
+        summary = self.context.get_or_create_summary()
+        if not summary.is_empty():
+            current_summary = summary.get_summary()
+            context_parts.append(f"Current context: {current_summary[:100]}...")
         
         context_parts.append("") # Empty line for separation
         
@@ -605,26 +607,28 @@ class AletheiaAgent:
             context_parts.append(f"=== EARLIER CONVERSATION ===")
             context_parts.append(f"({older_exchanges} earlier exchanges covering various topics)")
             
-            # Extract key topics from earlier exchanges
+            # Extract key topics from earlier exchanges - use conversation summaries if available
             earlier_topics = []
             for task_record in self.task_history[:-recent_exchanges]:
                 conv_context = task_record.get('conversation_context', {})
-                topic = conv_context.get('current_topic')
-                if topic and topic not in earlier_topics:
-                    earlier_topics.append(topic)
+                # Try to get topic from summary stats if available
+                summary_stats = conv_context.get('summary_stats', {})
+                if summary_stats and not summary_stats.get('is_empty', True):
+                    # Use summary as topic indicator
+                    earlier_topics.append("previous conversations")
+                    break
             
             if earlier_topics:
-                context_parts.append(f"Topics discussed: {', '.join(earlier_topics[:5])}")
+                context_parts.append(f"Topics discussed: {', '.join(set(earlier_topics[:5]))}")
             
             context_parts.append("")
         
         # Add current context indicators
         current_input = ""
-        if self.context.conversation_history:
-            for entry in reversed(self.context.conversation_history):
-                if entry["type"] == "user_input":
-                    current_input = entry["content"]
-                    break
+        if hasattr(self.context, 'episodes') and self.context.episodes:
+            # Get last user input from episodes
+            last_episode = self.context.episodes[-1]
+            current_input = last_episode.get('user_input', '')
         
         # Detect if current question is a reference/continuation
         if current_input:
@@ -658,8 +662,13 @@ class AletheiaAgent:
             if self.context.user_name:
                 context_parts_trimmed.append(f"User: {self.context.user_name}")
             context_parts_trimmed.append(f"Total interactions: {len(self.task_history)} (showing recent)")
-            if self.context.current_topic:
-                context_parts_trimmed.append(f"Current topic: {self.context.current_topic}")
+            
+            # Add running summary if available
+            summary = self.context.get_or_create_summary()
+            if not summary.is_empty():
+                current_summary = summary.get_summary()
+                context_parts_trimmed.append(f"Current context: {current_summary[:100]}...")
+            
             context_parts_trimmed.append("")
             
             # Keep last 8 exchanges in full detail
@@ -832,7 +841,7 @@ Focus on creating a cohesive response that feels like a complete answer to the o
                 "user_input_length": len(user_input),
                 "user_name": self.context.user_name or "unknown",
                 "language": self.context.last_user_language,
-                "current_topic": self.context.current_topic,
+                "current_topic": self._extract_topic_from_summary(),  # Get topic from running summary
                 "route_used": route_used,
                 "execution_time": result.get("meta", {}).get("processing_time", 0.0),
                 # Enhanced source tracking for multi-LLM architecture
@@ -922,6 +931,16 @@ Focus on creating a cohesive response that feels like a complete answer to the o
         
         # Cap at 1.0 to prevent extreme scores
         return min(importance_score, 1.0)
+
+    def _extract_topic_from_summary(self) -> str:
+        """Extract the current topic from the running summary."""
+        summary = self.context.get_or_create_summary()
+        if not summary.is_empty():
+            # Extract first 50 characters of summary as topic
+            current_summary = summary.get_summary()
+            return current_summary[:50] + "..." if len(current_summary) > 50 else current_summary
+        else:
+            return "general_conversation"
 
     async def _maybe_reflect(self, user_input: str, result: dict[str, Any]) -> None:
         """Optionally perform reflection on the completed task."""
