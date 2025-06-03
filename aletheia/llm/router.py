@@ -9,6 +9,7 @@ from ..config import config
 from ..identity import identity
 from ..llm.providers import ExternalLLMManager
 from .local_llm import LocalLLM
+from .confidence_calibrator import calibrator
 
 
 class RouteDecision(Enum):
@@ -40,10 +41,13 @@ class LLMRouter:
         """Initialize the router."""
         self.local_llm = LocalLLM()
         self.external_manager = ExternalLLMManager()
+        self.use_calibrator = True  # Enable calibrated routing
         self._routing_stats: dict[str, int] = {
             "local_routes": 0,
             "external_routes": 0,
             "routing_errors": 0,
+            "calibrator_predictions": 0,
+            "fallback_threshold_used": 0,
         }
 
     async def route_task(self, task: TaskContext) -> RouteDecision:
@@ -85,7 +89,7 @@ class LLMRouter:
                 return RouteDecision.EXTERNAL
 
     async def _apply_routing_heuristics(self, task: TaskContext) -> RouteDecision:
-        """Apply routing heuristics to make decision using identity configuration."""
+        """Apply routing heuristics to make decision using confidence calibrator and identity configuration."""
 
         # Estimate token count
         estimated_tokens = await self.local_llm.count_tokens(task.prompt)
@@ -126,12 +130,50 @@ class LLMRouter:
         if total_estimated_tokens > local_context * 0.8:  # 80% threshold
             return RouteDecision.EXTERNAL
 
+        # Rule 9: Confidence calibrator decision (NEW!)
+        if self.use_calibrator:
+            try:
+                # Get local LLM's confidence assessment first
+                structured_result = await self.local_llm.generate_structured(
+                    prompt=task.prompt,
+                    max_tokens=128,  # Small response for routing decision
+                    temperature=0.3   # Lower temperature for more consistent routing
+                )
+                
+                local_confidence = structured_result.get('confidence', 'medium')
+                
+                # Calculate entropy-like measure from confidence
+                confidence_to_entropy = {'high': 0.8, 'medium': 0.5, 'low': 0.2}
+                entropy = confidence_to_entropy.get(local_confidence, 0.5)
+                
+                # Use calibrator to make routing decision
+                should_use_local, calibrator_confidence = calibrator.predict_should_use_local(
+                    entropy=entropy,
+                    query=task.prompt,
+                    local_confidence=local_confidence
+                )
+                
+                self._routing_stats["calibrator_predictions"] += 1
+                
+                if should_use_local:
+                    return RouteDecision.LOCAL
+                else:
+                    return RouteDecision.EXTERNAL
+                    
+            except Exception as e:
+                print(f"⚠️ Calibrator failed, using fallback: {e}")
+                self._routing_stats["fallback_threshold_used"] += 1
+                # Fall through to original logic
+
         # Default: use local for efficiency (aligned with identity's cost optimization goal)
         return RouteDecision.LOCAL
 
     async def execute_task(self, task: TaskContext) -> dict[str, Any]:
         """Execute a task using the appropriate LLM."""
         start_time = asyncio.get_event_loop().time()
+        route_used = None
+        local_confidence = None
+        entropy = None
 
         try:
             # Make routing decision
@@ -139,11 +181,20 @@ class LLMRouter:
 
             if route == RouteDecision.LOCAL:
                 # Execute locally
-                response = await self.local_llm.generate(
+                structured_result = await self.local_llm.generate_structured(
                     prompt=task.prompt,
                     max_tokens=task.max_tokens,
                     temperature=0.7,
+                    context=task.conversation_context
                 )
+                
+                response = structured_result.get('answer', '')
+                local_confidence = structured_result.get('confidence', 'medium')
+                
+                # Calculate entropy for calibrator logging
+                confidence_to_entropy = {'high': 0.8, 'medium': 0.5, 'low': 0.2}
+                entropy = confidence_to_entropy.get(local_confidence, 0.5)
+                
                 route_used = "local"
                 consultation_metadata = None
 
@@ -152,11 +203,17 @@ class LLMRouter:
                 external_llm = await self.external_manager.get_best_available()
                 if not external_llm:
                     # Fallback to local
-                    response = await self.local_llm.generate(
+                    structured_result = await self.local_llm.generate_structured(
                         prompt=task.prompt,
                         max_tokens=task.max_tokens,
                         temperature=0.7,
+                        context=task.conversation_context
                     )
+                    
+                    response = structured_result.get('answer', '')
+                    local_confidence = structured_result.get('confidence', 'medium')
+                    entropy = confidence_to_entropy.get(local_confidence, 0.5)
+                    
                     route_used = "local_fallback"
                     consultation_metadata = None
                 else:
@@ -189,6 +246,9 @@ class LLMRouter:
                     })
                     
                     route_used = "external"
+                    # For external routes, we don't have local confidence data
+                    local_confidence = "unknown"
+                    entropy = 0.0
 
             execution_time = asyncio.get_event_loop().time() - start_time
 
@@ -203,33 +263,41 @@ class LLMRouter:
             if consultation_metadata:
                 result["consultation_metadata"] = consultation_metadata
 
+            # Log routing decision for calibrator learning (async, non-blocking)
+            if self.use_calibrator and local_confidence and entropy is not None:
+                # TODO: In a real system, we'd need user feedback to determine if the routing was correct
+                # For now, we'll use heuristics: local routes are "correct" if confidence was medium/high
+                # and external routes are "correct" if they were triggered by low confidence or other rules
+                is_correct = self._estimate_routing_correctness(route_used, local_confidence, response)
+                
+                # Log asynchronously
+                asyncio.create_task(calibrator.log_decision(
+                    query=task.prompt,
+                    entropy=entropy,
+                    local_confidence=local_confidence,
+                    route_used=route_used,
+                    is_correct=is_correct,
+                    execution_time=execution_time
+                ))
+
             return result
 
         except Exception as e:
-            print(f"Task execution error: {e}")
-            # Fallback to local if available
-            try:
-                response = await self.local_llm.generate(
-                    prompt=task.prompt,
-                    max_tokens=task.max_tokens,
-                    temperature=0.7,
-                )
-                execution_time = asyncio.get_event_loop().time() - start_time
-                return {
-                    "result": response,
-                    "route_used": "local_fallback",
-                    "execution_time": execution_time,
-                    "estimated_cost": 0,
-                    "error": str(e),
-                }
-            except Exception as fallback_error:
-                return {
-                    "result": "Извините, произошла ошибка при обработке запроса. / Sorry, an error occurred processing your request.",
-                    "route_used": "error",
-                    "execution_time": 0,
-                    "estimated_cost": 0,
-                    "error": f"Primary: {e}, Fallback: {fallback_error}",
-                }
+            execution_time = asyncio.get_event_loop().time() - start_time
+            
+            # Log failed routing for calibrator
+            if self.use_calibrator and local_confidence and entropy is not None:
+                asyncio.create_task(calibrator.log_decision(
+                    query=task.prompt,
+                    entropy=entropy,
+                    local_confidence=local_confidence,
+                    route_used=route_used or "error",
+                    is_correct=False,
+                    user_feedback=f"Error: {str(e)}",
+                    execution_time=execution_time
+                ))
+            
+            raise e
 
     async def _prepare_external_prompt(self, task: TaskContext) -> str:
         """Prepare a consultation request for external LLM."""
@@ -451,21 +519,21 @@ Response:"""
                 return f"[From {identity.name}] {external_response}", {}
 
     def get_routing_stats(self) -> dict[str, Any]:
-        """Get routing statistics."""
-        total_routes = (
-            self._routing_stats["local_routes"] +
-            self._routing_stats["external_routes"]
-        )
-
-        if total_routes == 0:
-            return {**self._routing_stats, "local_percentage": 0, "external_percentage": 0}
-
-        return {
-            **self._routing_stats,
+        """Get routing statistics including calibrator metrics."""
+        total_routes = self._routing_stats["local_routes"] + self._routing_stats["external_routes"]
+        
+        stats = {
             "total_routes": total_routes,
-            "local_percentage": (self._routing_stats["local_routes"] / total_routes) * 100,
-            "external_percentage": (self._routing_stats["external_routes"] / total_routes) * 100,
+            "local_percentage": (self._routing_stats["local_routes"] / max(total_routes, 1)) * 100,
+            "external_percentage": (self._routing_stats["external_routes"] / max(total_routes, 1)) * 100,
+            "routing_errors": self._routing_stats["routing_errors"],
+            "calibrator_enabled": self.use_calibrator,
+            "calibrator_predictions": self._routing_stats["calibrator_predictions"],
+            "fallback_threshold_used": self._routing_stats["fallback_threshold_used"],
+            "calibrator_stats": calibrator.get_stats(),
         }
+        
+        return stats
 
     async def health_check(self) -> dict[str, Any]:
         """Check health of local and external LLMs."""
@@ -481,3 +549,30 @@ Response:"""
             "available_external_providers": [p.value for p in available_providers],
             "routing_stats": self.get_routing_stats(),
         }
+
+    def _estimate_routing_correctness(self, route_used: str, local_confidence: str, response: str) -> bool:
+        """Estimate if the routing decision was correct based on heuristics.
+        
+        This is a temporary heuristic until we can get real user feedback.
+        In production, user feedback would be the gold standard.
+        """
+        # For local routes
+        if route_used in ["local", "local_fallback"]:
+            # Local routing is "correct" if:
+            # 1. Confidence was medium or high, AND
+            # 2. Response is substantial (not a fallback response)
+            confidence_ok = local_confidence in ["medium", "high"]
+            response_ok = len(response) > 50 and "извините" not in response.lower() and "sorry" not in response.lower()
+            return confidence_ok and response_ok
+        
+        # For external routes
+        elif route_used == "external":
+            # External routing is "correct" if it was triggered by:
+            # 1. Low local confidence, OR
+            # 2. Complex query requiring external knowledge
+            # We assume external routes are generally correct unless obviously wrong
+            return True
+        
+        # For error cases
+        else:
+            return False

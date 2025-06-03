@@ -1056,20 +1056,36 @@ Focus on creating a cohesive response that feels like a complete answer to the o
                 await self.hierarchical_memory._manage_memory_tiers()
             else:
                 # Fallback to simple memory management
-                # Check if summarization is needed
+                # Check if summarization is needed (using local LLM as recommended by o3)
                 if await self.memory_summariser.should_summarize():
-                    external_llm = await self.router.external_manager.get_best_available()
-                    await self.memory_summariser.summarize_and_compress(external_llm)
+                    print("🧠 Memory threshold reached - starting summarization...")
+                    summary_id = await self.memory_summariser.summarize_and_compress(
+                        delete_originals=True  # Enable cleanup as recommended by o3
+                    )
+                    if summary_id:
+                        print(f"✅ Memory summarization completed: {summary_id}")
+                    else:
+                        print("ℹ️ Memory summarization skipped - not enough memories")
 
-                # Cleanup old memories if needed
+                # Cleanup old memories if needed (secondary safety net)
                 memory_count = await self.vector_store.get_memory_count()
                 if memory_count > config.max_memory_entries:
                     deleted = await self.vector_store.cleanup_old_memories()
                     if deleted > 0:
-                        print(f"🗑️  Cleaned up {deleted} old memories")
+                        print(f"🗑️ Cleaned up {deleted} old memories (safety cleanup)")
 
         except Exception as e:
-            print(f"⚠️  Error managing memory: {e}")
+            print(f"⚠️ Error managing memory: {e}")
+
+    async def start_background_tasks(self) -> None:
+        """Start background tasks like periodic summarization (o3's nightly task implementation)."""
+        print("🚀 Starting background tasks...")
+        
+        # Start periodic memory summarization (every 24 hours)
+        asyncio.create_task(self.memory_summariser.run_periodic_summarization(interval_hours=24))
+        print("📅 Started periodic memory summarization task")
+        
+        # TODO: Add other background tasks here (environment monitoring, health checks, etc.)
 
     async def get_status(self) -> dict[str, Any]:
         """Get current agent status and diagnostics."""
@@ -1082,6 +1098,10 @@ Focus on creating a cohesive response that feels like a complete answer to the o
         else:
             memory_count = await self.vector_store.get_memory_count()
             memory_stats = {"total_memories": memory_count}
+            
+        # Add summarization statistics
+        summarization_stats = await self.memory_summariser.get_summarization_stats()
+        memory_stats.update({"summarization": summarization_stats})
 
         return {
             "session_id": self.session_id,
@@ -1095,6 +1115,7 @@ Focus on creating a cohesive response that feels like a complete answer to the o
                 "max_memory_entries": config.max_memory_entries,
                 "local_token_threshold": config.local_token_threshold,
                 "use_hierarchical_memory": config.use_hierarchical_memory,
+                "memory_summarization_threshold": config.memory_summarization_threshold,
             },
         }
 
