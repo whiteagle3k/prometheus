@@ -90,10 +90,10 @@ cd prometheus
 ./scripts/download_models.sh  # Downloads both required models
 
 # Start Aletheia entity
-poetry run python prometheus.py --entity aletheia
+poetry run python prometheus.py aletheia
 
 # Alternative: Direct Python execution
-python prometheus.py --entity aletheia
+python prometheus.py aletheia
 ```
 
 Once running, you can interact with Aletheia in natural language:
@@ -265,7 +265,11 @@ class MyAgentEntity(BaseEntity):
         # Return complete identity config
 ```
 
-See [docs/architecture.md](docs/architecture.md) for detailed entity development guide.
+For detailed guides, see:
+- **[Architecture Guide](docs/architecture.md)** - Entity development and framework design
+- **[Configuration Reference](docs/configuration.md)** - Identity setup and customization
+- **[Memory System](docs/memory.md)** - Custom memory and learning systems
+- **[Troubleshooting](docs/troubleshooting.md)** - Common development issues
 
 ### Testing
 ```bash
@@ -275,4 +279,5 @@ poetry run pytest tests/
 ### Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines and the clean architecture principles.
 
-For detailed framework documentation, start with [docs/architecture.md](docs/architecture.md).
+**📖 Complete Documentation**: All detailed guides are in the [docs/](docs/) folder:
+- [Architecture](docs/architecture.md) | [Configuration](docs/configuration.md) | [Memory](docs/memory.md) | [Troubleshooting](docs/troubleshooting.md)
