@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any, Optional
+from pathlib import Path
 
 try:
     from llama_cpp import Llama
@@ -11,18 +12,31 @@ except ImportError:
     Llama = None
 
 from ..config import config
-from ..identity import identity
+# TODO: Remove direct identity import - should be passed from entity
+# from ..identity import identity
 from ..processing.pipeline import create_simple_response_pipeline
 
 
 class LocalLLM:
     """Local LLM using llama.cpp with hardware acceleration."""
 
-    def __init__(self) -> None:
+    def __init__(self, identity_config: Optional[dict] = None) -> None:
         """Initialize the local LLM."""
         self.model: Optional[Llama] = None
         self.model_loaded = False
         self._init_lock = asyncio.Lock()
+        
+        # TODO: Properly inject identity configuration from entity
+        self.identity_config = identity_config or {
+            "name": "AI Assistant",
+            "personality": {"summary": "A helpful AI assistant"},
+            "module_paths": {"performance_config": {}},
+            "system_prompts": {
+                "en": "You are a helpful AI assistant.",
+                "ru": "Вы полезный ИИ-помощник."
+            },
+            "llm_instructions": "You are a helpful AI assistant."
+        }
         
         # Initialize processing pipeline for response cleanup
         self.response_pipeline = create_simple_response_pipeline()
@@ -32,23 +46,37 @@ class LocalLLM:
         if self.model_loaded or not Llama:
             return
 
-        if not config.local_model_path.exists():
+        # Get model path from identity configuration first, then fall back to config
+        model_path = config.local_model_path  # Default fallback
+        
+        try:
+            if "module_paths" in self.identity_config and "local_model_gguf" in self.identity_config["module_paths"]:
+                identity_model_path = Path(self.identity_config["module_paths"]["local_model_gguf"])
+                if identity_model_path.exists():
+                    model_path = identity_model_path
+                    print(f"📁 Using model from identity: {model_path}")
+                else:
+                    print(f"⚠️ Identity model not found: {identity_model_path}, using default")
+        except Exception as e:
+            print(f"⚠️ Error reading model path from identity: {e}, using default")
+
+        if not model_path.exists():
             raise FileNotFoundError(
-                f"Model not found at {config.local_model_path}. "
+                f"Model not found at {model_path}. "
                 "Run scripts/download_models.sh first."
             )
 
-        print(f"🔄 Loading local model: {config.local_model_path}")
+        print(f"🔄 Loading local model: {model_path}")
 
         # Get performance config from identity if available
         try:
-            performance_config = identity.module_paths.performance_config or {}
+            performance_config = self.identity_config["module_paths"]["performance_config"] or {}
         except:
             performance_config = {}
 
         # Configure hardware acceleration with optimizations
         model_kwargs = {
-            "model_path": str(config.local_model_path),
+            "model_path": str(model_path),
             "n_ctx": performance_config.get("context_size", config.local_model_context_size),
             "verbose": False,
             "n_batch": performance_config.get("batch_size", 512),  # Default to 512 for better balance
@@ -145,9 +173,9 @@ class LocalLLM:
         
         if is_russian:
             # Use explicit feminine forms for Russian fallback
-            return f"Привет! Я {identity.name}, женский автономный агент. Готова помочь! Чем могу быть полезна?"
+            return f"Привет! Я {self.identity_config['name']}, женский автономный агент. Готова помочь! Чем могу быть полезна?"
         else:
-            return f"Hello! I'm {identity.name}, {identity.personality.summary.lower()}. How can I help you?"
+            return f"Hello! I'm {self.identity_config['name']}, {self.identity_config['personality']['summary'].lower()}. How can I help you?"
 
     def _format_chat_prompt(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """Format prompt for Phi-3 chat format using identity configuration."""
@@ -164,7 +192,7 @@ class LocalLLM:
             # Get system prompt from identity configuration
             language = "ru" if is_russian else "en"
             # For user-facing responses, use language-specific prompts (for gender forms)
-            final_system_prompt = identity.get_system_prompt(language, for_user_response=True)
+            final_system_prompt = self.identity_config["system_prompts"][language]
 
         formatted += f"<|system|>{final_system_prompt}<|end|>\n"
         formatted += f"<|user|>{prompt}<|end|>\n<|assistant|>"
@@ -270,7 +298,7 @@ class LocalLLM:
             "gpu_layers": config.local_model_gpu_layers,
             "hardware_acceleration": "Metal" if config.use_metal else "CUDA" if config.use_cuda else "CPU",
             "loaded": self.model_loaded,
-            "identity": identity.to_dict(),
+            "identity": self.identity_config,
         }
 
     async def unload(self) -> None:
@@ -319,48 +347,25 @@ class LocalLLM:
     def _format_structured_prompt(self, prompt: str, context: Optional[str] = None) -> str:
         """Format prompt to request structured response from local LLM."""
         
-        # Always use English for system structure, let LLM respond in user's language naturally
-        language = "en"  # System is always English
-        system_prompt = identity.get_system_prompt(language, for_user_response=True)
+        # Use the system instructions from identity config directly
+        system_prompt = self.identity_config.get("llm_instructions", "You are a helpful AI assistant.")
         
         # Build context section
         context_section = ""
         if context:
             context_section = f"\n\nCONTEXT: {context}"
 
-        # Single English-only structured instruction
-        instruction = f"""<|system|>{system_prompt}
+        # Simple structured instruction format
+        instruction = f"""<|system|>{system_prompt}<|end|>
+<|user|>{prompt}{context_section}
 
-Respond in this format:
+Please respond in this format:
 
-ANSWER: [direct response to user in their language]
-CONFIDENCE: [high/medium/low]
-REASONING: [brief explanation in English]
-EXTERNAL_NEEDED: [yes for technical/scientific/reasoning/any specific knowledge, no for conversation]
+ANSWER: [your response to the user]
+CONFIDENCE: [high/medium/low] 
+REASONING: [brief explanation]
 
-CONFIDENCE ASSESSMENT RULES:
-- LOW confidence: scientific concepts (quantum physics, relativity theory), complex technical questions, specialized knowledge, questions requiring precise facts, advanced reasoning
-- MEDIUM confidence: general topics I'm familiar with but may get details wrong
-- HIGH confidence: simple conversation, data from memory, personal preferences, basic facts
-
-MEMORY USAGE RULES:
-- If RELEVANT PAST EXPERIENCES contains needed information (especially marked KEY DATA) - use it
-- For user data queries (height, weight, body fat percentage) look for specific numbers in memory
-- If memory contains the answer, set EXTERNAL_NEEDED=no
-- If memory is insufficient for complete answer, set EXTERNAL_NEEDED=yes
-
-CRITERIA FOR EXTERNAL CONSULTATION (EXTERNAL_NEEDED=yes):
-- Scientific questions: physics, chemistry, biology, mathematics - ALWAYS require external consultation
-- Technical topics: quantum computing, programming, engineering
-- Complex concepts: detailed explanations of processes and mechanisms  
-- Factual questions: dates, scientist names, historical events
-- When memory is empty or lacks sufficient information
-- When requires reasoning or advanced knowledge
-- Words "detailed", "explain", "principles", "how does" - almost always require external consultation
-- IMPORTANT: for scientific topics set CONFIDENCE=low AND EXTERNAL_NEEDED=yes
-
-EXTERNAL_NEEDED=no only for: greetings, questions about me, data from memory, simple chat.<|end|>
-<|user|>{prompt}{context_section}<|end|>
+Respond naturally in the user's language.<|end|>
 <|assistant|>"""
 
         return instruction
@@ -374,30 +379,28 @@ EXTERNAL_NEEDED=no only for: greetings, questions about me, data from memory, si
         filter_result = filter_processor.process(raw_response)
         response = filter_result.data if filter_result.success else raw_response.strip()
         
-        # Default structure
+        # Default structure (simplified - no routing logic)
         parsed = {
             "answer": "",
             "confidence": "medium",
             "reasoning": "",
-            "external_needed": False,
             "raw_response": raw_response
         }
 
-        # Try inline parsing first (for responses where everything is on one line)
+        # Try inline parsing first
         self._parse_inline_format(response, parsed)
         
         # If inline parsing didn't work well, try line-based parsing
-        if not all([parsed["answer"], parsed["confidence"] != "medium"]):
+        if not parsed["answer"]:
             self._parse_line_format(response, parsed)
 
-        # Critical: Clean any remaining structured markers from the answer
+        # Clean any remaining structured markers from the answer
         if parsed["answer"]:
             parsed["answer"] = self._clean_answer_from_markers(parsed["answer"])
 
-        # Enhanced fallback and cleanup - preserve topic context
+        # Enhanced fallback and cleanup
         if not parsed["answer"] or len(parsed["answer"]) < 5:
             self._extract_contextual_answer(response, parsed, original_prompt)
-            # Clean the fallback answer too
             if parsed["answer"]:
                 parsed["answer"] = self._clean_answer_from_markers(parsed["answer"])
 
@@ -407,28 +410,26 @@ EXTERNAL_NEEDED=no only for: greetings, questions about me, data from memory, si
         """Completely remove any structured field markers from the answer."""
         import re
         
-        # Remove structured field patterns (more aggressive)
-        cleaned = re.sub(r'\b(?:ANSWER|CONFIDENCE|REASONING|EXTERNAL_NEEDED):\s*[^\n]*\n?', '', answer, flags=re.IGNORECASE)
+        # Remove structured field patterns
+        cleaned = re.sub(r'\b(?:ANSWER|CONFIDENCE|REASONING):\s*[^\n]*\n?', '', answer, flags=re.IGNORECASE)
         
         # Remove any remaining field patterns at start/end
-        cleaned = re.sub(r'^(?:ANSWER|CONFIDENCE|REASONING|EXTERNAL_NEEDED):\s*', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'(?:CONFIDENCE|REASONING|EXTERNAL_NEEDED):\s*.*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'^(?:ANSWER|CONFIDENCE|REASONING):\s*', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'(?:CONFIDENCE|REASONING):\s*.*$', '', cleaned, flags=re.IGNORECASE)
         
         # Remove common contamination patterns at start of response
-        cleaned = re.sub(r'^[A-ZА-Я]{5,}:\s*', '', cleaned)  # Remove patterns like "AСОНАН:"
+        cleaned = re.sub(r'^[A-ZА-Я]{5,}:\s*', '', cleaned)
         
         # Clean up extra whitespace
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         
         # Remove common contamination patterns
         cleaned = re.sub(r'\b(high|medium|low)\s*confidence\b', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'\b(yes|no)\s*external[_\s]*needed\b', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'\breasoning:\s*', '', cleaned, flags=re.IGNORECASE)
         
         # Remove any remaining field markers that might be scattered in text
         cleaned = re.sub(r'\bCONFIDENCE\b[:\s]*', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'\bREASONING\b[:\s]*', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'\bEXTERNAL_NEEDED\b[:\s]*', '', cleaned, flags=re.IGNORECASE)
         
         return cleaned.strip()
 
@@ -437,7 +438,7 @@ EXTERNAL_NEEDED=no only for: greetings, questions about me, data from memory, si
         import re
         
         # Extract answer (from start to first field marker)
-        answer_match = re.search(r'ANSWER:\s*(.+?)(?=\s+(?:CONFIDENCE|REASONING|EXTERNAL_NEEDED):|$)', response, re.IGNORECASE)
+        answer_match = re.search(r'ANSWER:\s*(.+?)(?=\s+(?:CONFIDENCE|REASONING):|$)', response, re.IGNORECASE)
         if answer_match:
             parsed["answer"] = answer_match.group(1).strip()
         
@@ -453,15 +454,9 @@ EXTERNAL_NEEDED=no only for: greetings, questions about me, data from memory, si
                 parsed["confidence"] = "medium"
         
         # Extract reasoning
-        reason_match = re.search(r'REASONING:\s*(.+?)(?=\s+EXTERNAL_NEEDED:|$)', response, re.IGNORECASE)
+        reason_match = re.search(r'REASONING:\s*(.+?)$', response, re.IGNORECASE)
         if reason_match:
             parsed["reasoning"] = reason_match.group(1).strip()
-        
-        # Extract external needed
-        ext_match = re.search(r'EXTERNAL_NEEDED:\s*(\w+)', response, re.IGNORECASE)
-        if ext_match:
-            ext_text = ext_match.group(1).lower()
-            parsed["external_needed"] = 'yes' in ext_text
 
     def _parse_line_format(self, response: str, parsed: dict) -> None:
         """Parse line-based format where each field is on a separate line."""
@@ -471,10 +466,10 @@ EXTERNAL_NEEDED=no only for: greetings, questions about me, data from memory, si
             if not line:
                 continue
                 
-            # Parse different fields (English only)
+            # Parse different fields
             if line.startswith('ANSWER:'):
                 answer_text = line.split(':', 1)[1].strip()
-                if answer_text and not parsed["answer"]:  # Only use if not already set
+                if answer_text and not parsed["answer"]:
                     parsed["answer"] = answer_text
             elif line.startswith('CONFIDENCE:'):
                 conf_text = line.split(':', 1)[1].strip().lower()
@@ -488,9 +483,6 @@ EXTERNAL_NEEDED=no only for: greetings, questions about me, data from memory, si
                 reasoning_text = line.split(':', 1)[1].strip()
                 if reasoning_text and not parsed["reasoning"]:
                     parsed["reasoning"] = reasoning_text
-            elif line.startswith('EXTERNAL_NEEDED:'):
-                ext_text = line.split(':', 1)[1].strip().lower()
-                parsed["external_needed"] = 'yes' in ext_text
 
     def _extract_contextual_answer(self, response: str, parsed: dict, original_prompt: str) -> None:
         """Extract answer with better context preservation, avoiding topic loss."""

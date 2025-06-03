@@ -2,7 +2,8 @@
 
 from typing import Dict, Any, Optional, Type
 
-from ...identity.loader import get_provider_config
+# TODO: Remove identity dependency - configuration should be passed from entity
+# from ...identity.loader import get_provider_config
 from .base import ExternalLLMProvider, ProviderType
 from .openai_provider import OpenAIProvider
 from .anthropic_provider import AnthropicProvider
@@ -28,13 +29,13 @@ class ProviderFactory:
     def create_provider(
         self, 
         provider_type: ProviderType, 
-        provider_config: Optional[Dict[str, Any]] = None
+        provider_config: Dict[str, Any]
     ) -> ExternalLLMProvider:
         """Create a provider instance by type.
         
         Args:
             provider_type: The type of provider to create
-            provider_config: Optional provider configuration (will load from identity if not provided)
+            provider_config: Provider configuration (required)
         
         Returns:
             Configured provider instance
@@ -47,11 +48,8 @@ class ProviderFactory:
             available_types = list(self._PROVIDER_REGISTRY.keys())
             raise ValueError(f"Unsupported provider type: {provider_type}. Available: {available_types}")
 
-        # Load configuration from identity.json if not provided
-        if provider_config is None:
-            provider_config = get_provider_config(provider_type.value)
-            if not provider_config:
-                raise RuntimeError(f"No configuration found for provider: {provider_type.value}")
+        if not provider_config:
+            raise RuntimeError(f"No configuration provided for provider: {provider_type.value}")
 
         # Get the provider class and create instance
         provider_class = self._PROVIDER_REGISTRY[provider_type]
@@ -64,13 +62,13 @@ class ProviderFactory:
     def create_provider_by_name(
         self, 
         provider_name: str, 
-        provider_config: Optional[Dict[str, Any]] = None
+        provider_config: Dict[str, Any]
     ) -> ExternalLLMProvider:
         """Create a provider instance by name string.
         
         Args:
             provider_name: Name of the provider ("openai", "anthropic", etc.)
-            provider_config: Optional provider configuration
+            provider_config: Provider configuration (required)
             
         Returns:
             Configured provider instance
@@ -132,26 +130,17 @@ class ProviderFactory:
             return False
 
     @classmethod
-    def get_provider_capabilities_summary(self) -> Dict[str, Dict[str, Any]]:
-        """Get a summary of capabilities for all available providers.
+    def get_provider_info_summary(self) -> Dict[str, Dict[str, Any]]:
+        """Get basic information about all available providers.
         
-        Useful for debugging and provider comparison.
+        Returns provider types and classes without instantiation.
         """
         summary = {}
         
-        for provider_type in self._PROVIDER_REGISTRY:
-            try:
-                # Create a dummy instance to get capabilities
-                provider_config = get_provider_config(provider_type.value)
-                if provider_config:
-                    provider = self.create_provider(provider_type, provider_config)
-                    summary[provider_type.value] = {
-                        "capabilities": provider.capabilities.__dict__,
-                        "model": provider_config.get("model", "unknown"),
-                        "enabled": provider_config.get("enabled", False),
-                    }
-            except Exception:
-                # Skip providers that can't be created (missing config, etc.)
-                summary[provider_type.value] = {"error": "Failed to create instance"}
+        for provider_type, provider_class in self._PROVIDER_REGISTRY.items():
+            summary[provider_type.value] = {
+                "provider_class": provider_class.__name__,
+                "module": provider_class.__module__,
+            }
         
         return summary 

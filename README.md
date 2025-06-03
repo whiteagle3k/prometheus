@@ -1,82 +1,84 @@
 # Prometheus ✨
 ![CI](https://github.com/whiteagle3k/prometheus/actions/workflows/ci.yml/badge.svg)
 
-Identity-driven AI framework with dual-model architecture, intelligent routing, conversational memory, and comprehensive debugging capabilities.
+Entity-based AI framework with clean architecture, dual-model intelligence, and generic core components.
 
 ## Why Prometheus?
 
+- **Entity-based Design**: Clean separation between framework core and agent implementations
+- **Generic Core Components**: Reusable LocalLLM, router, and memory systems
 - **Dual-Model Architecture**: Fast utility model + powerful reasoning model → optimal performance
 - **Cost-effective**: Local "brain" handles 85% of conversations → cheap and private
 - **Smart routing**: External LLMs only when local model needs help  
-- **Identity-driven**: Agent personality configured in JSON → easy to extend
-- **Conversational memory**: Persistent context with vector storage and semantic filtering
-- **Enhanced debugging**: Comprehensive visibility into model usage and decision-making
+- **Clean architecture**: No coupling between core framework and specific entities
+- **English-first system**: Consistent internal language with multilingual responses
 - **Robust parsing**: Clean responses without internal field contamination
 
 ## Meet Aletheia 👩
 
-Aletheia is our first female AI agent - a thoughtful research assistant with:
-- **Multilingual**: Fluent Russian and English with proper grammar
+Aletheia is our first autonomous AI entity - a thoughtful research assistant with:
+- **Entity-based**: Built using the generic Prometheus framework
+- **Multilingual**: Fluent Russian and English with proper feminine grammar forms
 - **Self-aware**: Knows when to ask external experts for help
 - **Context-aware**: Remembers conversations and preserves topic continuity
 - **Learning**: Improves through reflection and experience
 - **Personal**: Remembers user data and provides personalized responses
-- **Instant recall**: Zero-latency access to user information
 - **Clean responses**: Professional output without technical contamination
 
-## Architecture
+## Entity-Based Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   User Input    │───▶│   Orchestrator   │───▶│   Response      │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                               │
-                    ┌──────────┼──────────┐
-                    ▼          ▼          ▼
-            ┌───────────┐ ┌─────────┐ ┌──────────┐
-            │ Identity  │ │ Memory  │ │   LLM    │
-            │   JSON    │ │ System  │ │ Router   │
-            └───────────┘ └─────────┘ └──────────┘
-                              │           │
-                    ┌─────────┼─────┐     │
-                    ▼         ▼     ▼     ▼
-            ┌──────────┐ ┌────────┐ ┌──────────────┐
-            │ Vector   │ │ User   │ │ Utility LLM  │
-            │ Memory   │ │Profile │ │(Classification)│
-            └──────────┘ └────────┘ └──────────────┘
-                                          │
-                              ┌───────────┴───────────┐
-                              ▼                       ▼
-                      ┌───────────────┐      ┌──────────────┐
-                      │   Local LLM   │      │ External LLM │
-                      │(Phi-3 Medium) │      │(Claude/GPT-4)│
-                      └───────────────┘      └──────────────┘
+        ┌─────────────────┐
+        │   Prometheus    │
+        │   Framework     │
+        │     (Core)      │
+        └─────────────────┘
+                │
+    ┌───────────┼───────────┐
+    ▼           ▼           ▼
+┌─────────┐ ┌─────────┐ ┌─────────┐
+│Aletheia │ │ Agent B │ │ Agent C │
+│ Entity  │ │ Entity  │ │ Entity  │
+└─────────┘ └─────────┘ └─────────┘
+    │
+    ▼
+┌────────────────────────────────────┐
+│         Core Framework             │
+├──────────┬──────────┬──────────────┤
+│BaseEntity│ LocalLLM │ LLMRouter    │
+│(Generic) │(Generic) │ (Generic)    │
+└──────────┴──────────┴──────────────┘
+    │           │           │
+    ▼           ▼           ▼
+┌─────────┐ ┌─────────┐ ┌─────────────┐
+│Processing│ │ Memory  │ │ External    │
+│Pipeline │ │ System  │ │ LLM Clients │
+└─────────┘ └─────────┘ └─────────────┘
 ```
 
 ## Core Features
 
+### 🏗️ Clean Architecture
+- **Entity-based Design**: Autonomous entities with their own identities
+- **Generic Core**: Reusable components work with any entity configuration
+- **Separation of Concerns**: Core framework + entity implementations
+- **No Coupling**: Framework components don't know about specific entities
+- **Dependency Injection**: Identity config passed to core components
+
 ### 🧠 Intelligence & Memory
 - **Dual-Model System**: Utility model (phi-3-mini) for fast classification + main model for reasoning
-- **Identity Management**: JSON-based personality configuration
+- **Generic LocalLLM**: Works with any entity's identity configuration
+- **English-first System**: Consistent internal language, multilingual responses
 - **Meta-cognitive Routing**: Self-assessment for smart LLM selection  
 - **Vector Memory**: RAG-powered conversation history with semantic filtering
 - **User Profiles**: Automatic extraction and storage of personal data
-- **Instant Data Queries**: Zero-latency access to user information
 
 ### 💬 Conversation & Context
-- **Reference Resolution**: Understands "it", "that", "tell me more"
+- **Clean Response Format**: Simple `ANSWER`, `CONFIDENCE`, `REASONING` structure
 - **Topic Preservation**: Maintains conversation continuity and context flow
-- **Multilingual Context**: Seamless Russian/English conversation flow
+- **Multilingual Context**: Seamless language switching in responses
 - **Personalized Responses**: Context-aware using stored user data
-- **Clean Output**: Professional responses without technical field contamination
-
-### 🏗️ Architecture & Processing
-- **Modular Design**: Clean separation of concerns with configurable components
-- **Dual-Model Performance**: 20x faster classifications with zero context pollution
-- **Enhanced Debugging**: Comprehensive utility model usage visibility
-- **Processing Pipeline**: Config-driven text analysis with JSON patterns
-- **Reflection Engine**: Self-improvement through experience analysis
-- **Cost Optimization**: ~$0.01-0.03 per external consultation
+- **Professional Output**: No technical field contamination in user responses
 
 ## Quick Start (macOS)
 
@@ -85,35 +87,31 @@ git clone https://github.com/whiteagle3k/prometheus.git
 cd prometheus
 ./scripts/install_mac.sh
 ./scripts/download_models.sh  # Downloads both required models
-poetry run aletheia
+poetry run python prometheus.py --entity aletheia
 ```
 
 ## Configuration
 
-### Model Configuration
-Both models are configured in `aletheia/identity/identity.json`:
+### Entity Configuration
+Each entity has its own identity configuration:
 ```json
 {
+  "name": "Aletheia",
+  "llm_instructions": "You are Aletheia, a female autonomous technical agent. When responding in Russian, always use feminine language forms: готова (not готов), рада (not рад)...",
+  "personality": {
+    "summary": "Female autonomous research agent"
+  },
   "module_paths": {
     "local_model_gguf": "models/Phi-3-medium-4k-instruct-Q4_K_M.gguf",
     "utility_model_gguf": "models/phi-3-mini-3.8b-q4_k.gguf",
     "memory_dir": "storage/chroma"
-  }
-}
-```
-
-### Identity Configuration
-Agent personality is defined in `aletheia/identity/identity.json`:
-```json
-{
-  "name": "Aletheia",
-  "identity": {
-    "summary": "Female autonomous research agent",
-    "personality": ["Thoughtful", "Precise", "Helpful"]
   },
   "translations": {
     "ru": {
-      "llm_instructions": "Ты — Алетейя, женский ИИ-агент..."
+      "greeting_templates": {
+        "casual": "Привет! Как дела?",
+        "professional": "Здравствуйте! Я {name}, готова помочь."
+      }
     }
   }
 }
@@ -126,179 +124,117 @@ Agent personality is defined in `aletheia/identity/identity.json`:
 
 ## Usage Examples
 
-### Dual-Model Architecture in Action
+### Entity-based Interaction
 ```
 🧑 You: что такое Сфера Дайсона?
 
 🔧 Utility model: Classifying query for memory filtering...
 🔧 Query categorized as: technical
-🔧 Utility model: Categorizing 8 memories...
-🔧 → technical, conversational, technical
-🔧 Utility model: Filtering complete. 5/8 memories passed filtering
+🔧 LocalLLM: Using English system instructions
+🔧 LocalLLM: Generating Russian response with feminine forms
 
 🤖 Aletheia: Сфера Дайсона — это гипотетическое масштабное сооружение...
 💭 Thoughts: 2.1s | Route: local | Classifications: 60ms
 ```
 
-### Clean Response Output
+### Clean Generic Response Format
 ```
 🧑 You: как тебя зовут?
-🤖 Aletheia: Здравствуй! Меня зовут Алетейя. Я рада встрече с вами.
-✅ Clean response: No contamination detected
-💭 Thoughts: 1.8s | Route: local | Parsing: Fixed
+🤖 Aletheia: Здравствуйте! Меня зовут Алетейя, я готова помочь.
+✅ Clean response: No technical contamination
+💭 LocalLLM: Generic format, entity-specific content
 ```
 
-### Context Preservation
-```
-🧑 You: А сейчас возможно её построить?
-🤖 Aletheia: Да, в теории, можно построить Сферу Дайсона, но это потребует огромных технологических достижений...
-📝 Context preserved: "её" correctly referenced Dyson Sphere from previous question
-💭 Thoughts: 2.4s | Route: local | Topic continuity: Working
-```
-
-### Performance Monitoring
+### Generic System Design
 ```
 🧑 You: status
-📊 Agent Status: {
-  "memory_stats": {"total_memories": 45, "utility_classifications": 120},
-  "router_health": {"local_model": true, "utility_model": true},
-  "dual_model_performance": {
-    "utility_speed": "60-140ms", 
-    "classification_accuracy": "95%",
-    "context_pollution": "0%"
-  }
+📊 Framework Status: {
+  "entity": "AletheiaEntity",
+  "identity_loaded": true,
+  "core_components": {
+    "local_llm": "generic, no entity coupling",
+    "router": "entity-agnostic routing",
+    "memory": "reusable vector store"
+  },
+  "architecture": "clean separation of concerns"
 }
 ```
 
 ## CLI Commands
 
 - `quit` - Exit gracefully
-- `status` - Show diagnostics and dual-model performance stats
+- `status` - Show entity and framework diagnostics
 - `reset` - Clear memory and conversation history  
 - `context` - Display recent conversation
 - `plan: <task>` - Force planning mode for complex tasks
-
-## Latest Achievements ✨
-
-### Dual-Model Architecture
-- **Utility Model**: Fast phi-3-mini for classification (60-140ms)
-- **Main Model**: Powerful phi-3-medium for reasoning
-- **Performance**: 20x faster utility tasks, zero context pollution
-- **Configuration**: Both models managed through identity.json
-
-### Enhanced Parsing & Output
-- **Clean Responses**: Eliminated all field contamination (CONFIDENCE, REASONING, etc.)
-- **Professional Output**: No technical markers in user-facing responses
-- **Robust Extraction**: Multiple parsing strategies with contextual fallbacks
-
-### Improved Context & Memory
-- **Topic Preservation**: Maintains conversation continuity across questions
-- **Semantic Filtering**: Intelligent memory categorization and relevance scoring
-- **Enhanced Debug**: Comprehensive visibility into utility model operations
-
-### Better Routing Intelligence
-- **Self-Assessment**: Local model evaluates its own confidence
-- **Validation Rules**: Fallback routing for inconsistent assessments
-- **Scientific Topics**: Proper routing for technical/scientific questions
-
-## Roadmap
-
-### Phase 1: Foundation ✅
-- [x] Aletheia personality and identity system
-- [x] Meta-cognitive routing with self-assessment
-- [x] Vector memory with conversation context
-- [x] Multilingual support (Russian/English)
-- [x] Modular processing pipeline (config-driven patterns)
-- [x] User data extraction and profile management
-- [x] Instant user data queries with zero latency
-- [x] **Dual-model architecture with utility LLM**
-- [x] **Enhanced parsing and clean response output**
-- [x] **Topic preservation and context continuity**
-- [x] **Comprehensive debugging and monitoring**
-
-### Phase 2: Enhancement 🔄
-- [ ] Advanced context relationship graphs
-- [ ] Multi-agent template system
-- [ ] Enhanced memory compression
-- [ ] Domain-specific knowledge routing
-- [ ] Advanced user preference learning
-- [ ] Model performance optimization
-
-### Phase 3: Ecosystem 🚀
-- [ ] Plugin architecture for specialized agents
-- [ ] Multi-agent collaboration protocols
-- [ ] Cross-platform deployment (Windows/Linux)
-- [ ] Community agent marketplace
 
 ## File Structure
 
 ```
 prometheus/
-├── aletheia/                   # Main agent implementation
-│   ├── identity/              # JSON-based personality system
-│   ├── processing/            # Modular text processing
-│   │   ├── configs/           # Pattern configurations (JSON)
-│   │   └── extractors.py      # Data extraction engines
-│   ├── memory/                # Storage and retrieval systems
-│   │   ├── vector_store.py    # Vector memory storage
-│   │   ├── hierarchical_store.py # Advanced memory management
-│   │   └── user_profile_store.py # Personal data storage
-│   ├── llm/                   # Hybrid routing system
-│   └── agent/                 # Orchestrator and context management
-├── docs/                      # Detailed documentation
-├── tests/                     # Comprehensive test suite
-└── scripts/                   # Setup and utilities
+├── core/                      # Generic framework components
+│   ├── base_entity.py         # Abstract base class
+│   ├── llm/
+│   │   ├── local_llm.py       # Generic local LLM wrapper
+│   │   ├── utility_llm.py     # Fast utility model
+│   │   ├── router.py          # Intelligent routing
+│   │   └── external_llm.py    # External API clients
+│   ├── memory/                # Memory systems
+│   ├── context/               # Context management
+│   └── processing/            # Text processing modules
+├── entities/                  # Entity implementations
+│   ├── __init__.py           # Entity registry
+│   └── aletheia/             # Aletheia entity
+│       ├── __init__.py       # AletheiaEntity class
+│       └── identity/
+│           └── identity.json # Aletheia configuration
+├── prometheus.py             # CLI interface
+├── tests/                    # Test suite
+└── models/                   # Model storage
 ```
 
-## New in v0.4.0
+## Latest Achievements ✨
 
-### 🎯 **User Data Intelligence**
-- **Automatic extraction** of personal information from natural conversation
-- **Instant data queries** with zero-latency profile access
-- **Personalized responses** using stored user context
+### Clean Entity-Based Architecture
+- **Generic Core**: Framework components work with any entity
+- **No Coupling**: Core doesn't know about specific entities
+- **Clean Separation**: Framework vs entity implementation
+- **Dependency Injection**: Identity config passed to components
 
-### 🏗️ **Modular Architecture** 
-- **Config-driven processing** with JSON pattern definitions
-- **Clean separation** of concerns (memory, processing, routing)
-- **Extensible extractors** for different data types
+### Improved LocalLLM Design
+- **Generic Implementation**: Works with any identity configuration
+- **English-first System**: Consistent internal language
+- **Simple Response Format**: `ANSWER`, `CONFIDENCE`, `REASONING`
+- **No Routing Logic**: Pure text generation component
 
-### 💾 **Enhanced Memory System**
-- **User profile storage** in dedicated memory subsystem
-- **Hierarchical memory** with automatic tiering
-- **Profile-aware context** integration
+### Enhanced Parsing & Output
+- **Clean Responses**: Eliminated all field contamination
+- **Professional Output**: No technical markers in user-facing responses
+- **Robust Extraction**: Multiple parsing strategies with contextual fallbacks
+- **Topic Preservation**: Maintains conversation continuity
 
-## Documentation
+### Better Framework Design
+- **Reusable Components**: Generic LocalLLM, router, memory
+- **Entity Registry**: Easy addition of new agent types
+- **Clean Configuration**: Identity-driven setup per entity
+- **Maintainable Code**: Proper separation of concerns
 
-- **[Architecture](docs/architecture.md)** - Detailed system design and philosophy
-- **[Memory System](docs/memory.md)** - Three-tier memory architecture and safety features
-- **[Configuration](docs/configuration.md)** - Complete setup and customization guide  
-- **[Troubleshooting](docs/troubleshooting.md)** - Common issues and solutions
+## Development
 
-## Contributing
+### Adding New Entities
+```python
+class MyAgentEntity(BaseEntity):
+    IDENTITY_PATH = Path(__file__).parent / "identity"
+    
+    def _load_identity(self) -> Dict[str, Any]:
+        # Load your entity's specific configuration
+        # Return complete identity config
+```
 
+### Testing
 ```bash
-# Development setup
-git clone https://github.com/yourusername/prometheus.git
-cd prometheus
-./scripts/install_mac.sh
-
-# Run tests
-poetry run pytest tests/ -v
-
-# Code quality
-poetry run ruff check aletheia/
+poetry run pytest tests/
 ```
 
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-**Ready to meet Aletheia?** 🚀
-
-```bash
-poetry run aletheia
-```
-
-*Prometheus - Identity-driven AI agents with smart routing and conversational memory.*
+### Contributing
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines and the clean architecture principles.

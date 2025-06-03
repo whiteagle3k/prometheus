@@ -1,19 +1,26 @@
-"""Utility LLM implementation using small model for fast, simple tasks."""
+"""
+Fast LLM for classification and utility tasks.
+
+Provides fast classification capabilities using a smaller model
+for tasks like query categorization, memory filtering, and concept extraction.
+"""
 
 import asyncio
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, List, Optional
 
 try:
     from llama_cpp import Llama
 except ImportError:
-    print("Warning: llama-cpp-python not installed. Utility LLM will not work.")
+    print("Warning: llama-cpp-python not installed. Fast LLM will not work.")
     Llama = None
 
 from ..config import config
-from ..identity import identity
+# TODO: Remove direct identity import - should be passed from entity
+# from ..identity import identity
 
 
-class UtilityLLM:
+class FastLLM:
     """Small, fast LLM for utility tasks like classification, extraction, preprocessing."""
 
     def __init__(self) -> None:

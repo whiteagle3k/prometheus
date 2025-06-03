@@ -2,7 +2,8 @@
 
 from typing import Any, Dict, List, Optional
 
-from ...identity.loader import get_external_llm_config
+# TODO: Remove identity dependency - configuration should be passed from entity
+# from ...identity.loader import get_external_llm_config
 from .base import ExternalLLMProvider, ProviderType
 from .factory import ProviderFactory
 
@@ -14,16 +15,20 @@ class ExternalLLMManager:
     Follows the Strategy pattern - providers are interchangeable strategies.
     """
 
-    def __init__(self) -> None:
-        """Initialize the manager."""
+    def __init__(self, providers_config: Optional[Dict[str, Any]] = None) -> None:
+        """Initialize the manager.
+        
+        Args:
+            providers_config: Configuration dictionary for providers
+        """
         self._providers: Dict[ProviderType, ExternalLLMProvider] = {}
         self._initialized = False
+        self._config = providers_config or {}
         self._setup_providers()
 
     def _setup_providers(self) -> None:
-        """Setup available providers based on identity configuration."""
-        external_config = get_external_llm_config()
-        providers_config = external_config.get("providers", {})
+        """Setup available providers based on configuration."""
+        providers_config = self._config.get("providers", {})
         
         for provider_name, provider_config in providers_config.items():
             if not provider_config.get("enabled", False):
@@ -57,7 +62,7 @@ class ExternalLLMManager:
         self._initialized = True
 
     async def get_best_available(self, prefer_provider: Optional[str] = None) -> Optional[ExternalLLMProvider]:
-        """Get the best available external LLM based on identity preferences.
+        """Get the best available external LLM based on configuration preferences.
         
         Args:
             prefer_provider: Optional provider name to prefer ("openai", "anthropic")
@@ -67,9 +72,8 @@ class ExternalLLMManager:
         """
         await self.initialize_all()
         
-        external_config = get_external_llm_config()
-        primary_provider = prefer_provider or external_config.get("primary_provider", "openai")
-        fallback_provider = external_config.get("fallback_provider", "anthropic")
+        primary_provider = prefer_provider or self._config.get("primary_provider", "openai")
+        fallback_provider = self._config.get("fallback_provider", "anthropic")
         
         # Try primary provider first
         primary_provider_instance = await self._get_provider_by_name(primary_provider)
@@ -153,12 +157,11 @@ class ExternalLLMManager:
         return [pt.value for pt in healthy_types]
 
     def get_provider_preferences(self) -> Dict[str, Any]:
-        """Get provider preferences from identity configuration."""
-        external_config = get_external_llm_config()
+        """Get provider preferences from configuration."""
         return {
-            "primary_provider": external_config.get("primary_provider", "openai"),
-            "fallback_provider": external_config.get("fallback_provider", "anthropic"),
-            "routing_preferences": external_config.get("routing_preferences", {}),
+            "primary_provider": self._config.get("primary_provider", "openai"),
+            "fallback_provider": self._config.get("fallback_provider", "anthropic"),
+            "routing_preferences": self._config.get("routing_preferences", {}),
             "configured_providers": self.list_available_provider_names(),
         }
 

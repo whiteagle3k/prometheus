@@ -2,11 +2,12 @@
 
 ## Overview
 
-Prometheus is designed around four core principles:
-1. **Identity-driven configuration** - Agent personalities defined in JSON
-2. **Dual-model intelligence** - Fast utility model + powerful reasoning model
-3. **Persistent conversational memory** - RAG-powered context with semantic filtering
-4. **Clean professional output** - Robust parsing without technical contamination
+Prometheus is an entity-based AI framework designed around clean architectural principles:
+1. **Entity-driven design** - Autonomous entities with their own identities and behaviors
+2. **Clean separation of concerns** - Core framework + entity implementations
+3. **Dual-model intelligence** - Fast utility model + powerful reasoning model
+4. **Generic core components** - Reusable LocalLLM, router, and memory systems
+5. **English-first system prompts** - Consistent internal language with multilingual responses
 
 ## System Architecture
 
@@ -14,254 +15,256 @@ Prometheus is designed around four core principles:
                     ┌─────────────────┐
                     │   Prometheus    │
                     │   Framework     │
+                    │     (Core)      │
                     └─────────────────┘
                             │
         ┌───────────────────┼───────────────────┐
         ▼                   ▼                   ▼
    ┌─────────┐         ┌─────────┐         ┌─────────┐
    │Aletheia │         │ Agent B │         │ Agent C │
-   │ (Active)│         │(Future) │         │(Future) │
+   │ Entity  │         │ Entity  │         │ Entity  │
    └─────────┘         └─────────┘         └─────────┘
+        │                    │                    │
+        ▼                    ▼                    ▼
+┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│ Identity     │    │ Identity     │    │ Identity     │
+│ Config       │    │ Config       │    │ Config       │
+└──────────────┘    └──────────────┘    └──────────────┘
         │
         ▼
-┌──────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   User Input     │───▶│   Orchestrator   │───▶│   Response      │
-└──────────────────┘    └──────────────────┘    └─────────────────┘
-                               │
-                               ▼
-                     ┌──────────────────┐
-                     │ Identity System  │
-                     │ (JSON Config)    │
-                     └──────────────────┘
-                               │
-                     ┌─────────┼─────────┐
-                     ▼         ▼         ▼
-             ┌──────────┐ ┌────────┐ ┌──────────┐
-             │Processing│ │ Memory │ │LLM Router│
-             │ Pipeline │ │ System │ │ (Smart)  │
-             └──────────┘ └────────┘ └──────────┘
-                   │         │            │
-                   ▼         ▼            ▼
-             ┌──────────┐ ┌────────┐ ┌──────────────┐
-             │Config-   │ │ User   │ │ Utility LLM  │
-             │Driven    │ │Profile │ │(phi-3-mini)  │
-             │Patterns  │ │Store   │ │Classifications│
-             └──────────┘ └────────┘ └──────────────┘
-                             │            │
-                             ▼            ▼
-                     ┌────────────┐ ┌──────────┐
-                     │Vector Store│ │ Local    │
-                     │(ChromaDB)  │ │ LLM      │
-                     └────────────┘ │(Phi-3M)  │
-                             │      └──────────┘
-                             ▼            │
-                     ┌──────────────────┐ ▼
-                     │   Reflection     │ ┌──────────┐
-                     │    Engine        │ │External  │
-                     └──────────────────┘ │LLM       │
-                                          └──────────┘
+┌──────────────────────────────────────────────────────────┐
+│                Core Framework                            │
+├─────────────┬─────────────┬─────────────┬───────────────┤
+│ BaseEntity  │ LocalLLM    │ LLMRouter   │ Memory        │
+│ (Generic)   │ (Generic)   │ (Generic)   │ System        │
+└─────────────┴─────────────┴─────────────┴───────────────┘
+        │             │             │             │
+        ▼             ▼             ▼             ▼
+┌─────────────┐ ┌───────────┐ ┌───────────┐ ┌─────────────┐
+│Processing   │ │ Utility   │ │ External  │ │ Vector      │
+│ Pipeline    │ │ LLM       │ │ LLM       │ │ Store       │
+│             │ │(phi-mini) │ │ Clients   │ │ (ChromaDB)  │
+└─────────────┘ └───────────┘ └───────────┘ └─────────────┘
 ```
 
-## Core Components
+## Entity-Based Architecture
 
-### 1. Dual-Model Architecture ✨
-- **Utility Model (phi-3-mini)**: Fast classification and utility tasks (60-140ms)
-- **Main Model (phi-3-medium)**: Complex reasoning and response generation
-- **Zero Context Pollution**: Utility model operates independently
-- **Performance Boost**: 20x faster classifications, optimal resource usage
-- **Configuration**: Both models managed through `identity.json`
+### Core Framework Components (Generic)
 
-### 2. Identity Management System
-- **JSON-Based Configuration**: Complete agent identity in `aletheia/identity/identity.json`
-- **Model Path Management**: Unified configuration for both models
-- **English-Primary Design**: Core personality in English for optimal model performance
-- **Translation Layer**: Seamless multilingual interactions
-- **Template System**: Easy creation of new agent personalities
+#### 1. BaseEntity
+- **Purpose**: Abstract base class for all AI entities
+- **Responsibilities**: 
+  - Identity loading and management
+  - Core functionality (think, autonomous_loop, get_status)
+  - Framework integration (router, memory, context)
+- **Entity contracts**: Entities override `_load_identity()` and specify `IDENTITY_PATH`
 
-### 3. Enhanced Parsing & Output System ✨
-- **Clean Response Output**: Eliminated field contamination (CONFIDENCE, REASONING, etc.)
-- **Professional Responses**: No technical markers in user-facing text
-- **Robust Extraction**: Multiple parsing strategies with contextual fallbacks
-- **Topic Preservation**: Maintains conversation continuity and context flow
-- **Contextual Fallbacks**: Intelligent error handling without topic loss
+#### 2. LocalLLM (Generic)
+- **Purpose**: Generic local language model wrapper
+- **Clean design**: No entity-specific knowledge
+- **System prompts**: Always in English from identity config
+- **Response format**: Simple `ANSWER`, `CONFIDENCE`, `REASONING`
+- **No routing logic**: Pure text generation
 
-### 4. Intelligent Hybrid Routing
-- **Meta-Cognitive Assessment**: Local LLM decides when external help is needed
-- **Self-Assessment Validation**: Utility model assists in routing decisions
-- **Cost Optimization**: 85% local processing, 15% external consultation
-- **Scientific Accuracy**: Prevents misinformation through smart routing
-- **Enhanced Debug Output**: Comprehensive visibility into routing decisions
+#### 3. LLMRouter (Generic)
+- **Purpose**: Intelligent routing between local and external LLMs
+- **Responsibilities**: Route decisions, cost optimization, performance tracking
+- **Meta-cognitive**: Uses local LLM's confidence to make routing decisions
+- **Generic design**: Works with any entity's identity configuration
 
-### 5. Advanced Memory System
-- **Semantic Filtering**: Utility model provides fast query/memory categorization
-- **Vector-Based Retrieval**: RAG-powered memory with intelligent relevance scoring
-- **Category Matching**: Technical queries get technical memories, conversational get conversational
-- **Hierarchical Storage**: Automatic tiering (raw → summary → key facts)
-- **Context Continuity**: Maintains topic threads and reference resolution
-- **Learning Integration**: Stores successful interaction patterns with source attribution
+#### 4. Memory System (Generic)
+- **Vector Store**: ChromaDB-based semantic memory
+- **User Profiles**: Personal data extraction and storage
+- **Context Manager**: Conversation history and running summaries
+- **Processing Pipeline**: Configurable text processing modules
 
-### 6. User Data Intelligence System
-- **Automatic Extraction**: Pattern-based detection of personal information
-- **Real-time Storage**: Instant saving to user profiles
-- **Zero-latency Queries**: Direct profile access without LLM calls
-- **Personalized Context**: User data integration into conversations
-- **Privacy-first Design**: Local storage with encryption support
+### Entity Implementation (Specific)
 
-### 7. Comprehensive Debugging System ✨
-- **Utility Model Visibility**: Debug output for all utility model operations
-- **Performance Monitoring**: Speed tracking for classifications and memory operations
-- **Route Tracking**: Clear visibility into local vs external routing decisions
-- **Memory Analytics**: Detailed memory filtering and categorization insights
-- **Error Diagnostics**: Enhanced error handling with contextual information
+#### Aletheia Entity
+```python
+class AletheiaEntity(BaseEntity):
+    IDENTITY_PATH = Path(__file__).parent / "identity"
+    
+    def _load_identity(self) -> Dict[str, Any]:
+        # Load aletheia-specific configuration
+        # Merge with fallbacks
+        # Return complete identity config
+```
 
-## Agent Orchestrator Philosophy
+#### Entity Identity Configuration
+```json
+{
+  "name": "Aletheia",
+  "llm_instructions": "You are Aletheia, a female autonomous technical agent...",
+  "personality": {...},
+  "module_paths": {
+    "local_model_gguf": "models/Phi-3-medium-4k-instruct-Q4_K_M.gguf",
+    "utility_model_gguf": "models/phi-3-mini-3.8b-q4_k.gguf"
+  },
+  "translations": {
+    "ru": { ... }
+  }
+}
+```
 
-### The "Dual-Brain Smart Conductor" Approach
+## Core Principles
 
-**Traditional AI**: Single model tries to do everything
-- Context pollution from utility tasks
-- Slow operations for simple classifications
-- Risk of confident misinformation
-- Limited adaptability
+### 1. Clean Separation of Concerns
+- **Core framework**: Generic, reusable components
+- **Entity implementations**: Specific personalities and behaviors
+- **No coupling**: Core components don't know about specific entities
+- **Dependency injection**: Identity config passed to core components
 
-**Prometheus Dual-Model Approach**: Specialized models for specialized tasks
-- **Utility Brain**: Fast phi-3-mini for classifications (60-140ms)
-- **Reasoning Brain**: Powerful phi-3-medium for complex thoughts
-- **Smart Orchestration**: Knows when to ask external experts
-- **Memory Intelligence**: Semantic filtering and categorization
-- **Clean Output**: Professional responses without technical contamination
-- **Cost-Effective**: Optimal resource usage with intelligent routing
+### 2. English-First System Design
+- **System prompts**: Always in English for consistency
+- **Internal communication**: Framework operates in English
+- **User responses**: Generated in user's preferred language
+- **Translation layer**: Handled at entity level through identity config
+
+### 3. Generic Component Design
+- **LocalLLM**: Works with any identity configuration
+- **Router**: Entity-agnostic routing decisions
+- **Memory**: Generic storage and retrieval
+- **Processing**: Configurable patterns and filters
+
+## Dual-Model Architecture
+
+### Utility Model (phi-3-mini)
+- **Purpose**: Fast classifications and utility tasks
+- **Performance**: 60-140ms response times
+- **Operations**: Query categorization, memory filtering, concept expansion
+- **Independence**: Zero context pollution from main model
+
+### Main Model (phi-3-medium)
+- **Purpose**: Complex reasoning and response generation
+- **Performance**: 1-3s for thoughtful responses
+- **Operations**: Natural conversation, problem solving, self-assessment
+- **Context**: Enhanced with utility model insights
 
 ### Routing Strategy
-
-1. **User Data Check**: First check if it's a data query (0.00s response)
-2. **Query Classification**: Utility model categorizes query type (60ms)
-3. **Memory Filtering**: Semantic categorization and relevance scoring (140ms)
-4. **Self-Assessment**: Local LLM evaluates its competence
-5. **Profile Integration**: Include user data in context when relevant
-6. **Confidence Scoring**: Determines routing based on uncertainty
-7. **Scientific Detection**: Auto-routes factual/scientific questions
-8. **Context Awareness**: Considers conversation history and user profile
-9. **Clean Response**: Robust parsing removes technical contamination
-
-## Dual-Model Performance Architecture
-
-### Utility Model Operations (phi-3-mini)
-```
-Query → Utility Model → Classification/Filtering → Main Model Context
- 60ms      140ms           Fast Results              Clean Input
-```
-
-**Utility Tasks:**
-- Query categorization (conversational, technical, explanation)
-- Memory content classification
-- Semantic relevance scoring
-- Topic extraction
-- Query concept expansion
-
-### Main Model Operations (phi-3-medium)
-```
-Enhanced Context → Main Model → Structured Response → Clean Output
-  Rich Input        1-3s         Internal Fields      User Response
-```
-
-**Reasoning Tasks:**
-- Natural language conversation
-- Complex question answering
-- Context understanding
-- Self-assessment for routing
-- Response generation
+1. **Query Analysis**: Utility model categorizes the request
+2. **Memory Retrieval**: Semantic filtering and relevance scoring
+3. **Self-Assessment**: Main model evaluates its competence
+4. **Routing Decision**: Router chooses local vs external processing
+5. **Response Generation**: Clean, professional output
 
 ## Data Processing Architecture
 
-### Enhanced Memory Pipeline
-
+### Processing Pipeline (Configuration-Driven)
 ```
-Query → Utility Classification → Semantic Filtering → Relevance Scoring → Context
- 60ms        Technical/Conv.        Category Match         Boost/Penalty    Enhanced
+core/processing/
+├── configs/
+│   ├── contamination_filter.json
+│   ├── complexity_detector.json
+│   ├── user_data_extractor.json
+│   ├── reference_detector.json
+│   └── ... (other pattern configs)
+├── pipeline.py
+├── extractors.py
+├── detectors.py
+├── filters.py
+└── cleaners.py
 ```
 
 ### Clean Response Pipeline
-
 ```
 Raw Response → Contamination Filter → Field Removal → Context Fallback → Clean Output
-Structured      Remove Markers        Clean Fields     Topic Preserve    User Ready
-```
-
-### Configuration Structure
-
-```
-aletheia/
-├── identity/
-│   └── identity.json           # Dual-model configuration
-├── processing/configs/
-│   ├── user_data_extractor.json    # Personal data patterns
-│   ├── entity_extractor.json       # Topic/entity extraction  
-│   ├── name_extractor.json         # User name detection
-│   ├── reference_detector.json     # Context references
-│   ├── complexity_detector.json    # Task complexity assessment
-│   └── factual_validator.json      # Response validation
-└── llm/
-    ├── utility_llm.py          # Fast classification model
-    ├── local_llm.py            # Main reasoning model
-    └── router.py               # Intelligent routing
+  Structured     Remove Markers       Clean Fields    Topic Preserve    User Ready
 ```
 
 ## File Structure
 
 ```
 prometheus/
-├── aletheia/                    # Main agent implementation
-│   ├── identity/               # Identity management system
-│   │   ├── identity.json       # Agent personality + model configuration
-│   │   ├── loader.py          # Configuration loading
-│   │   └── validator.py       # Schema validation
-│   ├── processing/            # Modular text processing system
-│   │   ├── configs/           # JSON pattern configurations
-│   │   ├── extractors.py      # Data extraction engines
-│   │   ├── pipeline.py        # Processing pipeline
-│   │   └── *.py              # Processors (filters, detectors, etc.)
-│   ├── memory/                # Memory and persistence systems
-│   │   ├── vector_store.py    # ChromaDB wrapper
-│   │   ├── hierarchical_store.py # Advanced memory management
-│   │   ├── user_profile_store.py # User data storage
-│   │   └── summariser.py      # Memory compression
-│   ├── llm/                   # Language model management
-│   │   ├── router.py          # Intelligent routing logic
-│   │   ├── local_llm.py       # Main model wrapper (phi-3-medium)
-│   │   ├── utility_llm.py     # Fast utility model (phi-3-mini)
+├── core/                      # Generic framework components
+│   ├── __init__.py
+│   ├── base_entity.py         # Abstract base class
+│   ├── config.py              # Global configuration
+│   ├── llm/
+│   │   ├── local_llm.py       # Generic local LLM wrapper
+│   │   ├── utility_llm.py     # Fast utility model
+│   │   ├── router.py          # Intelligent routing
 │   │   └── external_llm.py    # External API clients
-│   └── agent/                 # Agent behavior
-│       ├── orchestrator.py    # Main orchestrator
-│       ├── context_manager.py # Conversation context
-│       ├── planner.py         # Task planning
-│       └── reflexion.py       # Self-reflection
-├── tests/                     # Comprehensive test suite
-├── scripts/                   # Setup and utility scripts
-├── docs/                      # Documentation
-└── models/                    # Dual-model storage
-    ├── Phi-3-medium-4k-instruct-Q4_K_M.gguf    # Main reasoning model
-    └── phi-3-mini-3.8b-q4_k.gguf               # Utility classification model
+│   ├── memory/
+│   │   ├── vector_store.py    # ChromaDB wrapper
+│   │   ├── controller.py      # Memory management
+│   │   ├── user_profile_store.py
+│   │   └── summariser.py
+│   ├── context/
+│   │   └── context_manager.py # Conversation context
+│   └── processing/            # Text processing modules
+│       ├── configs/           # JSON pattern configurations
+│       ├── pipeline.py
+│       ├── extractors.py
+│       ├── detectors.py
+│       ├── filters.py
+│       └── cleaners.py
+├── entities/                  # Entity implementations
+│   ├── __init__.py           # Entity registry
+│   └── aletheia/             # Aletheia entity
+│       ├── __init__.py       # AletheiaEntity class
+│       └── identity/
+│           └── identity.json # Aletheia configuration
+├── prometheus.py             # CLI interface
+├── tests/                    # Test suite
+├── docs/                     # Documentation
+└── models/                   # Model storage
+    ├── Phi-3-medium-4k-instruct-Q4_K_M.gguf
+    └── phi-3-mini-3.8b-q4_k.gguf
 ```
 
 ## Performance Characteristics
 
-### Dual-Model Performance
+### Response Times
+- **User Data Queries**: 0ms (instant from profile storage)
 - **Utility Operations**: 60-140ms (classifications, filtering)
-- **Main Model Operations**: 1-3s (reasoning, conversation)
+- **Local Processing**: 1-3s (conversation, reasoning)
+- **External Consultation**: 3-8s (for complex/scientific queries)
+
+### Resource Usage
+- **Memory**: ~8GB RAM for dual-model operation
+- **Storage**: ~10GB for models and data
+- **GPU**: Metal acceleration on Apple Silicon
+- **Cost**: 85% local processing, 15% external API calls
+
+### Routing Efficiency
+- **Local Processing**: 85% of interactions
+- **External Consultation**: 15% for accuracy-critical tasks
 - **Context Pollution**: 0% (independent utility operations)
-- **Speed Improvement**: 20x faster for utility tasks
-- **Memory Efficiency**: Enhanced semantic filtering reduces irrelevant memories
+- **Speed Improvement**: 20x faster classifications
 
-### Typical Usage Patterns
-- **User Data Queries**: 0.00s instant response from profile storage
-- **Local Processing**: 85% of interactions (greetings, simple questions)
-- **External Consultation**: 15% for scientific/factual accuracy
-- **Memory Efficiency**: Automatic compression keeps database under 100MB
-- **Response Quality**: Clean professional output without contamination
+## Multi-language Support
 
-### Hardware Requirements
-- **Minimum**: 16GB RAM, Apple Silicon M1/M2/M3
-- **Recommended**: 32GB+ RAM for optimal dual-model performance
-- **Storage**: ~10GB (both models + data)
-- **GPU**: Metal acceleration for optimal performance 
+### Architecture
+- **System Level**: English-only for consistency
+- **Entity Level**: Multilingual identity configurations
+- **Response Level**: User's preferred language
+- **Translation**: Handled through entity identity config
+
+### Example (Russian Support)
+```json
+{
+  "llm_instructions": "You are Aletheia, a female autonomous technical agent. When responding in Russian, always use feminine language forms: готова (not готов), рада (not рад)...",
+  "translations": {
+    "ru": {
+      "greeting_templates": {
+        "casual": "Привет! Как дела?",
+        "professional": "Здравствуйте! Я {name}, готова помочь."
+      }
+    }
+  }
+}
+```
+
+## Hardware Requirements
+
+### Minimum
+- **RAM**: 16GB
+- **Storage**: 20GB free space
+- **CPU**: Apple Silicon M1/M2/M3 or equivalent
+- **GPU**: Metal acceleration support
+
+### Recommended
+- **RAM**: 32GB+ for optimal dual-model performance
+- **Storage**: 50GB+ for extended memory and models
+- **Network**: Stable internet for external LLM access 
