@@ -1,15 +1,16 @@
 # Prometheus ✨
 ![CI](https://github.com/whiteagle3k/prometheus/actions/workflows/ci.yml/badge.svg)
 
-Entity-based AI framework with clean architecture, dual-model intelligence, and generic core components.
+Entity-based AI framework with clean architecture, **Fast LLM routing intelligence**, and robust cross-LLM context coordination.
 
 ## Why Prometheus?
 
 - **Entity-based Design**: Clean separation between framework core and agent implementations
-- **Generic Core Components**: Reusable LocalLLM, router, and memory systems
-- **Dual-Model Architecture**: Fast utility model + powerful reasoning model → optimal performance
+- **Fast LLM Routing Oracle**: Unbiased routing decisions with context isolation
+- **Cross-LLM Context Coordination**: Seamless context flow between utility, local, and external models
+- **Triple-Model Architecture**: Fast routing model + local reasoning + external consultation → optimal intelligence
 - **Cost-effective**: Local "brain" handles 85% of conversations → cheap and private
-- **Smart routing**: External LLMs only when local model needs help  
+- **Context Isolation**: Zero contamination between routing decisions
 - **Clean architecture**: No coupling between core framework and specific entities
 - **English-first system**: Consistent internal language with multilingual responses
 - **Robust parsing**: Clean responses without internal field contamination
@@ -18,45 +19,57 @@ Entity-based AI framework with clean architecture, dual-model intelligence, and 
 
 Aletheia is our first autonomous AI entity - a thoughtful research assistant with:
 - **Entity-based**: Built using the generic Prometheus framework
+- **Smart Routing**: Fast LLM oracle makes unbiased LOCAL vs EXTERNAL decisions
+- **Context-aware**: Perfect memory of conversations with zero context leakage
 - **Multilingual**: Fluent Russian and English with proper feminine grammar forms
 - **Self-aware**: Knows when to ask external experts for help
-- **Context-aware**: Remembers conversations and preserves topic continuity
 - **Learning**: Improves through reflection and experience
 - **Personal**: Remembers user data and provides personalized responses
 - **Clean responses**: Professional output without technical contamination
 
-## Entity-Based Architecture
+## Enhanced Architecture with Fast LLM Routing
 
 ```
-        ┌─────────────────┐
-        │   Prometheus    │
-        │   Framework     │
-        │     (Core)      │
-        └─────────────────┘
-                │
-    ┌───────────┼───────────┐
-    ▼           ▼           ▼
-┌─────────┐ ┌─────────┐ ┌─────────┐
-│Aletheia │ │ Agent B │ │ Agent C │
-│ Entity  │ │ Entity  │ │ Entity  │
-└─────────┘ └─────────┘ └─────────┘
-    │
-    ▼
-┌────────────────────────────────────┐
-│         Core Framework             │
-├──────────┬──────────┬──────────────┤
-│BaseEntity│ LocalLLM │ LLMRouter    │
-│(Generic) │(Generic) │ (Generic)    │
-└──────────┴──────────┴──────────────┘
-    │           │           │
-    ▼           ▼           ▼
-┌─────────┐ ┌─────────┐ ┌─────────────┐
-│Processing│ │ Memory  │ │ External    │
-│Pipeline │ │ System  │ │ LLM Clients │
-└─────────┘ └─────────┘ └─────────────┘
+    User Query
+        │
+        ▼
+┌──────────────────┐    ┌─────────────────────┐
+│   Fast LLM       │───▶│   LLM Router        │
+│   (phi-3-mini)   │    │   (Decision Maker)  │
+│   • Independent  │    │                     │
+│   • Context-Free │    │   LOCAL ←→ EXTERNAL │
+│   • Unbiased    │    │                     │
+└──────────────────┘    └─────────────────────┘
+                                  │
+                    ┌─────────────┼─────────────┐
+                    ▼             ▼             ▼
+            ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+            │   Local LLM  │ │ External LLM │ │   Memory     │
+            │  (Phi-3-M)   │ │  (OpenAI)    │ │   System     │
+            │              │ │              │ │              │
+            │ Context ✓    │ │ Context ✓    │ │ Context ✓    │
+            └──────────────┘ └──────────────┘ └──────────────┘
+                                  │
+                                  ▼
+                            Clean Response
+                         (No Contamination)
 ```
 
 ## Core Features
+
+### 🎯 Fast LLM Routing Intelligence
+- **Unbiased Routing Oracle**: Dedicated Fast LLM (phi-3-mini) makes routing decisions
+- **Context Isolation**: Each routing decision is independent with zero contamination
+- **Smart Decision Making**: LOCAL for conversations, EXTERNAL for scientific topics
+- **Performance Optimized**: 12 GPU layers, 2048 context, fast classification
+- **Fallback Robustness**: Rule-based routing when Fast LLM unavailable
+
+### 🔄 Cross-LLM Context Coordination
+- **Seamless Context Flow**: Clean context passing between all LLM components
+- **Zero Context Leakage**: Routing decisions don't contaminate each other
+- **Memory Integration**: Context preserved across conversations and sessions
+- **User Profile Continuity**: Personal data flows correctly through all components
+- **Clean Context Preparation**: Focused context extraction for external consultations
 
 ### 🏗️ Clean Architecture
 - **Entity-based Design**: Autonomous entities with their own identities
@@ -66,14 +79,15 @@ Aletheia is our first autonomous AI entity - a thoughtful research assistant wit
 - **Dependency Injection**: Identity config passed to core components
 
 ### 🧠 Intelligence & Memory
-- **Dual-Model System**: Utility model (phi-3-mini) for fast classification + main model for reasoning
+- **Triple-Model System**: Routing (phi-3-mini) + Local (Phi-3-M) + External (OpenAI)
 - **Generic LocalLLM**: Works with any entity's identity configuration
 - **English-first System**: Consistent internal language, multilingual responses
-- **Meta-cognitive Routing**: Self-assessment for smart LLM selection  
+- **Meta-cognitive Routing**: Independent assessment for smart LLM selection  
 - **Vector Memory**: RAG-powered conversation history with semantic filtering
 - **User Profiles**: Automatic extraction and storage of personal data
 
 ### 💬 Conversation & Context
+- **Perfect Context Flow**: Zero contamination between routing and content generation
 - **Clean Response Format**: Simple `ANSWER`, `CONFIDENCE`, `REASONING` structure
 - **Topic Preservation**: Maintains conversation continuity and context flow
 - **Multilingual Context**: Seamless language switching in responses
@@ -87,7 +101,7 @@ Aletheia is our first autonomous AI entity - a thoughtful research assistant wit
 git clone https://github.com/whiteagle3k/prometheus.git
 cd prometheus
 ./scripts/install_mac.sh
-./scripts/download_models.sh  # Downloads both required models
+./scripts/download_models.sh  # Downloads all required models
 
 # Start Aletheia entity
 poetry run python prometheus.py aletheia
@@ -100,7 +114,9 @@ Once running, you can interact with Aletheia in natural language:
 ```
 🤖 Aletheia: Привет! Я Алетейя, готова помочь. Как дела?
 🧑 You: расскажи про квантовую механику
-🤖 Aletheia: [Intelligent routing to external expert, then personalized response]
+🔧 Fast LLM routing: EXTERNAL (scientific topic)
+🌐 Router: External LLM selected
+🤖 Aletheia: [Expert consultation, then personalized response with feminine forms]
 ```
 
 ## Documentation
@@ -108,10 +124,10 @@ Once running, you can interact with Aletheia in natural language:
 For detailed information, see our comprehensive documentation:
 
 ### 📚 Core Documentation
-- **[Architecture Guide](docs/architecture.md)** - Framework design, entity system, and component relationships
-- **[Memory System](docs/memory.md)** - Vector storage, user profiles, context management, and three-tier memory
-- **[Configuration Reference](docs/configuration.md)** - Identity setup, model configuration, and customization options
-- **[Troubleshooting](docs/troubleshooting.md)** - Common issues, debugging, and performance optimization
+- **[Architecture Guide](docs/architecture.md)** - Fast LLM routing, context coordination, entity system
+- **[Memory System](docs/memory.md)** - Vector storage, user profiles, context management
+- **[Configuration Reference](docs/configuration.md)** - Identity setup, utility model config, performance tuning
+- **[Troubleshooting](docs/troubleshooting.md)** - Context contamination, routing issues, debugging
 
 ### 🏗️ Development Guides
 - **Entity Development** - Creating new autonomous agents (see `docs/architecture.md`)
@@ -127,7 +143,7 @@ For detailed information, see our comprehensive documentation:
 ## Configuration
 
 ### Entity Configuration
-Each entity has its own identity configuration:
+Each entity has its own identity configuration with dual-model support:
 ```json
 {
   "name": "Aletheia",
@@ -138,8 +154,16 @@ Each entity has its own identity configuration:
   "module_paths": {
     "local_model_gguf": "models/Phi-3-medium-4k-instruct-Q4_K_M.gguf",
     "utility_model_gguf": "models/phi-3-mini-3.8b-q4_k.gguf",
-    "memory_dir": "storage/chroma"
+    "performance_config": {
+      "gpu_layers": 40,
+      "context_size": 8192
+    },
+    "utility_performance_config": {
+      "gpu_layers": 12,
+      "context_size": 2048
+    }
   },
+  "routing_threshold": 1024,
   "translations": {
     "ru": {
       "greeting_templates": {
@@ -153,54 +177,65 @@ Each entity has its own identity configuration:
 
 ### Hardware Requirements
 - **Minimum**: 16GB RAM, Apple Silicon M1/M2/M3
-- **Recommended**: 32GB+ RAM for optimal dual-model performance
-- **Storage**: ~10GB (both models + data)
+- **Recommended**: 32GB+ RAM for optimal triple-model performance
+- **Storage**: ~12GB (all models + data)
 
 ## Usage Examples
 
-### Entity-based Interaction
+### Fast LLM Routing in Action
 ```
 🧑 You: что такое Сфера Дайсона?
 
-🔧 Utility model: Classifying query for memory filtering...
-🔧 Query categorized as: technical
-🔧 LocalLLM: Using English system instructions
-🔧 LocalLLM: Generating Russian response with feminine forms
+🔧 Fast LLM: Making routing decision...
+🔧 Fast LLM routing: EXTERNAL (confidence: high, complexity: scientific)
+🔧 Reasoning: Scientific principle explanation
+🌐 Router: External LLM selected
+📡 Consulting external: openai
+📋 Consultation received: 697 chars analysis, 5 memory points
 
 🤖 Aletheia: Сфера Дайсона — это гипотетическое масштабное сооружение...
-💭 Thoughts: 2.1s | Route: local | Classifications: 60ms
+💭 Total: 17.0s | LLM: 14.7s | Route: External
 ```
 
-### Clean Generic Response Format
+### Context Preservation Across Interactions
 ```
-🧑 You: как тебя зовут?
-🤖 Aletheia: Здравствуйте! Меня зовут Алетейя, я готова помочь.
+🧑 You: Меня зовут Игорь
+🤖 Aletheia: Приятно познакомиться, Игорь!
+
+🧑 You: помнишь как меня зовут?
+🔧 Fast LLM routing: LOCAL (confidence: high, complexity: simple)
+🤖 Aletheia: Конечно, Игорь, я помню. Я рада помогать тебе.
+✅ Context preserved: Zero contamination, perfect memory
+```
+
+### Clean Cross-LLM Context Flow
+```
+🧑 You: объясни принцип работы теплового двигателя
+🔧 Fast LLM routing: EXTERNAL (scientific complexity)
+📡 External consultation with user context
+🤖 Aletheia: [Technical explanation in Russian with feminine forms]
+✅ Clean response: No field contamination, proper context flow
+```
+
+### Debug Transparency
+```
+🔧 Utility model: Classifying query for memory filtering...
+🔧 Query categorized as: technical
+📂 Found 2 memories, filtering for relevance...
+🔧 Fast LLM: Making routing decision...
+🔧 Fast LLM routing: LOCAL (confidence: high, complexity: simple)
+🎯 Router: Local LLM selected
+🔧 LocalLLM: Using English system instructions
+🔧 LocalLLM: Generating Russian response
+💭 Total: 13.3s | LLM: 10.5s | No context contamination
 ✅ Clean response: No technical contamination
-💭 LocalLLM: Generic format, entity-specific content
-```
-
-### Generic System Design
-```
-🧑 You: status
-📊 Framework Status: {
-  "entity": "AletheiaEntity",
-  "identity_loaded": true,
-  "core_components": {
-    "local_llm": "generic, no entity coupling",
-    "router": "entity-agnostic routing",
-    "memory": "reusable vector store"
-  },
-  "architecture": "clean separation of concerns"
-}
 ```
 
 ## CLI Commands
 
 - `quit` - Exit gracefully
 - `status` - Show entity and framework diagnostics
-- `reset` - Clear memory and conversation history  
-- `context` - Display recent conversation
-- `plan: <task>` - Force planning mode for complex tasks
+- `test` - Run comprehensive framework tests
 
 ## File Structure
 

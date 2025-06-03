@@ -2,12 +2,7 @@
 
 ## Overview
 
-Prometheus is an entity-based AI framework designed around clean architectural principles:
-1. **Entity-driven design** - Autonomous entities with their own identities and behaviors
-2. **Clean separation of concerns** - Core framework + entity implementations
-3. **Dual-model intelligence** - Fast utility model + powerful reasoning model
-4. **Generic core components** - Reusable LocalLLM, router, and memory systems
-5. **English-first system prompts** - Consistent internal language with multilingual responses
+Prometheus is an entity-based AI framework with **Fast LLM routing intelligence** and robust cross-LLM context coordination. The architecture provides clean separation between the generic framework core and specific entity implementations, with advanced routing decisions made by a dedicated Fast LLM oracle.
 
 ## System Architecture
 
@@ -268,3 +263,319 @@ prometheus/
 - **RAM**: 32GB+ for optimal dual-model performance
 - **Storage**: 50GB+ for extended memory and models
 - **Network**: Stable internet for external LLM access 
+
+## Architecture Guide
+
+### Core Architecture Principles
+
+#### 1. Entity-Based Design
+- **Entities**: Autonomous AI agents with their own identities, personalities, and configurations
+- **Generic Core**: Framework components work with any entity configuration
+- **Clean Separation**: No coupling between core framework and specific entities
+- **Identity Injection**: Entity configurations passed to generic components
+
+#### 2. Fast LLM Routing Intelligence
+- **Unbiased Oracle**: Dedicated Fast LLM (phi-3-mini) makes routing decisions
+- **Context Isolation**: Each routing decision is completely independent
+- **Smart Classification**: LOCAL vs EXTERNAL based on query complexity
+- **Zero Contamination**: No context leakage between routing evaluations
+
+#### 3. Cross-LLM Context Coordination
+- **Seamless Flow**: Clean context passing between all LLM components
+- **Memory Integration**: Context preserved across conversations and sessions
+- **Profile Continuity**: User data flows correctly through all components
+- **Clean Preparation**: Focused context extraction for external consultations
+
+### Enhanced Architecture with Fast LLM Routing
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    PROMETHEUS FRAMEWORK                         │
+│                                                                 │
+│   User Query                                                    │
+│       │                                                         │
+│       ▼                                                         │
+│ ┌──────────────────┐    ┌─────────────────────┐               │
+│ │   Fast LLM       │───▶│   LLM Router        │               │
+│ │   (phi-3-mini)   │    │   (Decision Maker)  │               │
+│ │   • Independent  │    │                     │               │
+│ │   • Context-Free │    │   LOCAL ←→ EXTERNAL │               │
+│ │   • Unbiased     │    │                     │               │
+│ └──────────────────┘    └─────────────────────┘               │
+│                                   │                            │
+│                     ┌─────────────┼─────────────┐             │
+│                     ▼             ▼             ▼             │
+│             ┌──────────────┐ ┌──────────────┐ ┌──────────────┐│
+│             │   Local LLM  │ │ External LLM │ │   Memory     ││
+│             │  (Phi-3-M)   │ │  (OpenAI)    │ │   System     ││
+│             │              │ │              │ │              ││
+│             │ Context ✓    │ │ Context ✓    │ │ Context ✓    ││
+│             └──────────────┘ └──────────────┘ └──────────────┘│
+│                                   │                            │
+│                                   ▼                            │
+│                             Clean Response                     │
+│                          (No Contamination)                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Core Components
+
+#### Fast LLM (Routing Oracle)
+**Purpose**: Make unbiased routing decisions without content generation bias
+
+**Key Features**:
+- **Independent Operation**: No coupling with content generation
+- **Context Isolation**: Each decision made with clean state
+- **High Performance**: 12 GPU layers, 2048 context, optimized for speed
+- **Robust Fallbacks**: Rule-based routing when model unavailable
+
+**Configuration**:
+```json
+{
+  "utility_performance_config": {
+    "gpu_layers": 12,
+    "context_size": 2048,
+    "batch_size": 256,
+    "threads": 4
+  }
+}
+```
+
+**Routing Decision Process**:
+1. **Context Reset**: Model state cleared to prevent contamination
+2. **Clean Analysis**: Query analyzed independently of previous decisions
+3. **Decision Output**: JSON with route, confidence, reasoning, complexity
+4. **Validation**: Response validated and fallback triggered if needed
+
+#### LLM Router
+**Purpose**: Coordinate between Fast LLM decisions and actual LLM execution
+
+**Routing Logic**:
+```python
+# 1. Basic threshold checks
+if estimated_tokens > routing_threshold:
+    return EXTERNAL
+
+# 2. Fast LLM routing decision
+routing_result = await fast_llm.make_routing_decision(query, clean_context)
+if routing_result['route'] == 'EXTERNAL':
+    return EXTERNAL
+else:
+    return LOCAL
+
+# 3. Fallback to rule-based routing
+```
+
+**Context Preparation**:
+- **For Local LLM**: Clean context with user data and conversation history
+- **For External LLM**: Structured consultation request with entity personality
+- **For Memory**: Semantic filtering and relevance scoring
+
+#### Local LLM
+**Purpose**: Generate responses for routine conversations and simple questions
+
+**Key Features**:
+- **Generic Design**: Works with any entity identity configuration
+- **Feminine Forms**: Proper Russian language forms for female entities
+- **Context-Aware**: Integrates conversation history and user profiles
+- **Clean Output**: Structured response parsing without contamination
+
+**Generation Process**:
+1. **Identity Integration**: Uses entity's llm_instructions and personality
+2. **Language Detection**: Automatically detects user language preference
+3. **Context Assembly**: Combines conversation history, user profile, current query
+4. **Response Generation**: Produces ANSWER, CONFIDENCE, REASONING format
+5. **Clean Parsing**: Removes technical markers from user-facing response
+
+#### External LLM Manager
+**Purpose**: Handle consultation with external LLM providers (OpenAI, Anthropic)
+
+**Consultation Process**:
+1. **Context Preparation**: Build comprehensive consultation request
+2. **Provider Selection**: Choose best available external provider
+3. **Structured Request**: Send request with entity identity and context
+4. **Response Parsing**: Extract technical analysis, user response, memory points
+5. **Integration**: Return clean response with consultation metadata
+
+#### Memory System
+**Purpose**: Store and retrieve conversation history, user profiles, and context
+
+**Three-Tier Architecture**:
+- **Core-Self**: Entity's own memories and learning
+- **User**: User-specific profiles and conversation history  
+- **Environment**: General knowledge and external information
+
+**Context Flow**:
+- **Input**: Semantic classification and relevance filtering
+- **Storage**: Vector embeddings with metadata
+- **Retrieval**: Context-aware memory selection for LLM consumption
+
+### Context Handling Architecture
+
+#### Context Isolation Strategy
+The biggest challenge in cross-LLM environments is **context contamination** - where previous queries influence routing decisions or response generation. Our solution:
+
+##### 1. Fast LLM Context Reset
+```python
+async def _reset_model_context(self) -> None:
+    """Reset model context to prevent contamination."""
+    try:
+        # Method 1: Explicit reset if available
+        if hasattr(self.model, 'reset'):
+            self.model.reset()
+            return
+            
+        # Method 2: Clear internal state
+        if hasattr(self.model, '_ctx'):
+            setattr(self.model, '_ctx', None)
+            return
+            
+        # Method 3: Force context separation
+        self.model("<|system|>Clear context<|end|>", max_tokens=1)
+    except Exception as e:
+        print(f"⚠️ Could not reset utility model context: {e}")
+```
+
+##### 2. Clean Context Preparation
+For external LLM consultations, we prepare focused context:
+```python
+def _prepare_clean_context(self, conversation_context: str) -> str:
+    """Extract only relevant context without contamination."""
+    context_lines = conversation_context.strip().split('\n')
+    
+    # Take last 3-4 exchanges maximum
+    relevant_lines = []
+    for line in context_lines[-8:]:
+        if (line.strip() and 
+            not line.startswith('[') and 
+            len(line) < 150):
+            relevant_lines.append(line.strip())
+    
+    # Limit to 300 chars max for routing context
+    clean_context = '\n'.join(relevant_lines[-4:])
+    if len(clean_context) > 300:
+        clean_context = clean_context[-300:]
+    
+    return clean_context
+```
+
+##### 3. Independent Decision Making
+Each component operates independently:
+- **Fast LLM**: Makes routing decisions without knowledge of content
+- **Local LLM**: Generates responses without knowledge of routing logic
+- **External LLM**: Receives structured consultation requests
+- **Memory**: Stores and retrieves context without routing bias
+
+#### Context Flow Diagram
+
+```
+User Query
+    │
+    ▼
+┌─────────────────┐
+│  Fast LLM       │ ← Clean, isolated routing decision
+│  (Context-Free) │
+└─────────────────┘
+    │
+    ▼ (Route Decision)
+┌─────────────────┐
+│  LLM Router     │ ← Coordinates but doesn't influence content
+│  (Orchestrator) │
+└─────────────────┘
+    │
+    ▼ (With Full Context)
+┌─────────────────┐
+│  Content LLM    │ ← Receives clean context for generation
+│  (Local/External)│
+└─────────────────┘
+    │
+    ▼
+┌─────────────────┐
+│  Memory System  │ ← Stores result with proper context
+│  (Persistent)   │
+└─────────────────┘
+```
+
+## Entity Development
+
+### Creating New Entities
+
+1. **Entity Class**: Inherit from `BaseEntity`
+```python
+class MyAgentEntity(BaseEntity):
+    IDENTITY_PATH = Path(__file__).parent / "identity"
+    
+    def _load_identity(self) -> Dict[str, Any]:
+        # Load your entity's specific configuration
+        return identity_config
+```
+
+2. **Identity Configuration**: Create `identity/identity.json`
+```json
+{
+  "name": "MyAgent",
+  "llm_instructions": "You are MyAgent, a specialized AI assistant...",
+  "personality": {
+    "summary": "Specialized assistant for domain X"
+  },
+  "module_paths": {
+    "local_model_gguf": "models/your-model.gguf",
+    "utility_model_gguf": "models/phi-3-mini-3.8b-q4_k.gguf",
+    "utility_performance_config": {
+      "gpu_layers": 12,
+      "context_size": 2048
+    }
+  }
+}
+```
+
+3. **Specialized Components**: Override core components if needed
+```python
+async def _create_specialized_router(self) -> LLMRouter:
+    """Create router with entity-specific configuration."""
+    return LLMRouter(identity_config=self.identity_config)
+```
+
+### Best Practices
+
+1. **Keep Core Generic**: Don't add entity-specific logic to core components
+2. **Use Identity Configuration**: Pass all entity specifics through configuration
+3. **Preserve Context Flow**: Ensure clean context passing in custom components
+4. **Test Routing**: Validate that Fast LLM routing works correctly
+5. **Monitor Contamination**: Watch for context leakage between routing decisions
+
+## Performance Optimization
+
+### Model Configuration
+- **Fast LLM**: 12 GPU layers, 2048 context (optimized for speed)
+- **Local LLM**: 40 GPU layers, 8192 context (optimized for quality)
+- **Memory**: Vector search with semantic filtering
+
+### Context Management
+- **Routing Context**: Limited to 300 characters
+- **Generation Context**: Full conversation history with user profile
+- **Memory Context**: Semantic relevance filtering
+
+### Monitoring
+```python
+# Debug output shows performance metrics
+💭 Total: 13.3s | LLM: 10.5s | No context contamination
+🔧 Fast LLM routing: LOCAL (confidence: high, complexity: simple)
+📂 Found 2 memories, filtering for relevance...
+```
+
+## Troubleshooting
+
+### Context Contamination Issues
+**Symptoms**: Wrong routing decisions based on previous queries
+**Solution**: Verify Fast LLM context reset is working properly
+
+### Routing Performance Issues  
+**Symptoms**: Slow routing decisions
+**Solution**: Check utility model GPU layers and context size
+
+### Memory Integration Problems
+**Symptoms**: Context not preserved across conversations
+**Solution**: Verify memory system initialization and context flow
+
+See [Troubleshooting Guide](troubleshooting.md) for detailed debugging information 
