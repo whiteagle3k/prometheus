@@ -142,11 +142,19 @@ class BaseEntity(ABC):
             # Process through the entity's thinking pipeline
             result = await self._process_input(user_text)
             
-            # Extract response
+            # Extract response and execution details
             response = result.get("response", "")
+            execution_details = result.get("execution_details", {})
+            
+            # Calculate total thinking time
+            end_time = datetime.now()
+            total_thinking_time = (end_time - start_time).total_seconds()
+            
+            # Display comprehensive debug output
+            self._display_debug_summary(user_text, result, total_thinking_time)
             
             # Add to context
-            self.context.add_episode(user_text, response, result.get("execution_details", {}))
+            self.context.add_episode(user_text, response, execution_details)
             
             # Update running summary
             await self.context.update_summary_from_exchange(
@@ -170,6 +178,7 @@ class BaseEntity(ABC):
                 "result": result,
                 "session_id": self.session_id,
                 "conversation_context": self.context.get_context_summary(),
+                "total_thinking_time": total_thinking_time,
             }
             self.task_history.append(task_record)
             
@@ -179,6 +188,62 @@ class BaseEntity(ABC):
             error_response = f"I'm experiencing technical difficulties: {e}"
             print(f"❌ Error processing input: {e}")
             return error_response
+    
+    def _display_debug_summary(self, user_input: str, result: Dict[str, Any], total_time: float) -> None:
+        """Display comprehensive debug information about the thinking process."""
+        execution_details = result.get("execution_details", {})
+        route_used = execution_details.get("route_used", "unknown")
+        approach = execution_details.get("approach", "unknown")
+        
+        # Route-specific debug info
+        if route_used == "local":
+            print(f"🎯 Route: Local LLM | Approach: {approach}")
+        elif route_used == "external":
+            print(f"🌐 Route: External LLM | Approach: {approach}")
+            # Show consultation metadata if available
+            consultation_metadata = execution_details.get("consultation_metadata")
+            if consultation_metadata:
+                provider = consultation_metadata.get("provider", "unknown")
+                model = consultation_metadata.get("model", "unknown")
+                print(f"📡 External: {provider} ({model})")
+        elif route_used == "user_profile":
+            print(f"📊 Route: User Profile Store | Instant Response")
+        else:
+            print(f"🔀 Route: {route_used} | Approach: {approach}")
+        
+        # Performance metrics
+        execution_time = execution_details.get("execution_time", 0)
+        estimated_cost = execution_details.get("estimated_cost", 0)
+        
+        # Additional context information
+        context_info = []
+        if execution_details.get("episodes_used"):
+            context_info.append(f"Episodes: {execution_details['episodes_used']}")
+        if execution_details.get("user_profile_used"):
+            context_info.append("Profile: ✓")
+        if execution_details.get("memories_used"):
+            context_info.append(f"Memories: {execution_details['memories_used']}")
+        
+        context_str = " | ".join(context_info) if context_info else "No additional context"
+        
+        # Format performance summary
+        performance_parts = [f"Total: {total_time:.1f}s"]
+        if execution_time > 0:
+            performance_parts.append(f"LLM: {execution_time:.1f}s")
+        if estimated_cost > 0:
+            performance_parts.append(f"Cost: ${estimated_cost:.4f}")
+        
+        performance_str = " | ".join(performance_parts)
+        
+        # Final summary line
+        print(f"💭 {performance_str} | {context_str}")
+        
+        # Clean response confirmation
+        response = result.get("response", "")
+        if response and not any(marker in response for marker in ["ANSWER:", "CONFIDENCE:", "REASONING:"]):
+            print("✅ Clean response: No technical contamination")
+        elif any(marker in response for marker in ["ANSWER:", "CONFIDENCE:", "REASONING:"]):
+            print("⚠️ Response contains technical markers - check parsing")
     
     async def autonomous_loop(self) -> None:
         """
@@ -252,8 +317,12 @@ class BaseEntity(ABC):
         try:
             # Use the fast LLM for query preprocessing if available
             if hasattr(self.router, 'utility_llm') and await self.router.utility_llm.is_available():
+                print("🔧 Utility model: Classifying query for memory filtering...")
+                
                 # Preprocess the query for better memory matching
                 query_category = await self.router.utility_llm.classify_query(user_input)
+                print(f"🔧 Query categorized as: {query_category}")
+                
                 expanded_concepts = await self.router.utility_llm.expand_query_concepts(user_input)
                 
                 # Create enhanced query for vector search
@@ -261,24 +330,43 @@ class BaseEntity(ABC):
             else:
                 enhanced_query = user_input
                 query_category = "general"
+                print("⚡ Using direct query (utility model not available)")
             
             # Retrieve memories from vector store
             memories = await self.vector_store.search_memories(enhanced_query, n_results=8)
             
             if not memories:
+                print("📂 No memories found for current query")
                 return []
+            
+            print(f"📂 Found {len(memories)} memories, filtering for relevance...")
             
             # Filter and rank memories by semantic relevance
             relevant_memories = []
-            for memory in memories:
-                # Calculate relevance score
-                distance = memory.get('distance', 1.0)
+            
+            # Use utility model for memory categorization if available
+            if hasattr(self.router, 'utility_llm') and await self.router.utility_llm.is_available():
+                print("🔧 Utility model: Categorizing memories...")
                 
-                # Memory category classification
-                if hasattr(self.router, 'utility_llm') and await self.router.utility_llm.is_available():
+                memory_categories = []
+                for i, memory in enumerate(memories):
                     memory_category = await self.router.utility_llm.classify_memory_content(memory['content'])
-                else:
-                    memory_category = "general"
+                    memory_categories.append(memory_category)
+                
+                # Show categorization results
+                category_summary = {}
+                for cat in memory_categories:
+                    category_summary[cat] = category_summary.get(cat, 0) + 1
+                
+                category_str = ", ".join([f"{cat}: {count}" for cat, count in category_summary.items()])
+                print(f"🔧 Memory categories: {category_str}")
+            else:
+                memory_categories = ["general"] * len(memories)
+            
+            # Calculate relevance and filter
+            for i, memory in enumerate(memories):
+                distance = memory.get('distance', 1.0)
+                memory_category = memory_categories[i]
                 
                 # Calculate semantic relevance
                 relevance_score = self._calculate_semantic_relevance(query_category, memory_category, distance)
@@ -294,7 +382,14 @@ class BaseEntity(ABC):
             relevant_memories.sort(key=lambda x: x['relevance_score'], reverse=True)
             
             # Limit to top 5 most relevant
-            return relevant_memories[:5]
+            final_memories = relevant_memories[:5]
+            
+            if final_memories:
+                print(f"🔧 Utility model: Filtering complete. {len(final_memories)}/{len(memories)} memories passed filtering")
+            else:
+                print("📂 No memories met relevance threshold")
+            
+            return final_memories
             
         except Exception as e:
             print(f"⚠️ Error retrieving memories: {e}")
@@ -414,6 +509,7 @@ class BaseEntity(ABC):
                     "consultation_metadata": result.get("consultation_metadata"),
                     "episodes_used": len(relevant_episodes),
                     "user_profile_used": bool(user_profile_context),
+                    "memories_used": len(memories),
                 },
                 "approach": "llm_managed_context",
             }

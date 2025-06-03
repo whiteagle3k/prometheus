@@ -240,9 +240,18 @@ class LLMRouter:
         try:
             # Make routing decision
             route = await self.route_task(task)
+            
+            # Show routing decision
+            if route == RouteDecision.LOCAL:
+                print("🎯 Router: Local LLM selected")
+            elif route == RouteDecision.EXTERNAL:
+                print("🌐 Router: External LLM selected")
+            else:
+                print(f"🔀 Router: {route.value} selected")
 
             if route == RouteDecision.LOCAL:
                 # Execute locally
+                print("🔧 LocalLLM: Using English system instructions")
                 structured_result = await self.local_llm.generate_structured(
                     prompt=task.prompt,
                     max_tokens=task.max_tokens,
@@ -252,6 +261,10 @@ class LLMRouter:
                 
                 response = structured_result.get('answer', '')
                 local_confidence = structured_result.get('confidence', 'medium')
+                
+                # Show local model response generation
+                user_language = "Russian" if any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in task.prompt.lower()) else "English"
+                print(f"🔧 LocalLLM: Generating {user_language} response")
                 
                 # Calculate entropy for calibrator logging
                 confidence_to_entropy = {'high': 0.8, 'medium': 0.5, 'low': 0.2}
@@ -264,6 +277,7 @@ class LLMRouter:
                 # Execute externally  
                 external_llm = await self.external_manager.get_best_available()
                 if not external_llm:
+                    print("⚠️ External LLM unavailable, falling back to local")
                     # Fallback to local
                     structured_result = await self.local_llm.generate_structured(
                         prompt=task.prompt,
@@ -279,6 +293,8 @@ class LLMRouter:
                     route_used = "local_fallback"
                     consultation_metadata = None
                 else:
+                    print(f"📡 Consulting external: {external_llm.provider_type.value}")
+                    
                     # Enhance prompt with context for external LLM
                     enhanced_prompt = await self._prepare_external_prompt(task)
                     
