@@ -370,7 +370,7 @@ class AletheiaAgent:
             print(f"📚 Retrieved {len(relevant_episodes)} relevant episodes for context")
         
         # Build enhanced context prompt with running summary
-        system_prompt = self.identity_config.get("llm_instructions", {}).get("en", "You are Aletheia, a helpful AI assistant.")
+        system_prompt = self.identity_config.get("llm_instructions", "You are Aletheia, a helpful AI assistant.")
         context_prompt = self.context.build_context_prompt(user_input, system_prompt)
         
         # Add episode context if available
