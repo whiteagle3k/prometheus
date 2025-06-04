@@ -443,18 +443,35 @@ Decision:"""
 
         # Enhanced scientific/technical keywords for external routing
         external_keywords = [
+            # News and current events (CRITICAL for up-to-date information)
+            "новости", "новост", "сегодня", "вчера", "завтра", "последние", "актуальн", "произошло",
+            "события", "мире", "мир", "страна", "политика", "экономика", "случилось",
+            "news", "today", "yesterday", "tomorrow", "latest", "current", "happened", 
+            "events", "world", "country", "politics", "economy", "breaking",
+            
+            # Detailed explanations and complex topics
+            "детально", "подробно", "объясни", "расскажи", "как работает", "принцип работы",
+            "механизм", "структура", "процесс", "анализ", "исследование", "изучение",
+            "detailed", "explain", "how does", "how works", "principle", "mechanism",
+            "structure", "process", "analysis", "research", "study",
+            
+            # Medical and health topics (for current research)
+            "медицин", "здоровье", "лечение", "болезн", "терапия", "диагност", "препарат",
+            "персонализ", "геном", "ген", "биотехнолог", "фармацевт",
+            "medicine", "medical", "health", "treatment", "disease", "therapy", "diagnosis",
+            "personalized", "genome", "gene", "biotech", "pharmaceutical",
+            
             # Russian scientific terms
             "квантов", "физик", "химия", "биология", "математика", "инженер", "научн",
-            "механизм", "принцип", "теория", "формула", "уравнение", "исследование",
-            "двигатель", "энергия", "мощность", "система", "процесс", "технология",
-            "молекула", "атом", "электрон", "ракет", "космос", "астрономия", "реактор",
-            "орбит", "вычисли", "рассчита", "анализ", "сложн",
+            "теория", "формула", "уравнение", "двигатель", "энергия", "мощность", "система", 
+            "технология", "молекула", "атом", "электрон", "ракет", "космос", "астрономия", 
+            "реактор", "орбит", "вычисли", "рассчита", "сложн",
+            
             # English scientific terms
             "quantum", "physics", "chemistry", "biology", "mathematics", "engineering", "science",
-            "mechanism", "principle", "theory", "formula", "equation", "research",
-            "engine", "energy", "power", "system", "process", "technology",
-            "molecule", "atom", "electron", "rocket", "space", "astronomy", "reactor",
-            "orbital", "calculate", "compute", "analysis", "complex"
+            "theory", "formula", "equation", "engine", "energy", "power", "system", 
+            "technology", "molecule", "atom", "electron", "rocket", "space", "astronomy", 
+            "reactor", "orbital", "calculate", "compute", "complex"
         ]
 
         # Simple conversational keywords that stay local
