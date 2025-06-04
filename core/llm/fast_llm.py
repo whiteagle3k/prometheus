@@ -438,13 +438,13 @@ Decision:"""
     def _optimized_rule_based_routing(self, query: str) -> dict[str, Any]:
         """
         Optimized rule-based routing using processing config patterns.
-        Uses the scientific_routing.json configuration instead of hardcoded patterns.
+        Uses the external_routing.json configuration to determine what should go to external LLM.
         """
         query_lower = query.lower()
         
         # Load routing patterns from processing config
         try:
-            routing_config = get_processor_config("scientific_routing")
+            routing_config = get_processor_config("external_routing")
             params = routing_config.parameters
             
             # Check external routing keywords in priority order
