@@ -363,10 +363,25 @@ class LocalLLM:
         if is_russian_query:
             system_prompt += "\n\nIMPORTANT FOR RUSSIAN: Use ONLY feminine forms: готова (never готов), рада (never рад), смогу помочь, могу помочь. Your identity is female."
 
+        # Check if this is an ongoing conversation (similar to external LLM logic)
+        is_ongoing_conversation = bool(context and context.strip() and any(
+            marker in context
+            for marker in ["👤 You:", "🧠", "User:", "Assistant:", "Human:", "AI:", "Exchange", "🤖"]
+        ))
+
+        # Add conversation flow instructions
+        if is_ongoing_conversation:
+            system_prompt += """\n\nCRITICAL INSTRUCTION: This is a CONTINUATION of an ongoing conversation. You are already talking to this user. 
+DO NOT SAY: "Привет", "Здравствуйте", "Hello", "Hi", or any greetings.
+DO NOT SAY: "Как дела", "How are you", or ask how they are.
+DO NOT SAY: "Рада познакомиться", "Nice to meet you", or similar introductions.
+CONTINUE the conversation naturally without any greetings or introductions.
+The user is asking a follow-up question in an ongoing conversation."""
+        
         # Build context section
         context_section = ""
         if context:
-            context_section = f"\n\nCONTEXT: {context}"
+            context_section = f"\n\nCONVERSATION CONTEXT: {context}"
 
         # Simple structured instruction format
         return f"""<|system|>{system_prompt}<|end|>
@@ -422,12 +437,12 @@ Respond naturally in the user's language.<|end|>
         """Completely remove any structured field markers from the answer."""
         import re
 
-        # Remove structured field patterns
-        cleaned = re.sub(r"\b(?:ANSWER|CONFIDENCE|REASONING):\s*[^\n]*\n?", "", answer, flags=re.IGNORECASE)
+        # Remove structured field patterns (English and Russian)
+        cleaned = re.sub(r"\b(?:ANSWER|CONFIDENCE|REASONING|КОНФИДЕНЦИЯ|РАЗУМЕНИЕ|ОТВЕТ):\s*[^\n]*\n?", "", answer, flags=re.IGNORECASE)
 
         # Remove any remaining field patterns at start/end
-        cleaned = re.sub(r"^(?:ANSWER|CONFIDENCE|REASONING):\s*", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"(?:CONFIDENCE|REASONING):\s*.*$", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"^(?:ANSWER|CONFIDENCE|REASONING|КОНФИДЕНЦИЯ|РАЗУМЕНИЕ|ОТВЕТ):\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"(?:CONFIDENCE|REASONING|КОНФИДЕНЦИЯ|РАЗУМЕНИЕ):\s*.*$", "", cleaned, flags=re.IGNORECASE)
 
         # Remove common contamination patterns at start of response
         cleaned = re.sub(r"^[A-ZА-Я]{5,}:\s*", "", cleaned)
@@ -435,13 +450,16 @@ Respond naturally in the user's language.<|end|>
         # Clean up extra whitespace
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
-        # Remove common contamination patterns
-        cleaned = re.sub(r"\b(high|medium|low)\s*confidence\b", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\breasoning:\s*", "", cleaned, flags=re.IGNORECASE)
+        # Remove common contamination patterns (English and Russian)
+        cleaned = re.sub(r"\b(high|medium|low|высокая|средняя|низкая)\s*(confidence|конфиденция)\b", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\b(reasoning|разумение):\s*", "", cleaned, flags=re.IGNORECASE)
 
         # Remove any remaining field markers that might be scattered in text
-        cleaned = re.sub(r"\bCONFIDENCE\b[:\s]*", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\bREASONING\b[:\s]*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\b(CONFIDENCE|КОНФИДЕНЦИЯ)\b[:\s]*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\b(REASONING|РАЗУМЕНИЕ)\b[:\s]*", "", cleaned, flags=re.IGNORECASE)
+
+        # Remove specific Russian contamination patterns seen in output
+        cleaned = re.sub(r"КОНФИДЕНЦИЯ:\s*высокая\s*РАЗУМЕНИЕ:\s*[^.]*\.", "", cleaned, flags=re.IGNORECASE)
 
         return cleaned.strip()
 
