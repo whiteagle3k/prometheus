@@ -2,7 +2,61 @@
 
 ## Overview
 
-Prometheus is an entity-based AI framework with **Self-RAG Enhanced Intelligence** and ultra-fast routing performance. The architecture provides clean separation between the generic framework core and specific entity implementations, with **advanced self-reflection, memory critique, and context optimization** inspired by the Self-RAG paper.
+Prometheus is a **Universal Multi-Entity AI Framework** with **Self-RAG Enhanced Intelligence** and ultra-fast routing performance. The architecture provides clean separation between the generic framework core and unlimited entity implementations, with **advanced self-reflection, memory critique, and context optimization** inspired by the Self-RAG paper.
+
+## 🚀 **Universal Multi-Entity Architecture (v0.6.0)**
+
+### **Universal Registry System**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  Universal AgentRegistry                    │
+├─────────────────────────────────────────────────────────────┤
+│  get_agent(entity_name: str) → BaseEntity                  │
+│                                                             │
+│  • Dynamic Loading: entities.{name}.{Name}Entity           │
+│  • Singleton per Entity: One instance per entity type      │
+│  • Thread-Safe: asyncio.Lock() for concurrent access       │
+│  • Lifecycle Management: Graceful startup/shutdown         │
+├─────────────────────────────────────────────────────────────┤
+│             Shared Infrastructure                           │
+│  Models | Memory | Monitoring | Processing Pipeline        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### **Multi-Entity Frontend Layer**
+
+```
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│   API Server    │  │  Telegram Bot   │  │  Shell/CLI      │
+│                 │  │                 │  │                 │
+│ /v1/chat?entity │  │ /use <entity>   │  │ --entity <name> │
+│ /v1/registry    │  │ /entities       │  │ --entities      │
+│ /health         │  │ /status         │  │                 │
+└─────────────────┘  └─────────────────┘  └─────────────────┘
+         │                     │                     │
+         └─────────────────────┼─────────────────────┘
+                               │
+                    ┌──────────▼──────────┐
+                    │  Universal Registry │
+                    │     (Thread-Safe)   │
+                    └──────────┬──────────┘
+                               │
+        ┌──────────────────────┼──────────────────────┐
+        ▼                      ▼                      ▼
+┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│   Aletheia   │    │  Prometheus  │    │   TeslaBot   │
+│   Entity     │    │   Entity     │    │   Entity     │
+└──────────────┘    └──────────────┘    └──────────────┘
+```
+
+### **Key Benefits**
+- ✅ **Unlimited Entities**: Add new entities without framework changes
+- ✅ **Zero Downtime**: Switch entities via API/Telegram without restarts
+- ✅ **Shared Resources**: Memory, models, monitoring shared across entities
+- ✅ **Dynamic Loading**: Automatic entity discovery and initialization
+- ✅ **Thread Safety**: Concurrent access with proper locking
+- ✅ **Production Ready**: Health checks, metrics, graceful lifecycle management
 
 ## 🧠 Self-RAG Implementation - Major Milestone Achievement
 
@@ -344,6 +398,12 @@ prometheus/
 │   ├── __init__.py
 │   ├── base_entity.py         # Abstract base class
 │   ├── config.py              # Global configuration
+│   ├── runtime/               # Universal entity management
+│   │   ├── registry.py        # AgentRegistry (universal loader)
+│   │   └── lifecycle.py       # Startup/shutdown coordination
+│   ├── frontends/             # Universal frontends
+│   │   ├── api_server.py      # REST API (/v1/chat?entity=name)
+│   │   └── telegram_bot.py    # Telegram bot (/use <entity>)
 │   ├── llm/
 │   │   ├── local_llm.py       # Generic local LLM wrapper
 │   │   ├── fast_llm.py        # Ultra-fast utility model (OPTIMIZED)
@@ -369,318 +429,84 @@ prometheus/
 │       ├── __init__.py       # AletheiaEntity class
 │       └── identity/
 │           └── identity.json # Aletheia configuration
-├── prometheus.py             # CLI interface
+├── scripts/                   # Installation scripts
+│   ├── install_linux.sh      # CUDA-enabled Linux installer
+│   ├── install_windows.ps1   # CUDA-enabled Windows installer
+│   └── README.md             # Installation guide
+├── docs/                      # Documentation
+│   ├── architecture.md       # Core architecture (this document)
+│   ├── architecture-refactor.md # Multi-entity system design
+│   ├── production-ready.md   # Production deployment guide
+│   ├── configuration.md      # Configuration reference
+│   ├── memory.md             # Memory system documentation
+│   ├── service.md           # Frontend services documentation
+│   └── troubleshooting.md   # Troubleshooting guide
+├── prometheus.py             # Universal CLI launcher
 ├── tests/                    # Test suite
-├── docs/                     # Documentation
+│   ├── test_registry.py     # Registry system tests
+│   ├── test_frontends.py    # Frontend integration tests
+│   └── ...                  # Entity-specific tests
 └── models/                   # Model storage
-    ├── Phi-3-medium-4k-instruct-Q4_K_M.gguf    # Main model
-    ├── SmolLM2-135M-Instruct-Q4_K_S.gguf       # OPTIMIZED utility
-    └── phi-3-mini-3.8b-q4_k.gguf               # Fallback utility
+    ├── llama.cpp/           # Local llama.cpp build
+    └── *.gguf              # GGUF model files
 ```
 
-## Performance Characteristics
+## Universal Entity System
 
-### Ultra-Fast Response Times
-- **Routing Decisions**: 0.000s (instant rule-based)
-- **Utility Operations**: ~0.3s (4x improvement with SmolLM2)
-- **Memory Operations**: ~0.073s (optimized retrieval)
-- **Local Processing**: 1-3s (conversation, reasoning)
-- **External Consultation**: 3-8s (for complex/scientific queries)
+### Adding New Entities (Zero-Code Framework Changes)
 
-### Resource Usage (Optimized)
-- **Memory**: ~6GB RAM for optimized dual-model operation
-- **Storage**: ~5GB for models and data (reduced from 12GB)
-- **GPU**: Metal acceleration on Apple Silicon
-- **Cost**: 85% local processing, 15% external API calls
-
-### Routing Efficiency (Enhanced)
-- **Local Processing**: 85% of interactions
-- **External Consultation**: 15% for accuracy-critical tasks
-- **Context Pollution**: 0% (independent utility operations)
-- **Routing Accuracy**: 100% on technical content (proven)
-- **Speed Improvement**: Instant routing + 4x faster classifications
-
-## Performance Testing Results
-
-### Comprehensive Conversation Flow Testing
-- **Total Operations**: 96 classifications + 18 routing calls
-- **System Reliability**: 0 errors across all tests
-- **Routing Accuracy**: 100% for technical content detection
-- **Classification Performance**: 4x improvement (0.29s vs 1.08s)
-- **Memory Performance**: Fast storage (0.265s) and retrieval (0.073s)
-
-### Query Type Coverage
-- **Greetings**: Instant LOCAL routing, fast classification
-- **Technical Discussion**: Perfect EXTERNAL routing for scientific content
-- **Mixed Conversation**: Seamless routing transitions
-- **Context Flow**: Maintained continuity across conversation types
-
-## Multi-language Support
-
-### Architecture
-- **System Level**: English-only for consistency
-- **Entity Level**: Multilingual identity configurations
-- **Response Level**: User's preferred language
-- **Translation**: Handled through entity identity config
-
-### Example (Russian Support)
-```json
-{
-  "llm_instructions": "You are Aletheia, a female autonomous technical agent. When responding in Russian, always use feminine language forms: готова (not готов), рада (not рад)...",
-  "translations": {
-    "ru": {
-      "greeting_templates": {
-        "casual": "Привет! Как дела?",
-        "professional": "Здравствуйте! Я {name}, готова помочь."
-      }
-    }
-  }
-}
+1. **Create Entity Directory**:
+```bash
+mkdir entities/myagent
 ```
 
-## Hardware Requirements
-
-### Minimum
-- **RAM**: 16GB
-- **Storage**: 20GB free space
-- **CPU**: Apple Silicon M1/M2/M3 or equivalent
-- **GPU**: Metal acceleration support
-
-### Recommended
-- **RAM**: 32GB+ for optimal dual-model performance
-- **Storage**: 50GB+ for extended memory and models
-- **Network**: Stable internet for external LLM access 
-
-## Architecture Guide
-
-### Core Architecture Principles
-
-#### 1. Entity-Based Design
-- **Entities**: Autonomous AI agents with their own identities, personalities, and configurations
-- **Generic Core**: Framework components work with any entity configuration
-- **Clean Separation**: No coupling between core framework and specific entities
-- **Identity Injection**: Entity configurations passed to generic components
-
-#### 2. Fast LLM Routing Intelligence
-- **Unbiased Oracle**: Dedicated Fast LLM (phi-3-mini) makes routing decisions
-- **Context Isolation**: Each routing decision is completely independent
-- **Smart Classification**: LOCAL vs EXTERNAL based on query complexity
-- **Zero Contamination**: No context leakage between routing evaluations
-
-#### 3. Cross-LLM Context Coordination
-- **Seamless Flow**: Clean context passing between all LLM components
-- **Memory Integration**: Context preserved across conversations and sessions
-- **Profile Continuity**: User data flows correctly through all components
-- **Clean Preparation**: Focused context extraction for external consultations
-
-### Enhanced Architecture with Fast LLM Routing
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    PROMETHEUS FRAMEWORK                         │
-│                                                                 │
-│   User Query                                                    │
-│       │                                                         │
-│       ▼                                                         │
-│ ┌──────────────────┐    ┌─────────────────────┐               │
-│ │   Fast LLM       │───▶│   LLM Router        │               │
-│ │   (phi-3-mini)   │    │   (Decision Maker)  │               │
-│ │   • Independent  │    │                     │               │
-│ │   • Context-Free │    │   LOCAL ←→ EXTERNAL │               │
-│ │   • Unbiased     │    │                     │               │
-│ └──────────────────┘    └─────────────────────┘               │
-│                                   │                            │
-│                     ┌─────────────┼─────────────┐             │
-│                     ▼             ▼             ▼             │
-│             ┌──────────────┐ ┌──────────────┐ ┌──────────────┐│
-│             │   Local LLM  │ │ External LLM │ │   Memory     ││
-│             │  (Phi-3-M)   │ │  (OpenAI)    │ │   System     ││
-│             │              │ │              │ │              ││
-│             │ Context ✓    │ │ Context ✓    │ │ Context ✓    ││
-│             └──────────────┘ └──────────────┘ └──────────────┘│
-│                                   │                            │
-│                                   ▼                            │
-│                             Clean Response                     │
-│                          (No Contamination)                   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Core Components
-
-#### Fast LLM (Routing Oracle)
-**Purpose**: Make unbiased routing decisions without content generation bias
-
-**Key Features**:
-- **Independent Operation**: No coupling with content generation
-- **Context Isolation**: Each decision made with clean state
-- **High Performance**: 12 GPU layers, 2048 context, optimized for speed
-- **Robust Fallbacks**: Rule-based routing when model unavailable
-
-**Configuration**:
-```json
-{
-  "utility_performance_config": {
-    "gpu_layers": 12,
-    "context_size": 2048,
-    "batch_size": 256,
-    "threads": 4
-  }
-}
-```
-
-**Routing Decision Process**:
-1. **Context Reset**: Model state cleared to prevent contamination
-2. **Clean Analysis**: Query analyzed independently of previous decisions
-3. **Decision Output**: JSON with route, confidence, reasoning, complexity
-4. **Validation**: Response validated and fallback triggered if needed
-
-#### LLM Router
-**Purpose**: Coordinate between Fast LLM decisions and actual LLM execution
-
-**Routing Logic**:
+2. **Implement Entity Class**:
 ```python
-# 1. Basic threshold checks
-if estimated_tokens > routing_threshold:
-    return EXTERNAL
+# entities/myagent/__init__.py
+from core.base_entity import BaseEntity
+from pathlib import Path
 
-# 2. Fast LLM routing decision
-routing_result = await fast_llm.make_routing_decision(query, clean_context)
-if routing_result['route'] == 'EXTERNAL':
-    return EXTERNAL
-else:
-    return LOCAL
-
-# 3. Fallback to rule-based routing
-```
-
-**Context Preparation**:
-- **For Local LLM**: Clean context with user data and conversation history
-- **For External LLM**: Structured consultation request with entity personality
-- **For Memory**: Semantic filtering and relevance scoring
-
-#### Local LLM
-**Purpose**: Generate responses for routine conversations and simple questions
-
-**Key Features**:
-- **Generic Design**: Works with any entity identity configuration
-- **Feminine Forms**: Proper Russian language forms for female entities
-- **Context-Aware**: Integrates conversation history and user profiles
-- **Clean Output**: Structured response parsing without contamination
-
-**Generation Process**:
-1. **Identity Integration**: Uses entity's llm_instructions and personality
-2. **Language Detection**: Automatically detects user language preference
-3. **Context Assembly**: Combines conversation history, user profile, current query
-4. **Response Generation**: Produces ANSWER, CONFIDENCE, REASONING format
-5. **Clean Parsing**: Removes technical markers from user-facing response
-
-#### External LLM Manager
-**Purpose**: Handle consultation with external LLM providers (OpenAI, Anthropic)
-
-**Consultation Process**:
-1. **Context Preparation**: Build comprehensive consultation request
-2. **Provider Selection**: Choose best available external provider
-3. **Structured Request**: Send request with entity identity and context
-4. **Response Parsing**: Extract technical analysis, user response, memory points
-5. **Integration**: Return clean response with consultation metadata
-
-#### Memory System
-**Purpose**: Store and retrieve conversation history, user profiles, and context
-
-**Three-Tier Architecture**:
-- **Core-Self**: Entity's own memories and learning
-- **User**: User-specific profiles and conversation history  
-- **Environment**: General knowledge and external information
-
-**Context Flow**:
-- **Input**: Semantic classification and relevance filtering
-- **Storage**: Vector embeddings with metadata
-- **Retrieval**: Context-aware memory selection for LLM consumption
-
-### Context Handling Architecture
-
-#### Context Isolation Strategy
-The biggest challenge in cross-LLM environments is **context contamination** - where previous queries influence routing decisions or response generation. Our solution:
-
-##### 1. Fast LLM Context Reset
-```python
-async def _reset_model_context(self) -> None:
-    """Reset model context to prevent contamination."""
-    try:
-        # Method 1: Explicit reset if available
-        if hasattr(self.model, 'reset'):
-            self.model.reset()
-            return
-            
-        # Method 2: Clear internal state
-        if hasattr(self.model, '_ctx'):
-            setattr(self.model, '_ctx', None)
-            return
-            
-        # Method 3: Force context separation
-        self.model("<|system|>Clear context<|end|>", max_tokens=1)
-    except Exception as e:
-        print(f"⚠️ Could not reset utility model context: {e}")
-```
-
-##### 2. Clean Context Preparation
-For external LLM consultations, we prepare focused context:
-```python
-def _prepare_clean_context(self, conversation_context: str) -> str:
-    """Extract only relevant context without contamination."""
-    context_lines = conversation_context.strip().split('\n')
+class MyagentEntity(BaseEntity):
+    IDENTITY_PATH = Path(__file__).parent / "identity"
     
-    # Take last 3-4 exchanges maximum
-    relevant_lines = []
-    for line in context_lines[-8:]:
-        if (line.strip() and 
-            not line.startswith('[') and 
-            len(line) < 150):
-            relevant_lines.append(line.strip())
-    
-    # Limit to 300 chars max for routing context
-    clean_context = '\n'.join(relevant_lines[-4:])
-    if len(clean_context) > 300:
-        clean_context = clean_context[-300:]
-    
-    return clean_context
+    def _load_identity(self) -> Dict[str, Any]:
+        # Load your entity's specific configuration
+        return identity_config
 ```
 
-##### 3. Independent Decision Making
-Each component operates independently:
-- **Fast LLM**: Makes routing decisions without knowledge of content
-- **Local LLM**: Generates responses without knowledge of routing logic
-- **External LLM**: Receives structured consultation requests
-- **Memory**: Stores and retrieves context without routing bias
-
-#### Context Flow Diagram
-
+3. **Add Identity Configuration**:
+```bash
+mkdir entities/myagent/identity
+# Add identity.json with entity-specific configuration
 ```
-User Query
-    │
-    ▼
-┌─────────────────┐
-│  Fast LLM       │ ← Clean, isolated routing decision
-│  (Context-Free) │
-└─────────────────┘
-    │
-    ▼ (Route Decision)
-┌─────────────────┐
-│  LLM Router     │ ← Coordinates but doesn't influence content
-│  (Orchestrator) │
-└─────────────────┘
-    │
-    ▼ (With Full Context)
-┌─────────────────┐
-│  Content LLM    │ ← Receives clean context for generation
-│  (Local/External)│
-└─────────────────┘
-    │
-    ▼
-┌─────────────────┐
-│  Memory System  │ ← Stores result with proper context
-│  (Persistent)   │
-└─────────────────┘
+
+4. **Launch with Universal CLI**:
+```bash
+python prometheus.py api --entity myagent
+python prometheus.py telegram --entity myagent
+python prometheus.py shell --entity myagent
+```
+
+### Multi-Entity Deployment Examples
+
+```bash
+# Single entity
+python prometheus.py api --entity aletheia
+
+# Multiple entities in one process
+python prometheus.py api --entities aletheia,prometheus,teslabot
+
+# Telegram bot supporting multiple entities
+python prometheus.py telegram --entities aletheia,prometheus
+
+# API usage with entity selection
+curl 'localhost:8000/v1/chat?entity=aletheia' -d '{"message":"Hello"}'
+curl 'localhost:8000/v1/chat?entity=prometheus' -d '{"message":"Status"}'
+
+# Telegram entity switching
+/use aletheia     # Switch to Aletheia
+/use prometheus   # Switch to Prometheus
+/entities         # List available entities
 ```
 
 ## Entity Development
@@ -728,41 +554,54 @@ async def _create_specialized_router(self) -> LLMRouter:
 1. **Keep Core Generic**: Don't add entity-specific logic to core components
 2. **Use Identity Configuration**: Pass all entity specifics through configuration
 3. **Preserve Context Flow**: Ensure clean context passing in custom components
-4. **Test Routing**: Validate that Fast LLM routing works correctly
-5. **Monitor Contamination**: Watch for context leakage between routing decisions
+4. **Test Registry Integration**: Validate that the universal registry can load your entity
+5. **Monitor Multi-Entity Performance**: Watch resource usage when running multiple entities
+6. **Thread Safety**: Ensure entity-specific operations are thread-safe for concurrent access
 
 ## Performance Optimization
+
+### Universal Registry Performance
+- **First Load**: Dynamic import and initialization (~100ms per entity)
+- **Subsequent Access**: Cached instance lookup (~0.1ms)
+- **Concurrent Access**: Thread-safe with asyncio.Lock()
+- **Memory Efficiency**: Shared infrastructure across entities
 
 ### Model Configuration
 - **Fast LLM**: 12 GPU layers, 2048 context (optimized for speed)
 - **Local LLM**: 40 GPU layers, 8192 context (optimized for quality)
 - **Memory**: Vector search with semantic filtering
+- **Shared Models**: Same model instances used across entities
 
 ### Context Management
 - **Routing Context**: Limited to 300 characters
 - **Generation Context**: Full conversation history with user profile
 - **Memory Context**: Semantic relevance filtering
+- **Entity Isolation**: Clean context separation between entities
 
-### Monitoring
+### Multi-Entity Resource Management
 ```python
-# Debug output shows performance metrics
-💭 Total: 13.3s | LLM: 10.5s | No context contamination
-🔧 Fast LLM routing: LOCAL (confidence: high, complexity: simple)
-📂 Found 2 memories, filtering for relevance...
+# Registry manages resources efficiently
+agent_aletheia = await get_agent("aletheia")     # Initialize if needed
+agent_prometheus = await get_agent("prometheus") # Shared infrastructure
+agent_teslabot = await get_agent("teslabot")     # Minimal overhead
 ```
 
 ## Troubleshooting
 
-### Context Contamination Issues
-**Symptoms**: Wrong routing decisions based on previous queries
-**Solution**: Verify Fast LLM context reset is working properly
+### Registry System Issues
+**Symptoms**: Entity not found or failed to load
+**Solution**: Check entity naming convention and `entities/{name}/__init__.py` structure
 
-### Routing Performance Issues  
-**Symptoms**: Slow routing decisions
-**Solution**: Check utility model GPU layers and context size
+### Multi-Entity Conflicts
+**Symptoms**: Context bleeding between entities
+**Solution**: Verify entity state isolation and registry singleton pattern
 
-### Memory Integration Problems
-**Symptoms**: Context not preserved across conversations
-**Solution**: Verify memory system initialization and context flow
+### Performance Degradation
+**Symptoms**: Slow responses with multiple entities
+**Solution**: Monitor memory usage and consider entity-specific model configurations
 
-See [Troubleshooting Guide](troubleshooting.md) for detailed debugging information 
+### Thread Safety Issues
+**Symptoms**: Inconsistent behavior under concurrent load
+**Solution**: Verify all entity operations use proper async/await patterns
+
+See [Universal Architecture Guide](architecture-refactor.md) and [Troubleshooting Guide](troubleshooting.md) for detailed debugging information 

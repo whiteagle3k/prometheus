@@ -1,17 +1,47 @@
 # Prometheus ✨
 ![CI](https://github.com/whiteagle3k/prometheus/actions/workflows/ci.yml/badge.svg)
 
-Entity-based AI framework with ultra-fast routing, advanced memory management, and robust cross-LLM context coordination.
+**Universal Multi-Entity AI Framework** with ultra-fast routing, advanced memory management, and robust cross-LLM context coordination.
 
 ## Why Prometheus?
 
+- **Universal Multi-Entity Architecture**: Support unlimited specialized AI entities in a single deployment
 - **Entity-based Design**: Clean separation between framework core and agent implementations
+- **Zero-Downtime Entity Switching**: Switch between entities via API/Telegram without restarts
 - **Ultra-Fast Performance**: Instant routing decisions (0.000s) with 4x performance improvement via SmolLM2-135M
 - **Self-RAG Enhanced Intelligence**: Advanced self-reflection, memory critique, and context optimization
 - **Cross-LLM Context Coordination**: Seamless context flow between utility, local, and external models
 - **Smart Model Selection**: Rule-based routing + fast classification + local reasoning + external consultation
 - **Cost-effective**: Local "brain" handles 85% of conversations → cheap and private
-- **Clean architecture**: No coupling between core framework and specific entities
+- **Production Ready**: Thread-safe, concurrent access, health monitoring, graceful lifecycle management
+
+## 🚀 **Universal Multi-Entity System (v0.6.0)**
+
+Transform from single-entity service to unlimited specialized entities:
+
+```bash
+# Single entity deployment
+python prometheus.py api --entity aletheia
+
+# Multi-entity service (one process, multiple entities)
+python prometheus.py api --entities aletheia,prometheus,teslabot
+
+# Entity switching via API
+curl 'localhost:8000/v1/chat?entity=aletheia' -d '{"message":"Hello"}'
+curl 'localhost:8000/v1/chat?entity=prometheus' -d '{"message":"System status"}'
+
+# Telegram bot with entity switching
+/use aletheia     # Switch to Aletheia
+/use prometheus   # Switch to Prometheus entity
+/entities         # List available entities
+```
+
+**Architecture Benefits:**
+- ✅ **Unlimited Entities**: Add new entities without code changes
+- ✅ **Shared Infrastructure**: Memory, models, monitoring shared across entities  
+- ✅ **Zero Downtime**: Switch entities via Telegram `/use` command
+- ✅ **Dynamic Loading**: Automatic entity discovery and initialization
+- ✅ **Thread Safety**: Concurrent access with proper locking
 
 ## Meet Aletheia 👩
 
@@ -83,20 +113,53 @@ Performance Comparison (Comprehensive Testing):
 └─────────────────┴─────────────┴─────────────┴─────────────┘
 ```
 
-## Quick Start (macOS)
+## Quick Start
 
+### 🐧 **Linux / WSL2**
 ```bash
 # Clone and setup
 git clone https://github.com/whiteagle3k/prometheus.git
 cd prometheus
+./scripts/install_linux.sh
+
+# Start with universal launcher
+poetry run python prometheus.py api --entity aletheia
+```
+
+### 🪟 **Windows**
+```powershell
+# Run as Administrator
+git clone https://github.com/whiteagle3k/prometheus.git
+cd prometheus
+.\scripts\install_windows.ps1
+
+# Start with universal launcher
+poetry run python prometheus.py api --entity aletheia
+```
+
+### 🍎 **macOS**
+```bash
+# Clone and setup  
+git clone https://github.com/whiteagle3k/prometheus.git
+cd prometheus
 ./scripts/install_mac.sh
-./scripts/download_models.sh  # Downloads optimized model set
 
-# Start Aletheia entity
-poetry run python prometheus.py aletheia
+# Start with universal launcher
+poetry run python prometheus.py api --entity aletheia
+```
 
-# Alternative: Direct Python execution
-python prometheus.py aletheia
+### **Universal Launch Examples**
+```bash
+# API Server
+python prometheus.py api --entity aletheia
+python prometheus.py api --entities aletheia,prometheus,teslabot
+
+# Telegram Bot (requires TELEGRAM_TOKEN in .env)
+python prometheus.py telegram --entity aletheia
+python prometheus.py telegram --entities aletheia,prometheus
+
+# Interactive Shell
+python prometheus.py shell --entity aletheia
 ```
 
 Once running, you can interact with Aletheia in natural language:
@@ -112,19 +175,27 @@ Once running, you can interact with Aletheia in natural language:
 
 For detailed information, see our comprehensive documentation:
 
-### 📚 Core Documentation
+### 📚 **Installation & Setup**
+- **[Installation Guide](scripts/README.md)** - Platform-specific installation instructions
+- **[Windows Installer](scripts/install_windows.ps1)** - CUDA-enabled Windows setup
+- **[Linux Installer](scripts/install_linux.sh)** - CUDA-enabled Ubuntu/WSL2 setup
+
+### 🏗️ **Architecture & Development**
 - **[Architecture Guide](docs/architecture.md)** - Ultra-fast routing, optimized models, entity system
+- **[Universal Architecture](docs/architecture-refactor.md)** - Multi-entity system design and migration
+- **[Production Guide](docs/production-ready.md)** - Production deployment and monitoring
 - **[Memory System](docs/memory.md)** - Vector storage, user profiles, context management
 - **[Configuration Reference](docs/configuration.md)** - Identity setup, model optimization, performance tuning
+- **[Service Layer](docs/service.md)** - Frontend services and API documentation
 - **[Troubleshooting](docs/troubleshooting.md)** - Performance optimization, routing tuning, debugging
 
-### 🏗️ Development Guides
-- **Entity Development** - Creating new autonomous agents (see `docs/architecture.md`)
+### 🔧 **Development Guides**
+- **Entity Development** - Creating new autonomous agents (see `docs/architecture-refactor.md`)
 - **Core Extension** - Adding framework components and capabilities
 - **Memory Integration** - Implementing custom memory and learning systems
 - **LLM Integration** - Adding new local or external model providers
 
-### 📖 Quick Reference
+### 📖 **Quick Reference**
 - **CLI Commands** - Interactive commands and debugging utilities
 - **Configuration Examples** - Sample entity configurations and setups
 - **API Reference** - Core component interfaces and usage patterns
@@ -231,6 +302,12 @@ Each entity has its own identity configuration with optimized dual-model support
 prometheus/
 ├── core/                      # Generic framework components
 │   ├── base_entity.py         # Abstract base class
+│   ├── runtime/               # Universal entity management
+│   │   ├── registry.py        # AgentRegistry (universal loader)
+│   │   └── lifecycle.py       # Startup/shutdown coordination
+│   ├── frontends/             # Universal frontends
+│   │   ├── api_server.py      # REST API (/v1/chat?entity=name)
+│   │   └── telegram_bot.py    # Telegram bot (/use <entity>)
 │   ├── llm/
 │   │   ├── local_llm.py       # Generic local LLM wrapper
 │   │   ├── utility_llm.py     # Fast utility model
@@ -245,7 +322,16 @@ prometheus/
 │       ├── __init__.py       # AletheiaEntity class
 │       └── identity/
 │           └── identity.json # Aletheia configuration
-├── prometheus.py             # CLI interface
+├── scripts/                   # Installation scripts
+│   ├── install_linux.sh      # CUDA-enabled Linux installer
+│   ├── install_windows.ps1   # CUDA-enabled Windows installer
+│   └── README.md             # Installation guide
+├── docs/                      # Documentation
+│   ├── architecture.md       # Core architecture
+│   ├── architecture-refactor.md # Multi-entity system
+│   ├── production-ready.md   # Production deployment
+│   └── ...                   # Additional guides
+├── prometheus.py             # Universal CLI launcher
 ├── tests/                    # Test suite
 └── models/                   # Model storage
 ```
@@ -262,10 +348,18 @@ class MyAgentEntity(BaseEntity):
         # Return complete identity config
 ```
 
+**Zero-Code Entity Addition:**
+1. Create `entities/myagent/` directory
+2. Add `MyagentEntity` class in `entities/myagent/__init__.py`
+3. Add identity configuration in `entities/myagent/identity/`
+4. Launch with `python prometheus.py api --entity myagent`
+
 For detailed guides, see:
+- **[Universal Architecture](docs/architecture-refactor.md)** - Multi-entity system design
 - **[Architecture Guide](docs/architecture.md)** - Entity development and framework design
 - **[Configuration Reference](docs/configuration.md)** - Identity setup and customization
 - **[Memory System](docs/memory.md)** - Custom memory and learning systems
+- **[Production Guide](docs/production-ready.md)** - Production deployment best practices
 - **[Troubleshooting](docs/troubleshooting.md)** - Common development issues
 
 ### Testing
@@ -276,5 +370,7 @@ poetry run pytest tests/
 ### Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines and the clean architecture principles.
 
-**📖 Complete Documentation**: All detailed guides are in the [docs/](docs/) folder:
-- [Architecture](docs/architecture.md) | [Configuration](docs/configuration.md) | [Memory](docs/memory.md) | [Troubleshooting](docs/troubleshooting.md)
+**📖 Complete Documentation**: All detailed guides are in the [docs/](docs/) and [scripts/](scripts/) folders:
+- [Architecture](docs/architecture.md) | [Multi-Entity](docs/architecture-refactor.md) | [Production](docs/production-ready.md)
+- [Configuration](docs/configuration.md) | [Memory](docs/memory.md) | [Installation](scripts/README.md)
+- [Service Layer](docs/service.md) | [Troubleshooting](docs/troubleshooting.md)
