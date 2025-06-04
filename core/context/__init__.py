@@ -7,4 +7,4 @@ and future MCP adapter capabilities.
 
 from .context_manager import ConversationContext
 
-__all__ = ["ConversationContext"] 
+__all__ = ["ConversationContext"]

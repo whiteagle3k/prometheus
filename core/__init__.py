@@ -11,4 +11,4 @@ __author__ = "Prometheus Framework"
 from .base_entity import BaseEntity
 from .config import config
 
-__all__ = ["BaseEntity", "config"] 
+__all__ = ["BaseEntity", "config"]

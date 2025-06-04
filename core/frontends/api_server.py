@@ -9,22 +9,21 @@ import json
 import logging
 import time
 import uuid
-from typing import Dict, Any
 
-from fastapi import FastAPI, HTTPException, Request, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_client import Counter, Histogram
+from prometheus_fastapi_instrumentator import Instrumentator
+from pydantic import BaseModel, Field
 
-from ..runtime.registry import get_agent, get_running_agents, get_registry_stats
+from core.runtime.registry import get_agent, get_registry_stats, get_running_agents
 
 # Setup structured logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(message)s',  # We'll use JSON format
+    format="%(message)s",  # We'll use JSON format
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
@@ -32,9 +31,9 @@ logger = logging.getLogger(__name__)
 
 class StructuredLogger:
     """Structured JSON logger for request tracing."""
-    
+
     @staticmethod
-    def log_request(request_id: str, method: str, path: str, entity: str = None, user_id: str = None):
+    def log_request(request_id: str, method: str, path: str, entity: str | None = None, user_id: str | None = None):
         """Log incoming request."""
         log_data = {
             "timestamp": time.time(),
@@ -48,9 +47,9 @@ class StructuredLogger:
             "service": "universal-api"
         }
         logger.info(json.dumps(log_data))
-    
+
     @staticmethod
-    def log_response(request_id: str, status_code: int, latency: float, entity: str = None, route: str = None):
+    def log_response(request_id: str, status_code: int, latency: float, entity: str | None = None, route: str | None = None):
         """Log response with metrics."""
         log_data = {
             "timestamp": time.time(),
@@ -64,9 +63,9 @@ class StructuredLogger:
             "service": "universal-api"
         }
         logger.info(json.dumps(log_data))
-    
+
     @staticmethod
-    def log_error(request_id: str, error: str, entity: str = None, user_id: str = None):
+    def log_error(request_id: str, error: str, entity: str | None = None, user_id: str | None = None):
         """Log error with context."""
         log_data = {
             "timestamp": time.time(),
@@ -129,27 +128,27 @@ instrumentator = Instrumentator(
 
 # Custom metrics with entity labels
 route_decisions = Counter(
-    'prometheus_route_decisions_total',
-    'Route decisions made by agents',
-    ['route', 'user_id', 'frontend', 'entity']
+    "prometheus_route_decisions_total",
+    "Route decisions made by agents",
+    ["route", "user_id", "frontend", "entity"]
 )
 
 llm_processing_time = Histogram(
-    'prometheus_llm_processing_seconds',
-    'Time spent in LLM processing',
-    ['route', 'approach', 'frontend', 'entity']
+    "prometheus_llm_processing_seconds",
+    "Time spent in LLM processing",
+    ["route", "approach", "frontend", "entity"]
 )
 
 memory_operations = Counter(
-    'prometheus_memory_operations_total',
-    'Memory operations performed',
-    ['operation_type', 'user_id', 'frontend', 'entity']
+    "prometheus_memory_operations_total",
+    "Memory operations performed",
+    ["operation_type", "user_id", "frontend", "entity"]
 )
 
 request_duration = Histogram(
-    'prometheus_api_request_duration_seconds',
-    'API request duration in seconds',
-    ['method', 'endpoint', 'status_code', 'entity']
+    "prometheus_api_request_duration_seconds",
+    "API request duration in seconds",
+    ["method", "endpoint", "status_code", "entity"]
 )
 
 # Instrument the FastAPI app
@@ -165,10 +164,10 @@ async def logging_middleware(request: Request, call_next):
     request_id = str(uuid.uuid4())
     request.state.request_id = request_id
     start_time = time.time()
-    
+
     # Extract entity from query params
-    entity_name = request.query_params.get('entity', 'aletheia')
-    
+    entity_name = request.query_params.get("entity", "aletheia")
+
     # Log incoming request
     structured_logger.log_request(
         request_id=request_id,
@@ -176,13 +175,13 @@ async def logging_middleware(request: Request, call_next):
         path=request.url.path,
         entity=entity_name
     )
-    
+
     try:
         response = await call_next(request)
-        
+
         # Calculate latency
         latency = time.time() - start_time
-        
+
         # Log successful response
         structured_logger.log_response(
             request_id=request_id,
@@ -190,10 +189,10 @@ async def logging_middleware(request: Request, call_next):
             latency=latency,
             entity=entity_name
         )
-        
+
         # Add request ID to response
         response.headers["X-Request-ID"] = request_id
-        
+
         # Update metrics
         request_duration.labels(
             method=request.method,
@@ -201,9 +200,9 @@ async def logging_middleware(request: Request, call_next):
             status_code=response.status_code,
             entity=entity_name
         ).observe(latency)
-        
+
         return response
-        
+
     except Exception as e:
         # Log error
         structured_logger.log_error(
@@ -217,7 +216,7 @@ async def logging_middleware(request: Request, call_next):
 @app.middleware("http")
 async def limit_body_size_middleware(request: Request, call_next):
     """Limit request body size to 4KB for DOS protection."""
-    content_length = request.headers.get('content-length')
+    content_length = request.headers.get("content-length")
     if content_length:
         content_length = int(content_length)
         if content_length > 4096:  # 4KB limit
@@ -229,7 +228,7 @@ async def limit_body_size_middleware(request: Request, call_next):
                     "received_size": f"{content_length}B"
                 }
             )
-    
+
     return await call_next(request)
 
 
@@ -255,12 +254,12 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    from ..runtime.lifecycle import system_health_check
-    
+    from core.runtime.lifecycle import system_health_check
+
     try:
         health_report = await system_health_check()
         status_code = 200 if health_report["overall_status"] == "healthy" else 503
-        
+
         return JSONResponse(
             status_code=status_code,
             content={
@@ -290,87 +289,87 @@ async def registry_info():
 
 @app.post("/v1/chat", response_model=ChatResponse)
 async def chat(
-    request: ChatRequest, 
+    request: ChatRequest,
     http_request: Request,
     entity: str = Query(default="aletheia", description="Entity name to chat with")
 ) -> ChatResponse:
     """
     Chat with any AI agent entity.
-    
+
     Args:
         request: Chat request with user_id and message
         http_request: FastAPI request object for accessing request_id
         entity: Entity name (e.g., "aletheia", "prometheus", "teslabot")
-        
+
     Returns:
         Chat response with answer, entity, route, latency, and request_id
     """
     start_time = time.time()
-    request_id = getattr(http_request.state, 'request_id', str(uuid.uuid4()))
-    
+    request_id = getattr(http_request.state, "request_id", str(uuid.uuid4()))
+
     try:
         # Get agent instance from registry
         agent = await get_agent(entity)
-        
+
         # Process the message with user context
         response = await agent.think(request.message, user_id=request.user_id)
-        
+
         # Calculate latency
         latency = time.time() - start_time
-        
+
         # Extract route information if available
         route = "unknown"
         approach = "unknown"
-        if hasattr(response, 'route_used'):
+        if hasattr(response, "route_used"):
             route = response.route_used
         elif isinstance(response, dict):
-            execution_details = response.get('execution_details', {})
-            route = execution_details.get('route_used', 'unknown')
-            approach = execution_details.get('approach', 'unknown')
-        
+            execution_details = response.get("execution_details", {})
+            route = execution_details.get("route_used", "unknown")
+            approach = execution_details.get("approach", "unknown")
+
         # Update Prometheus metrics with entity label
         frontend = "api"
         route_decisions.labels(
-            route=route, 
-            user_id=request.user_id, 
-            frontend=frontend, 
+            route=route,
+            user_id=request.user_id,
+            frontend=frontend,
             entity=entity
         ).inc()
-        
+
         if isinstance(response, dict):
-            execution_details = response.get('execution_details', {})
-            execution_time = execution_details.get('execution_time', 0)
+            execution_details = response.get("execution_details", {})
+            execution_time = execution_details.get("execution_time", 0)
             if execution_time > 0:
                 llm_processing_time.labels(
-                    route=route, 
-                    approach=approach, 
+                    route=route,
+                    approach=approach,
                     frontend=frontend,
                     entity=entity
                 ).observe(execution_time)
-        
+
         # Count memory operations if available
         if isinstance(response, dict):
-            execution_details = response.get('execution_details', {})
-            if execution_details.get('memories_used', 0) > 0:
+            execution_details = response.get("execution_details", {})
+            if execution_details.get("memories_used", 0) > 0:
                 memory_operations.labels(
-                    operation_type='retrieval', 
-                    user_id=request.user_id, 
+                    operation_type="retrieval",
+                    user_id=request.user_id,
                     frontend=frontend,
                     entity=entity
                 ).inc()
-            if execution_details.get('user_profile_used', False):
+            if execution_details.get("user_profile_used", False):
                 memory_operations.labels(
-                    operation_type='profile_access', 
-                    user_id=request.user_id, 
+                    operation_type="profile_access",
+                    user_id=request.user_id,
                     frontend=frontend,
                     entity=entity
                 ).inc()
-        
+
         # Extract answer text
         answer = str(response)
-        if isinstance(response, dict) and 'result' in response:
-            answer = response['result']
-        
+        if isinstance(response, dict) and "result" in response:
+            answer = response["result"]
+
         return ChatResponse(
             answer=answer,
             entity=entity,
@@ -378,18 +377,18 @@ async def chat(
             latency=latency,
             request_id=request_id
         )
-        
+
     except ImportError:
         # Entity not found
         latency = time.time() - start_time
-        
+
         structured_logger.log_error(
             request_id=request_id,
             error=f"Entity '{entity}' not found",
             entity=entity,
             user_id=request.user_id
         )
-        
+
         raise HTTPException(
             status_code=404,
             detail={
@@ -399,19 +398,19 @@ async def chat(
                 "request_id": request_id
             }
         )
-        
+
     except Exception as e:
         # Calculate latency even for errors
         latency = time.time() - start_time
-        
+
         # Track error metrics
         route_decisions.labels(
-            route='error', 
-            user_id=request.user_id, 
-            frontend='api',
+            route="error",
+            user_id=request.user_id,
+            frontend="api",
             entity=entity
         ).inc()
-        
+
         # Log structured error
         structured_logger.log_error(
             request_id=request_id,
@@ -419,7 +418,7 @@ async def chat(
             entity=entity,
             user_id=request.user_id
         )
-        
+
         raise HTTPException(
             status_code=500,
             detail={
@@ -442,9 +441,9 @@ async def startup():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=8000, 
+        app,
+        host="0.0.0.0",
+        port=8000,
         workers=1,  # workers=1 for registry compatibility
         access_log=False  # Use structured logging
-    ) 
+    )

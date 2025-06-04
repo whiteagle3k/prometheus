@@ -2,7 +2,6 @@
 
 import os
 from pathlib import Path
-from typing import Optional
 
 # Set tokenizer parallelism to avoid warnings
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -15,8 +14,8 @@ class AppSettings(BaseSettings):
     """Main configuration class for Aletheia."""
 
     # External LLM API Keys
-    anthropic_api_key: Optional[str] = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
-    openai_api_key: Optional[str] = Field(default=None, validation_alias="OPENAI_API_KEY")
+    anthropic_api_key: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
+    openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
 
     # Local Model Configuration (can be overridden by identity.json)
     local_model_path: Path = Field(
@@ -72,7 +71,7 @@ class AppSettings(BaseSettings):
 
     # Logging
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
-    
+
     # Development/Production mode
     development_mode: bool = Field(default=True, validation_alias="DEVELOPMENT_MODE")
     allow_complete_memory_reset: bool = Field(default=True, validation_alias="ALLOW_COMPLETE_MEMORY_RESET")
@@ -115,7 +114,7 @@ class AppSettings(BaseSettings):
                     print(f"📁 Using model path from identity: {identity_model_path}")
 
             # Update utility model path if specified in identity
-            if hasattr(identity_instance.module_paths, 'utility_model_gguf') and identity_instance.module_paths.utility_model_gguf:
+            if hasattr(identity_instance.module_paths, "utility_model_gguf") and identity_instance.module_paths.utility_model_gguf:
                 identity_utility_path = Path(identity_instance.module_paths.utility_model_gguf)
                 if identity_utility_path.exists():
                     self.utility_model_path = identity_utility_path
@@ -123,14 +122,14 @@ class AppSettings(BaseSettings):
                 else:
                     print(f"⚠️  Utility model specified in identity not found: {identity_utility_path}")
                     # Fall back to main model if specified utility model doesn't exist
-                    if hasattr(self, 'local_model_path'):
+                    if hasattr(self, "local_model_path"):
                         self.utility_model_path = self.local_model_path
                         print(f"⚡ Falling back to main model as utility model: {self.local_model_path}")
             else:
                 # No utility model specified in identity - this is fine, keep default or use main model
                 print(f"💡 No utility model specified in identity, using default: {self.utility_model_path}")
                 # Only fall back to main model if the default doesn't exist
-                if not self.utility_model_path.exists() and hasattr(self, 'local_model_path'):
+                if not self.utility_model_path.exists() and hasattr(self, "local_model_path"):
                     self.utility_model_path = self.local_model_path
                     print(f"⚡ Default utility model not found, using main model: {self.local_model_path}")
 

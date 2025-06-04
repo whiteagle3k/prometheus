@@ -7,4 +7,4 @@ Universal frontends for interacting with any entity through multiple interfaces:
 - Shell: Interactive command-line interface
 
 All frontends are entity-agnostic and use the runtime registry.
-""" 
+"""

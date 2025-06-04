@@ -1,26 +1,26 @@
 """Identity templates and utilities for creating new agent identities."""
 
-from typing import Dict, Any, List
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Any
 
 
 def create_base_identity_template(
     name: str,
     summary: str,
-    personality_traits: List[str],
-    core_values: List[str],
+    personality_traits: list[str],
+    core_values: list[str],
     primary_language: str = "en"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a base identity template for a new agent.
-    
+
     Args:
         name: Agent name
         summary: Brief personality summary
         personality_traits: List of personality characteristics
         core_values: List of core principles
         primary_language: Primary language ("en" or "ru")
-    
+
     Returns:
         Dictionary containing the identity template
     """
@@ -86,7 +86,7 @@ def create_base_identity_template(
     }
 
 
-def create_technical_agent_template(name: str) -> Dict[str, Any]:
+def create_technical_agent_template(name: str) -> dict[str, Any]:
     """Create template for a technical/analytical agent."""
     return create_base_identity_template(
         name=name,
@@ -106,7 +106,7 @@ def create_technical_agent_template(name: str) -> Dict[str, Any]:
     )
 
 
-def create_creative_agent_template(name: str) -> Dict[str, Any]:
+def create_creative_agent_template(name: str) -> dict[str, Any]:
     """Create template for a creative/artistic agent."""
     return create_base_identity_template(
         name=name,
@@ -126,7 +126,7 @@ def create_creative_agent_template(name: str) -> Dict[str, Any]:
     )
 
 
-def create_academic_agent_template(name: str) -> Dict[str, Any]:
+def create_academic_agent_template(name: str) -> dict[str, Any]:
     """Create template for an academic/research agent."""
     return create_base_identity_template(
         name=name,
@@ -151,4 +151,4 @@ AGENT_TEMPLATES = {
     "technical": create_technical_agent_template,
     "creative": create_creative_agent_template,
     "academic": create_academic_agent_template,
-} 
+}

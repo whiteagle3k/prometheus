@@ -1,6 +1,6 @@
 """Manager for external LLM providers using proper OOP patterns."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # TODO: Remove identity dependency - configuration should be passed from entity
 # from ...identity.loader import get_external_llm_config
@@ -10,18 +10,18 @@ from .factory import ProviderFactory
 
 class ExternalLLMManager:
     """Manager for multiple external LLM providers.
-    
+
     Uses dependency injection and works with the abstract ExternalLLMProvider interface.
     Follows the Strategy pattern - providers are interchangeable strategies.
     """
 
-    def __init__(self, providers_config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, providers_config: dict[str, Any] | None = None) -> None:
         """Initialize the manager.
-        
+
         Args:
             providers_config: Configuration dictionary for providers
         """
-        self._providers: Dict[ProviderType, ExternalLLMProvider] = {}
+        self._providers: dict[ProviderType, ExternalLLMProvider] = {}
         self._initialized = False
         self._config = providers_config or {}
         self._setup_providers()
@@ -29,11 +29,11 @@ class ExternalLLMManager:
     def _setup_providers(self) -> None:
         """Setup available providers based on configuration."""
         providers_config = self._config.get("providers", {})
-        
+
         for provider_name, provider_config in providers_config.items():
             if not provider_config.get("enabled", False):
                 continue
-                
+
             try:
                 # Use factory to create provider instance
                 provider = ProviderFactory.create_provider_by_name(provider_name, provider_config)
@@ -47,84 +47,84 @@ class ExternalLLMManager:
         """Initialize all providers."""
         if self._initialized:
             return
-            
+
         initialization_errors = []
-        
+
         for provider_type, provider in self._providers.items():
             try:
                 await provider.initialize()
             except Exception as e:
                 initialization_errors.append(f"{provider_type.value}: {e}")
-        
+
         if initialization_errors:
             print(f"Warning: Some providers failed to initialize: {initialization_errors}")
-        
+
         self._initialized = True
 
-    async def get_best_available(self, prefer_provider: Optional[str] = None) -> Optional[ExternalLLMProvider]:
+    async def get_best_available(self, prefer_provider: str | None = None) -> ExternalLLMProvider | None:
         """Get the best available external LLM based on configuration preferences.
-        
+
         Args:
             prefer_provider: Optional provider name to prefer ("openai", "anthropic")
-            
+
         Returns:
             Best available provider instance or None if none available
         """
         await self.initialize_all()
-        
+
         primary_provider = prefer_provider or self._config.get("primary_provider", "openai")
         fallback_provider = self._config.get("fallback_provider", "anthropic")
-        
+
         # Try primary provider first
         primary_provider_instance = await self._get_provider_by_name(primary_provider)
         if primary_provider_instance and await primary_provider_instance.is_available():
             return primary_provider_instance
-        
+
         # Try fallback provider
         if fallback_provider != primary_provider:
             fallback_provider_instance = await self._get_provider_by_name(fallback_provider)
             if fallback_provider_instance and await fallback_provider_instance.is_available():
                 return fallback_provider_instance
-        
+
         # Try any available provider as last resort
         for provider in self._providers.values():
             if await provider.is_available():
                 return provider
-        
+
         return None
 
-    async def get_provider(self, provider_type: ProviderType) -> Optional[ExternalLLMProvider]:
+    async def get_provider(self, provider_type: ProviderType) -> ExternalLLMProvider | None:
         """Get specific provider by type if available.
-        
+
         Args:
             provider_type: The provider type to get
-            
+
         Returns:
             Provider instance or None if not available
         """
         await self.initialize_all()
-        
+
         if provider_type not in self._providers:
             return None
-            
+
         provider = self._providers[provider_type]
         if await provider.is_available():
             return provider
-        
+
         return None
 
-    async def get_provider_by_name(self, provider_name: str) -> Optional[ExternalLLMProvider]:
+    async def get_provider_by_name(self, provider_name: str) -> ExternalLLMProvider | None:
         """Get specific provider by name if available.
-        
+
         Args:
             provider_name: The provider name ("openai", "anthropic")
-            
+
         Returns:
             Provider instance or None if not available
         """
         return await self._get_provider_by_name(provider_name)
 
-    async def _get_provider_by_name(self, provider_name: str) -> Optional[ExternalLLMProvider]:
+    async def _get_provider_by_name(self, provider_name: str) -> ExternalLLMProvider | None:
         """Internal method to get provider by name."""
         try:
             provider_type = ProviderType(provider_name.lower())
@@ -132,31 +132,31 @@ class ExternalLLMManager:
         except ValueError:
             return None
 
-    def list_available_providers(self) -> List[ProviderType]:
+    def list_available_providers(self) -> list[ProviderType]:
         """List all configured provider types."""
         return list(self._providers.keys())
 
-    def list_available_provider_names(self) -> List[str]:
+    def list_available_provider_names(self) -> list[str]:
         """List all configured provider names."""
-        return [pt.value for pt in self._providers.keys()]
+        return [pt.value for pt in self._providers]
 
-    async def list_healthy_providers(self) -> List[ProviderType]:
+    async def list_healthy_providers(self) -> list[ProviderType]:
         """List all providers that are currently healthy and available."""
         await self.initialize_all()
-        
+
         healthy_providers = []
         for provider_type, provider in self._providers.items():
             if await provider.is_available():
                 healthy_providers.append(provider_type)
-        
+
         return healthy_providers
 
-    async def list_healthy_provider_names(self) -> List[str]:
+    async def list_healthy_provider_names(self) -> list[str]:
         """List all provider names that are currently healthy and available."""
         healthy_types = await self.list_healthy_providers()
         return [pt.value for pt in healthy_types]
 
-    def get_provider_preferences(self) -> Dict[str, Any]:
+    def get_provider_preferences(self) -> dict[str, Any]:
         """Get provider preferences from configuration."""
         return {
             "primary_provider": self._config.get("primary_provider", "openai"),
@@ -165,10 +165,10 @@ class ExternalLLMManager:
             "configured_providers": self.list_available_provider_names(),
         }
 
-    async def get_all_provider_info(self) -> Dict[str, Dict[str, Any]]:
+    async def get_all_provider_info(self) -> dict[str, dict[str, Any]]:
         """Get comprehensive information about all configured providers."""
         await self.initialize_all()
-        
+
         provider_info = {}
         for provider_type, provider in self._providers.items():
             try:
@@ -177,27 +177,27 @@ class ExternalLLMManager:
                 provider_info[provider_type.value] = info
             except Exception as e:
                 provider_info[provider_type.value] = {"error": str(e)}
-        
+
         return provider_info
 
-    async def health_check_all(self) -> Dict[str, bool]:
+    async def health_check_all(self) -> dict[str, bool]:
         """Perform health check on all providers."""
         await self.initialize_all()
-        
+
         health_status = {}
         for provider_type, provider in self._providers.items():
             try:
                 health_status[provider_type.value] = await provider.is_available()
             except Exception:
                 health_status[provider_type.value] = False
-        
+
         return health_status
 
     def add_provider(self, provider: ExternalLLMProvider) -> None:
         """Add a provider instance to the manager.
-        
+
         Useful for dependency injection or testing.
-        
+
         Args:
             provider: Configured provider instance
         """
@@ -205,7 +205,7 @@ class ExternalLLMManager:
 
     def remove_provider(self, provider_type: ProviderType) -> None:
         """Remove a provider from the manager.
-        
+
         Args:
             provider_type: The provider type to remove
         """
@@ -218,16 +218,16 @@ class ExternalLLMManager:
         self._initialized = False
 
     async def estimate_costs_comparison(
-        self, 
-        input_tokens: int, 
+        self,
+        input_tokens: int,
         output_tokens: int
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Compare costs across all available providers.
-        
+
         Args:
             input_tokens: Number of input tokens
             output_tokens: Number of output tokens
-            
+
         Returns:
             Dictionary mapping provider names to estimated costs
         """
@@ -237,6 +237,6 @@ class ExternalLLMManager:
                 cost = provider.estimate_cost(input_tokens, output_tokens)
                 costs[provider_type.value] = cost
             except Exception:
-                costs[provider_type.value] = float('inf')  # Mark as unavailable
-        
-        return costs 
+                costs[provider_type.value] = float("inf")  # Mark as unavailable
+
+        return costs

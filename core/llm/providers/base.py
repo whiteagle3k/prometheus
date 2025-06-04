@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class ProviderType(Enum):
@@ -25,8 +25,8 @@ class ProviderCapabilities:
     supports_function_calling: bool = False
     cost_per_1k_input_tokens: float = 0.0
     cost_per_1k_output_tokens: float = 0.0
-    rate_limit_rpm: Optional[int] = None  # Requests per minute
-    rate_limit_tpm: Optional[int] = None  # Tokens per minute
+    rate_limit_rpm: int | None = None  # Requests per minute
+    rate_limit_tpm: int | None = None  # Tokens per minute
 
 
 @dataclass
@@ -35,10 +35,10 @@ class GenerationRequest:
     prompt: str
     max_tokens: int = 1000
     temperature: float = 0.7
-    system_prompt: Optional[str] = None
-    model: Optional[str] = None
+    system_prompt: str | None = None
+    model: str | None = None
     stream: bool = False
-    extra_params: Optional[Dict[str, Any]] = None
+    extra_params: dict[str, Any] | None = None
 
 
 @dataclass
@@ -48,17 +48,17 @@ class GenerationResponse:
     model_used: str
     tokens_used: int
     cost_estimate: float
-    provider_metadata: Optional[Dict[str, Any]] = None
+    provider_metadata: dict[str, Any] | None = None
 
 
 class ExternalLLMProvider(ABC):
     """Abstract base class for external LLM providers.
-    
+
     This defines the interface that all external LLM providers must implement.
     Following the Strategy pattern for different LLM provider implementations.
     """
 
-    def __init__(self, provider_config: Dict[str, Any]) -> None:
+    def __init__(self, provider_config: dict[str, Any]) -> None:
         """Initialize provider with configuration from identity.json."""
         self.config = provider_config
         self.provider_type = self._get_provider_type()
@@ -68,45 +68,39 @@ class ExternalLLMProvider(ABC):
     @abstractmethod
     def _get_provider_type(self) -> ProviderType:
         """Get the provider type enum."""
-        pass
 
     @abstractmethod
     def _get_capabilities(self) -> ProviderCapabilities:
         """Get provider capabilities from configuration."""
-        pass
 
     @abstractmethod
     async def _setup_client(self) -> None:
         """Setup the provider-specific client."""
-        pass
 
     @abstractmethod
     async def _generate_text(self, request: GenerationRequest) -> GenerationResponse:
         """Generate text using provider-specific API."""
-        pass
 
     @abstractmethod
     async def _generate_stream(self, request: GenerationRequest) -> AsyncGenerator[str, None]:
         """Generate text with streaming using provider-specific API."""
-        pass
 
     @abstractmethod
     async def _estimate_tokens(self, text: str) -> int:
         """Estimate token count for text using provider-specific method."""
-        pass
 
     @abstractmethod
     async def _health_check(self) -> bool:
         """Check if provider is healthy and responsive."""
-        pass
 
     # Public interface methods (these don't need to be overridden)
 
     async def initialize(self) -> None:
         """Initialize the provider."""
         if not self.config.get("enabled", False):
-            raise RuntimeError(f"Provider {self.provider_type.value} is disabled in configuration")
-        
+            msg = f"Provider {self.provider_type.value} is disabled in configuration"
+            raise RuntimeError(msg)
+
         await self._setup_client()
 
     async def generate(
@@ -114,7 +108,7 @@ class ExternalLLMProvider(ABC):
         prompt: str,
         max_tokens: int = 1000,
         temperature: float = 0.7,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
         **kwargs: Any,
     ) -> str:
         """Generate text using this provider."""
@@ -135,12 +129,13 @@ class ExternalLLMProvider(ABC):
         prompt: str,
         max_tokens: int = 1000,
         temperature: float = 0.7,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[str, None]:
         """Generate text with streaming."""
         if not self.capabilities.supports_streaming:
-            raise NotImplementedError(f"Provider {self.provider_type.value} doesn't support streaming")
+            msg = f"Provider {self.provider_type.value} doesn't support streaming"
+            raise NotImplementedError(msg)
 
         request = GenerationRequest(
             prompt=prompt,
@@ -163,16 +158,16 @@ class ExternalLLMProvider(ABC):
         """Check if provider is available and healthy."""
         if not self.config.get("enabled", False):
             return False
-        
+
         if self._client is None:
             try:
                 await self.initialize()
             except Exception:
                 return False
-        
+
         return await self._health_check()
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """Get comprehensive model information."""
         return {
             "provider": self.provider_type.value,
@@ -213,4 +208,4 @@ class ExternalLLMProvider(ABC):
 
     def __repr__(self) -> str:
         """Detailed representation."""
-        return f"<{self.__class__.__name__}(type={self.provider_type.value}, model={self.config.get('model')}, enabled={self.config.get('enabled')})>" 
+        return f"<{self.__class__.__name__}(type={self.provider_type.value}, model={self.config.get('model')}, enabled={self.config.get('enabled')})>"

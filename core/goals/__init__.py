@@ -6,4 +6,4 @@ Provides goal management and autonomous task capabilities.
 
 from .goal_manager import GoalManager
 
-__all__ = ["GoalManager"] 
+__all__ = ["GoalManager"]

@@ -2,7 +2,6 @@
 
 import warnings
 from collections.abc import AsyncGenerator
-from typing import Any, Dict, Optional
 
 try:
     import openai
@@ -10,7 +9,8 @@ except ImportError:
     print("Warning: openai not installed. OpenAI provider will not work.")
     openai = None
 
-from ...config import config
+from core.config import config
+
 from .base import (
     ExternalLLMProvider,
     GenerationRequest,
@@ -43,10 +43,12 @@ class OpenAIProvider(ExternalLLMProvider):
     async def _setup_client(self) -> None:
         """Setup OpenAI client."""
         if not openai:
-            raise RuntimeError("openai package not installed")
-        
+            msg = "openai package not installed"
+            raise RuntimeError(msg)
+
         if not config.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY not configured")
+            msg = "OPENAI_API_KEY not configured"
+            raise RuntimeError(msg)
 
         try:
             # Suppress warnings for compatibility issues
@@ -54,7 +56,8 @@ class OpenAIProvider(ExternalLLMProvider):
                 warnings.simplefilter("ignore")
                 self._client = openai.AsyncOpenAI(api_key=config.openai_api_key)
         except Exception as e:
-            raise RuntimeError(f"Failed to setup OpenAI client: {e}")
+            msg = f"Failed to setup OpenAI client: {e}"
+            raise RuntimeError(msg)
 
     async def _generate_text(self, request: GenerationRequest) -> GenerationResponse:
         """Generate text using OpenAI API."""
@@ -62,7 +65,7 @@ class OpenAIProvider(ExternalLLMProvider):
             await self._setup_client()
 
         model = request.model or self.config.get("model", "gpt-4o-mini")
-        
+
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
@@ -81,10 +84,10 @@ class OpenAIProvider(ExternalLLMProvider):
 
         try:
             response = await self._client.chat.completions.create(**request_kwargs)
-            
+
             content = response.choices[0].message.content or ""
             tokens_used = response.usage.total_tokens if response.usage else 0
-            
+
             # Calculate cost estimate
             input_tokens = response.usage.prompt_tokens if response.usage else 0
             output_tokens = response.usage.completion_tokens if response.usage else 0
@@ -103,7 +106,8 @@ class OpenAIProvider(ExternalLLMProvider):
                 },
             )
         except Exception as e:
-            raise RuntimeError(f"OpenAI API error: {e}")
+            msg = f"OpenAI API error: {e}"
+            raise RuntimeError(msg)
 
     async def _generate_stream(self, request: GenerationRequest) -> AsyncGenerator[str, None]:
         """Generate text with streaming using OpenAI API."""
@@ -111,7 +115,7 @@ class OpenAIProvider(ExternalLLMProvider):
             await self._setup_client()
 
         model = request.model or self.config.get("model", "gpt-4o-mini")
-        
+
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
@@ -135,7 +139,8 @@ class OpenAIProvider(ExternalLLMProvider):
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
         except Exception as e:
-            raise RuntimeError(f"OpenAI streaming error: {e}")
+            msg = f"OpenAI streaming error: {e}"
+            raise RuntimeError(msg)
 
     async def _estimate_tokens(self, text: str) -> int:
         """Estimate token count for OpenAI models."""
@@ -167,9 +172,9 @@ class OpenAIProvider(ExternalLLMProvider):
         """Check if this provider supports function calling."""
         return True
 
-    def get_rate_limits(self) -> Dict[str, Optional[int]]:
+    def get_rate_limits(self) -> dict[str, int | None]:
         """Get rate limits for this provider."""
         return {
             "requests_per_minute": self.capabilities.rate_limit_rpm,
             "tokens_per_minute": self.capabilities.rate_limit_tpm,
-        } 
+        }

@@ -2,9 +2,10 @@
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Any, Optional, List
+from typing import Any
 
-from ..config import config
+from core.config import config
+
 from .vector_store import VectorStore
 
 
@@ -41,15 +42,15 @@ class MemorySummariser:
         recent_memories = []
         for memory in memories:
             metadata = memory.get("metadata", {})
-            
+
             # Skip if it's already a summary and we're excluding summaries
             if exclude_summaries and metadata.get("type") == "summary":
                 continue
-                
+
             # Skip if already processed in a summary
             if metadata.get("is_summarized", False):
                 continue
-                
+
             timestamp_str = metadata.get("timestamp", "")
             if timestamp_str:
                 try:
@@ -73,7 +74,7 @@ class MemorySummariser:
 Extract key insights, patterns, and learnings. Focus on:
 
 1. Important decisions and outcomes
-2. Successful strategies and approaches  
+2. Successful strategies and approaches
 3. Common patterns and lessons learned
 4. Key knowledge gained
 5. User preferences and context
@@ -102,7 +103,7 @@ Keep the summary comprehensive but concise."""
         self,
         memories: list[dict[str, Any]],
         use_local_llm: bool = True,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Create a summary of memories using local LLM for TL;DR compression."""
         if not memories:
             return None
@@ -112,21 +113,20 @@ Keep the summary comprehensive but concise."""
         if use_local_llm:
             try:
                 # Use local LLM for summarization (as recommended by o3)
-                from ..llm.local_llm import LocalLLM
+                from core.llm.local_llm import LocalLLM
                 local_llm = LocalLLM()
-                
+
                 await local_llm.ensure_loaded()
-                
+
                 # Generate summary using local LLM
-                summary = await local_llm.generate(
+                return await local_llm.generate(
                     prompt=prompt,
                     max_tokens=800,  # Reasonable length for summary
                     temperature=0.3,  # Lower temperature for consistent summarization
                     system_prompt="You are a memory summarization assistant. Create concise, accurate summaries that preserve key information and insights."
                 )
-                
-                return summary
-                
+
+
             except Exception as e:
                 print(f"❌ Local LLM summarization failed: {e}")
                 # Fall back to simple summary
@@ -150,7 +150,7 @@ Keep the summary comprehensive but concise."""
                 content += "..."
             content_snippets.append(content)
 
-        summary = f"""## Memory Summary ({len(memories)} entries)
+        return f"""## Memory Summary ({len(memories)} entries)
 Generated: {datetime.now().isoformat()}
 
 ### Memory Types Distribution:
@@ -162,16 +162,15 @@ Generated: {datetime.now().isoformat()}
 Total memories processed: {len(memories)}
 Compression ratio: {len(memories)}:1
 """
-        return summary
 
-    async def cleanup_summarized_memories(self, memory_ids: List[str]) -> bool:
+    async def cleanup_summarized_memories(self, memory_ids: list[str]) -> bool:
         """Delete raw memory chunks after successful summarization (o3's recommendation)."""
         try:
             if not memory_ids:
                 return True
-                
+
             print(f"🗑️  Cleaning up {len(memory_ids)} summarized memory chunks...")
-            
+
             # Mark memories as summarized first (safer than immediate deletion)
             for memory_id in memory_ids:
                 try:
@@ -181,13 +180,13 @@ Compression ratio: {len(memories)}:1
                     )
                 except Exception as e:
                     print(f"⚠️ Failed to mark memory {memory_id} as summarized: {e}")
-            
+
             # Actually delete the memories to free space
             deleted_count = await self.vector_store.delete_memories(memory_ids)
             print(f"✅ Cleaned up {deleted_count}/{len(memory_ids)} memory chunks")
-            
+
             return deleted_count == len(memory_ids)
-            
+
         except Exception as e:
             print(f"❌ Memory cleanup failed: {e}")
             return False
@@ -196,7 +195,7 @@ Compression ratio: {len(memories)}:1
         self,
         delete_originals: bool = True,  # Enable cleanup by default (o3's recommendation)
         min_memories_for_cleanup: int = 20,  # Safety threshold
-    ) -> Optional[str]:
+    ) -> str | None:
         """Perform full summarization and compression cycle with cleanup."""
         # Use lock to prevent parallel summarization conflicts (o3's issue #6)
         async with self._summarization_lock:
@@ -227,7 +226,7 @@ Compression ratio: {len(memories)}:1
                     "is_summary": True,  # Flag for easy identification
                     "compression_ratio": f"{len(memories)}:1"
                 }
-                
+
                 summary_id = await self.vector_store.store_memory(
                     content=summary,
                     memory_type="summary",
@@ -240,7 +239,7 @@ Compression ratio: {len(memories)}:1
                 if delete_originals and len(memories) >= min_memories_for_cleanup:
                     memory_ids = [mem.get("id") for mem in memories if mem.get("id")]
                     cleanup_success = await self.cleanup_summarized_memories(memory_ids)
-                    
+
                     if cleanup_success:
                         print(f"🎯 Successfully compressed {len(memories)} memories into 1 summary")
                     else:
@@ -268,7 +267,7 @@ Compression ratio: {len(memories)}:1
                     print(f"✅ Periodic summarization completed: {result}")
                 else:
                     print("ℹ️  Periodic summarization: nothing to summarize")
-                    
+
                 await asyncio.sleep(interval_hours * 3600)  # Convert to seconds
             except Exception as e:
                 print(f"❌ Error in periodic summarization: {e}")
@@ -279,21 +278,21 @@ Compression ratio: {len(memories)}:1
         try:
             # Count total memories
             total_memories = await self.vector_store.get_memory_count()
-            
+
             # Count summaries
             summary_search = await self.vector_store.search_memories(
                 query="summary",
                 n_results=1000,  # High number to get all summaries
             )
-            
+
             summaries = [m for m in summary_search if m.get("metadata", {}).get("type") == "summary"]
-            
+
             # Calculate compression stats
             total_compressed = sum(
-                m.get("metadata", {}).get("original_count", 0) 
+                m.get("metadata", {}).get("original_count", 0)
                 for m in summaries
             )
-            
+
             return {
                 "total_memories": total_memories,
                 "summaries_count": len(summaries),
@@ -302,7 +301,7 @@ Compression ratio: {len(memories)}:1
                 "space_saved_estimate": total_compressed - len(summaries),
                 "summarization_threshold": config.memory_summarization_threshold,
             }
-            
+
         except Exception as e:
             print(f"❌ Failed to get summarization stats: {e}")
             return {"error": str(e)}
