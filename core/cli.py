@@ -62,7 +62,7 @@ async def run_shell(default_entity: str = "aletheia") -> int:
         while True:
             try:
                 # Get user input
-                user_input = input(f"\n🐚 {default_entity.title()}: ").strip()
+                user_input = input(f"\n🗣️  You: ").strip()
 
                 # Handle exit commands
                 if user_input.lower() in ["quit", "exit", "q"]:
