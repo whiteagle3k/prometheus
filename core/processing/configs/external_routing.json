@@ -30,7 +30,14 @@
       "технология", "technology", "молекула", "molecule", "атом", "atom",
       "электрон", "electron", "ракет", "rocket", "космос", "space", 
       "астрономия", "astronomy", "реактор", "reactor", "орбит", "orbital",
-      "вычисли", "calculate", "рассчита", "compute", "сложн", "complex"
+      "вычисли", "calculate", "рассчита", "compute", "сложн", "complex",
+      
+      "черные дыры", "черн", "дыр", "black holes", "black hole",
+      "звезд", "stars", "star", "планет", "planets", "planet", 
+      "галактик", "galaxy", "galaxies", "вселенн", "universe",
+      "солнц", "sun", "луна", "moon", "комет", "comet", "астероид", "asteroid",
+      "сингулярност", "singularity", "гравитац", "gravity", "gravitational",
+      "телескоп", "telescope", "спутник", "satellite", "марс", "mars"
     ],
     "conversational_keywords": [
       "привет", "hello", "hi", "как дела", "how are you", "кто ты", "who are you",
