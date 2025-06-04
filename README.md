@@ -374,3 +374,121 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines and the clean 
 - [Architecture](docs/architecture.md) | [Multi-Entity](docs/architecture-refactor.md) | [Production](docs/production-ready.md)
 - [Configuration](docs/configuration.md) | [Memory](docs/memory.md) | [Installation](scripts/README.md)
 - [Service Layer](docs/service.md) | [Troubleshooting](docs/troubleshooting.md)
+
+# Prometheus – Universal Multi‑Entity AI Framework 🚀  
+![CI](https://github.com/whiteagle3k/prometheus/actions/workflows/ci.yml/badge.svg)
+
+Prometheus lets you run **many specialised AI personalities in one process** while keeping
+routing / memory / monitoring shared and lightning‑fast.
+
+> **TL;DR**  
+> 1 → `git clone …` 2 → `./scripts/install_<platform>.{sh|ps1}` 3 → `python prometheus.py api --entity aletheia`  
+
+---
+
+## 📑 Table of Contents
+1. [Key Features](#key-features)  
+2. [Quick Start](#quick-start)  
+3. [Working with Entities](#working-with-entities)  
+4. [Architecture at a Glance](#architecture-at-a-glance)  
+5. [Installation Scripts](#installation-scripts)  
+6. [Docs & Links](#docs--links)
+
+---
+
+## Key Features
+| ⚡ | Feature |
+|---|---------|
+| **Ultra‑Fast Routing** | rule engine + SmolLM2‑135 M → decision in **\<1 ms** |
+| **Self‑RAG Intelligence** | reflection, memory critic, context optimiser |
+| **Multi‑Entity Runtime** | load, swap, or run **many agents** inside one process |
+| **Cross‑LLM Coordination** | utility → local → external models with zero context‑leak |
+| **Cost‑Efficient** | 85 % traffic served locally; external calls only for heavy science |
+| **Production‑Ready** | FastAPI, Telegram bot, terminal shell, Docker / Compose, Prometheus metrics |
+
+---
+
+## Quick Start
+
+```bash
+# 1. Clone
+git clone https://github.com/whiteagle3k/prometheus.git && cd prometheus
+
+# 2. Install  (choose your platform)
+./scripts/install_mac.sh        # macOS / Metal
+./scripts/install_linux.sh      # Linux or WSL + CUDA
+./scripts/install_windows.ps1   # Windows + CUDA
+
+# 3. Run API server with first entity
+poetry run python prometheus.py api --entity aletheia
+```
+
+Now open **<http://localhost:8000/docs>** and POST:
+
+```json
+POST /v1/chat?entity=aletheia
+{
+  "user_id": "demo",
+  "message": "Hello, what can you do?"
+}
+```
+
+---
+
+## Working with Entities
+
+```bash
+# List available entities
+curl localhost:8000/v1/entities
+
+# Switch in Telegram
+/use aletheia
+/use teslabot
+
+# Run several entities at once
+python prometheus.py api --entities aletheia,teslabot
+```
+
+Add your own personality:
+
+```bash
+mkdir -p entities/myagent/identity
+cp entities/aletheia/identity/identity.json entities/myagent/identity/
+# edit, then:
+echo "from core.base_entity import BaseEntity\n\nclass MyagentEntity(BaseEntity):\n    IDENTITY_PATH = __file__.parent / 'identity'" > entities/myagent/__init__.py
+```
+
+---
+
+## Architecture at a Glance
+
+```text
+User → Fast LLM (97 MB) ─┐
+                        Router ──► Local LLM (Phi‑3‑M)
+                        │         External LLMs
+                        │         Vector Memory
+                        ▼
+                 Clean response (no contamination)
+```
+
+One **registry** keeps exactly one instance per entity → all front‑ends (API, Telegram, Shell) share that instance.
+
+---
+
+## Installation Scripts
+| OS | Script | Notes |
+|----|--------|-------|
+| macOS (Metal) | `scripts/install_mac.sh` | Apple Silicon, 16 GB RAM |
+| Linux / WSL + CUDA | `scripts/install_linux.sh` | Ubuntu 22.04 + driver ≥ 525 |
+| Windows + CUDA | `scripts/install_windows.ps1` | Run from admin PowerShell |
+
+---
+
+## Docs & Links
+* **Architecture** – `docs/architecture.md`  
+* **Memory system** – `docs/memory.md`  
+* **Production guide** – `docs/production-ready.md`  
+* **Troubleshooting** – `docs/troubleshooting.md`
+
+Happy hacking!  
+*— The Prometheus team*  
