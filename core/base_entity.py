@@ -611,7 +611,10 @@ class BaseEntity(ABC):
                     metadata["interaction_user_id"] = user_id
 
                 chunk = MemoryChunk(
+                    id=f"exp_{self.session_id}_{int(datetime.now().timestamp())}",
                     text=experience_text,
+                    embedding=[0.0] * 384,  # Generate proper embedding or use placeholder
+                    tier=MemoryTier.USER,
                     memory_type=MemoryType.CONVERSATION,
                     metadata=metadata
                 )

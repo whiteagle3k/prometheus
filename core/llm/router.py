@@ -260,6 +260,8 @@ class LLMRouter:
         route_used = None
         local_confidence = None
         entropy = None
+        routing_result = {}  # Initialize to avoid undefined variable error
+        is_correct = False  # Initialize success tracking
 
         try:
             # Make routing decision
@@ -392,7 +394,7 @@ class LLMRouter:
                 execution_time=execution_time,
                 actual_route=route_used,
                 success=is_correct,
-                error_details=str(e) if e else ""
+                error_details=""
             )
 
             return result
@@ -416,9 +418,9 @@ class LLMRouter:
             self._log_routing_decision(
                 query=task.prompt,
                 route_decision="error",
-                oracle_result={},
+                oracle_result=routing_result,  # Now always defined
                 execution_time=execution_time,
-                actual_route="error",
+                actual_route=route_used or "error",
                 success=False,
                 error_details=str(e)
             )
