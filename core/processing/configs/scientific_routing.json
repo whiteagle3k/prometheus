@@ -1,17 +1,47 @@
 {
   "name": "scientific_routing",
-  "version": "1.0.0", 
-  "description": "Configuration for detecting scientific queries that should route to external LLMs",
+  "version": "1.1.0", 
+  "description": "Configuration for detecting queries that should route to external LLMs",
   "parameters": {
+    "news_and_events_keywords": [
+      "новости", "новост", "сегодня", "вчера", "завтра", "последние", "актуальн", "произошло",
+      "события", "мире", "мир", "страна", "политика", "экономика", "случилось",
+      "news", "today", "yesterday", "tomorrow", "latest", "current", "happened", 
+      "events", "world", "country", "politics", "economy", "breaking"
+    ],
+    "detailed_explanation_keywords": [
+      "детально", "подробно", "объясни", "расскажи", "как работает", "принцип работы",
+      "механизм", "структура", "процесс", "анализ", "исследование", "изучение",
+      "detailed", "explain", "how does", "how works", "principle", "mechanism",
+      "structure", "process", "analysis", "research", "study"
+    ],
+    "medical_and_health_keywords": [
+      "медицин", "здоровье", "лечение", "болезн", "терапия", "диагност", "препарат",
+      "персонализ", "геном", "ген", "биотехнолог", "фармацевт",
+      "medicine", "medical", "health", "treatment", "disease", "therapy", "diagnosis",
+      "personalized", "genome", "gene", "biotech", "pharmaceutical"
+    ],
     "scientific_keywords": [
       "квантов", "quantum", "физик", "physics", "химия", "chemistry", 
       "биология", "biology", "математика", "math", "программирование", "programming", 
-      "инженерия", "engineering", "принципы", "principles", "механизм", "mechanism", 
-      "как работает", "how does", "объясни", "explain", "подробно", "detailed", 
-      "детально", "in detail"
+      "инженерия", "engineering", "принципы", "principles", "теория", "theory",
+      "формула", "formula", "уравнение", "equation", "двигатель", "engine",
+      "энергия", "energy", "мощность", "power", "система", "system", 
+      "технология", "technology", "молекула", "molecule", "атом", "atom",
+      "электрон", "electron", "ракет", "rocket", "космос", "space", 
+      "астрономия", "astronomy", "реактор", "reactor", "орбит", "orbital",
+      "вычисли", "calculate", "рассчита", "compute", "сложн", "complex"
     ],
-    "complex_query_indicators": [
-      "подробно", "detailed", "принципы", "principles", "объясни", "explain"
+    "conversational_keywords": [
+      "привет", "hello", "hi", "как дела", "how are you", "кто ты", "who are you",
+      "спасибо", "thank", "пока", "bye", "хорошо", "good", "да", "yes", "нет", "no",
+      "утро", "morning", "день", "day", "вечер", "evening"
+    ],
+    "external_routing_priority": [
+      "news_and_events_keywords",
+      "detailed_explanation_keywords", 
+      "medical_and_health_keywords",
+      "scientific_keywords"
     ],
     "distance_threshold": 0.7,
     "memory_relevance_threshold": 0.8

@@ -22,6 +22,7 @@ except ImportError:
     Llama = None
 
 from core.config import config
+from core.processing.config import get_processor_config
 
 # TODO: Remove direct identity import - should be passed from entity
 # from ..identity import identity
@@ -436,68 +437,44 @@ Decision:"""
     # Optimized rule-based methods
     def _optimized_rule_based_routing(self, query: str) -> dict[str, Any]:
         """
-        Optimized rule-based routing based on comparison test results.
-        This achieved 100% accuracy in testing - better than LLM models!
+        Optimized rule-based routing using processing config patterns.
+        Uses the scientific_routing.json configuration instead of hardcoded patterns.
         """
         query_lower = query.lower()
-
-        # Enhanced scientific/technical keywords for external routing
-        external_keywords = [
-            # News and current events (CRITICAL for up-to-date information)
-            "новости", "новост", "сегодня", "вчера", "завтра", "последние", "актуальн", "произошло",
-            "события", "мире", "мир", "страна", "политика", "экономика", "случилось",
-            "news", "today", "yesterday", "tomorrow", "latest", "current", "happened", 
-            "events", "world", "country", "politics", "economy", "breaking",
+        
+        # Load routing patterns from processing config
+        try:
+            routing_config = get_processor_config("scientific_routing")
+            params = routing_config.parameters
             
-            # Detailed explanations and complex topics
-            "детально", "подробно", "объясни", "расскажи", "как работает", "принцип работы",
-            "механизм", "структура", "процесс", "анализ", "исследование", "изучение",
-            "detailed", "explain", "how does", "how works", "principle", "mechanism",
-            "structure", "process", "analysis", "research", "study",
+            # Check external routing keywords in priority order
+            external_categories = params.get("external_routing_priority", [])
             
-            # Medical and health topics (for current research)
-            "медицин", "здоровье", "лечение", "болезн", "терапия", "диагност", "препарат",
-            "персонализ", "геном", "ген", "биотехнолог", "фармацевт",
-            "medicine", "medical", "health", "treatment", "disease", "therapy", "diagnosis",
-            "personalized", "genome", "gene", "biotech", "pharmaceutical",
+            for category in external_categories:
+                keywords = params.get(category, [])
+                if any(keyword in query_lower for keyword in keywords):
+                    category_name = category.replace("_keywords", "").replace("_", " ")
+                    return {
+                        "route": "EXTERNAL",
+                        "confidence": "high",
+                        "reasoning": f"{category_name.title()} detected",
+                        "complexity": "complex"
+                    }
             
-            # Russian scientific terms
-            "квантов", "физик", "химия", "биология", "математика", "инженер", "научн",
-            "теория", "формула", "уравнение", "двигатель", "энергия", "мощность", "система", 
-            "технология", "молекула", "атом", "электрон", "ракет", "космос", "астрономия", 
-            "реактор", "орбит", "вычисли", "рассчита", "сложн",
-            
-            # English scientific terms
-            "quantum", "physics", "chemistry", "biology", "mathematics", "engineering", "science",
-            "theory", "formula", "equation", "engine", "energy", "power", "system", 
-            "technology", "molecule", "atom", "electron", "rocket", "space", "astronomy", 
-            "reactor", "orbital", "calculate", "compute", "complex"
-        ]
-
-        # Simple conversational keywords that stay local
-        local_keywords = [
-            "привет", "hello", "hi", "как дела", "how are you", "кто ты", "who are you",
-            "спасибо", "thank", "пока", "bye", "хорошо", "good", "да", "yes", "нет", "no",
-            "утро", "morning", "день", "day", "вечер", "evening"
-        ]
-
-        # Check for external routing triggers
-        if any(keyword in query_lower for keyword in external_keywords):
-            return {
-                "route": "EXTERNAL",
-                "confidence": "high",
-                "reasoning": "Scientific/technical content detected",
-                "complexity": "complex"
-            }
-
-        # Check for simple local conversations
-        if any(keyword in query_lower for keyword in local_keywords):
-            return {
-                "route": "LOCAL",
-                "confidence": "high",
-                "reasoning": "Simple conversation detected",
-                "complexity": "simple"
-            }
+            # Check conversational keywords for local routing
+            conversational_keywords = params.get("conversational_keywords", [])
+            if any(keyword in query_lower for keyword in conversational_keywords):
+                return {
+                    "route": "LOCAL",
+                    "confidence": "high", 
+                    "reasoning": "Simple conversation detected",
+                    "complexity": "simple"
+                }
+                
+        except Exception as e:
+            print(f"⚠️ Failed to load routing config: {e}")
+            # Fallback to basic hardcoded logic if config fails
+            pass
 
         # Default to local for moderate complexity (most queries)
         return {
