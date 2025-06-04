@@ -95,8 +95,13 @@ class MemoryController:
         logger.info(f"Total retrieved: {result.total_retrieved} chunks across {len(result.tier_counts)} tiers")
         return result
     
-    async def store(self, chunk: MemoryChunk, tier: Optional[MemoryTier] = None) -> str:
+    async def store(self, chunk: MemoryChunk, tier: Optional[MemoryTier] = None, user_id: Optional[str] = None) -> str:
         """Store memory chunk in specified tier or auto-classify.
+        
+        Args:
+            chunk: Memory chunk to store
+            tier: Target memory tier (if None, auto-classified)
+            user_id: User identifier for USER tier storage (implements USER<id> prefix)
         
         If tier not specified, uses classification logic:
         - Self-reflection terms → CORE_SELF
@@ -107,26 +112,31 @@ class MemoryController:
             tier = self._classify_memory_tier(chunk)
             chunk.tier = tier
         
-        # Ensure user_id for USER tier
-        if tier == MemoryTier.USER and "user_id" not in chunk.metadata:
-            chunk.metadata["user_id"] = self.current_user_id
+        # Handle user_id for USER tier with USER<id> prefix as specified in task
+        effective_user_id = user_id or self.current_user_id
+        if tier == MemoryTier.USER:
+            chunk.metadata["user_id"] = effective_user_id
+            # Implement USER<id> prefix in memory_type as specified in task
+            memory_type_with_user = f"USER{effective_user_id}_{chunk.memory_type.value}"
+        else:
+            memory_type_with_user = f"{tier.value}_{chunk.memory_type.value}"
         
         # Add tier information to metadata for filtering
         chunk.metadata["memory_tier"] = tier.value
         chunk.metadata["memory_type"] = chunk.memory_type.value
         
-        # Store in unified store with tier metadata
+        # Store in unified store with tier metadata and USER<id> prefix
         store = self.stores[tier]
         memory_id = await store.store_memory(
             content=chunk.text,
-            memory_type=f"{tier.value}_{chunk.memory_type.value}",
+            memory_type=memory_type_with_user,  # Uses USER<id> prefix for user memories
             metadata=chunk.metadata
         )
         
         # Check for overflow and summarize if needed
         await self._check_overflow(tier)
         
-        logger.debug(f"Stored memory {memory_id} in {tier.value} tier")
+        logger.debug(f"Stored memory {memory_id} in {tier.value} tier with type: {memory_type_with_user}")
         return memory_id
     
     async def summarise_if_needed(self) -> Dict[MemoryTier, bool]:

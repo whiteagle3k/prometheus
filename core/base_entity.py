@@ -6,6 +6,7 @@ Defines clear contracts for identity, planning, and reflection overrides.
 """
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,8 @@ from .memory.summariser import MemorySummariser
 from .context.context_manager import ConversationContext
 from .goals.goal_manager import GoalManager
 from .config import config
+
+logger = logging.getLogger(__name__)
 
 
 class BasePlanner(ABC):
@@ -124,23 +127,29 @@ class BaseEntity(ABC):
         from .reflection.default_reflection import DefaultReflection
         return DefaultReflection(self.router, self.vector_store)
     
-    async def think(self, user_text: str) -> str:
+    async def think(self, user_text: str, user_id: Optional[str] = None) -> str:
         """
         Main thinking interface - processes user input and returns response.
+        
+        Args:
+            user_text: User input text
+            user_id: Optional user identifier for session management
         
         This is the primary contract method that entities must support.
         """
         
         print(f"\n🧠 Processing: {user_text[:100]}{'...' if len(user_text) > 100 else ''}")
+        if user_id:
+            print(f"👤 User session: {user_id}")
         
         start_time = datetime.now()
         
-        # Update conversation context
-        self.context.update_from_input(user_text)
+        # Update conversation context with user_id
+        self.context.update_from_input(user_text, user_id=user_id)
         
         try:
             # Process through the entity's thinking pipeline
-            result = await self._process_input(user_text)
+            result = await self._process_input(user_text, user_id=user_id)
             
             # Extract response and execution details
             response = result.get("response", "")
@@ -161,8 +170,8 @@ class BaseEntity(ABC):
                 user_text, response, self.router.local_llm
             )
             
-            # Store experience in memory
-            await self._store_experience(user_text, result)
+            # Store experience in memory with user_id
+            await self._store_experience(user_text, result, user_id=user_id)
             
             # Optional reflection
             if config.reflection_enabled:
@@ -175,6 +184,7 @@ class BaseEntity(ABC):
             task_record = {
                 "timestamp": start_time.isoformat(),
                 "user_input": user_text,
+                "user_id": user_id,
                 "result": result,
                 "session_id": self.session_id,
                 "conversation_context": self.context.get_context_summary(),
@@ -271,7 +281,7 @@ class BaseEntity(ABC):
                 print(f"⚠️ Error in autonomous loop: {e}")
                 await asyncio.sleep(5)  # Brief pause before retrying
     
-    async def _process_input(self, user_input: str) -> Dict[str, Any]:
+    async def _process_input(self, user_input: str, user_id: Optional[str] = None) -> Dict[str, Any]:
         """Core input processing logic - can be extended by entities."""
         
         # User data handling
@@ -583,10 +593,60 @@ class BaseEntity(ABC):
         
         return "\n".join(context_parts)
     
-    async def _store_experience(self, user_input: str, result: Dict[str, Any]) -> None:
-        """Store the task experience in memory."""
-        # This logic will be moved from orchestrator.py
-        pass
+    async def _store_experience(self, user_input: str, result: Dict[str, Any], user_id: Optional[str] = None) -> None:
+        """Store the task experience in memory with user_id support."""
+        try:
+            if self.memory_controller:
+                # Use three-tier memory system with user_id support
+                from .memory.models import MemoryChunk, MemoryType, MemoryTier
+                
+                # Create memory chunk for the experience
+                experience_text = f"User: {user_input}\nResponse: {result.get('response', '')}"
+                metadata = {
+                    "timestamp": datetime.now().isoformat(),
+                    "session_id": self.session_id,
+                    "route_used": result.get("execution_details", {}).get("route_used", "unknown"),
+                    "user_input": user_input,
+                    "response": result.get('response', ''),
+                    "approach": result.get("approach", "unknown")
+                }
+                
+                # Add user_id to metadata if provided
+                if user_id:
+                    metadata["interaction_user_id"] = user_id
+                
+                chunk = MemoryChunk(
+                    text=experience_text,
+                    memory_type=MemoryType.CONVERSATION,
+                    metadata=metadata
+                )
+                
+                # Store in USER tier with user_id (implements USER<id> prefix)
+                await self.memory_controller.store(
+                    chunk=chunk,
+                    tier=MemoryTier.USER,
+                    user_id=user_id  # This implements the USER<id> prefix as specified
+                )
+                
+                logger.debug(f"Stored experience in three-tier memory for user: {user_id or 'default'}")
+                
+            else:
+                # Fallback to simple vector store
+                await self.vector_store.store_memory(
+                    content=f"User: {user_input}\nResponse: {result.get('response', '')}",
+                    memory_type="conversation",
+                    metadata={
+                        "timestamp": datetime.now().isoformat(),
+                        "session_id": self.session_id,
+                        "user_id": user_id or "default",
+                        "route_used": result.get("execution_details", {}).get("route_used", "unknown")
+                    }
+                )
+                logger.debug(f"Stored experience in simple memory for user: {user_id or 'default'}")
+                
+        except Exception as e:
+            logger.error(f"Failed to store experience: {e}")
+            # Don't raise - memory storage failures shouldn't break conversation
     
     async def _maybe_reflect(self, user_input: str, result: Dict[str, Any]) -> None:
         """Optionally perform reflection on the completed task."""

@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
 """
-Prometheus Framework CLI
+Prometheus Service Launcher
 
-A clean command-line interface for running AI entities.
+Unified entry point for Aletheia service with multiple frontend modes:
+- api: Launch FastAPI REST server
+- telegram: Launch Telegram bot  
+- shell: Launch interactive terminal shell
 
-Usage:
-    python prometheus.py <entity_name>        # Run entity interactively
-    python prometheus.py list                 # List available entities  
-    python prometheus.py status <entity_name> # Quick status check
-    python prometheus.py --help               # Show help
-
-Examples:
-    python prometheus.py aletheia
-    poetry run python prometheus.py aletheia
-    python prometheus.py list
+All modes share the same singleton Aletheia instance.
 """
 
 import argparse
@@ -26,203 +20,156 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 
-async def run_entity_interactive(entity_name: str):
-    """Run entity in interactive chat mode."""
-    
-    print(f"🚀 Starting {entity_name.title()} Console Interface")
-    print("=" * 60)
-    
-    try:
-        # Import and initialize entity
-        from entities import get_entity_class
-        
-        print(f"📦 Loading {entity_name} entity...")
-        EntityClass = get_entity_class(entity_name)
-        entity = EntityClass()
-        
-        # Show initial status
-        print(f"\n📊 {entity_name.title()} Status:")
-        status = await entity.get_status()
-        print(f"  • Entity: {status['entity_name']}")
-        print(f"  • Session: {status['session_id']}")
-        print(f"  • Memory system: {status['memory_system']}")
-        print(f"  • Router health: {status['router_health']['local_llm_available']} (local), {status['router_health']['external_llm_available']} (external)")
-        
-        print("\n" + "=" * 60)
-        print("💬 Interactive Chat Started")
-        print("Commands:")
-        print("  - Type your message and press Enter")
-        print("  - Type 'status' to see entity status")
-        print("  - Type 'reset' to reset memory")
-        print("  - Type 'quit', 'exit' or Ctrl+C to exit")
-        print("=" * 60)
-        
-        # Interactive chat loop
-        while True:
-            try:
-                # Get user input
-                user_input = input(f"\n👤 You: ").strip()
-                
-                # Handle commands
-                if user_input.lower() in ['quit', 'exit', 'q']:
-                    print("\n👋 Goodbye!")
-                    break
-                elif user_input.lower() == 'status':
-                    print(f"\n📊 {entity_name.title()} Status:")
-                    status = await entity.get_status()
-                    print(f"  • Tasks completed: {status['tasks_completed']}")
-                    print(f"  • Memory stats: {status['memory_stats']}")
-                    print(f"  • Session: {status['session_id']}")
-                    continue
-                elif user_input.lower() == 'reset':
-                    print("\n🗑️ Resetting memory...")
-                    await entity.reset_memory()
-                    print("✅ Memory reset complete")
-                    continue
-                elif not user_input:
-                    continue
-                
-                # Get response from entity
-                print(f"\n🤔 {entity_name.title()} is thinking...")
-                response = await entity.think(user_input)
-                print(f"\n🧠 {entity_name.title()}: {response}")
-                
-            except KeyboardInterrupt:
-                print("\n\n👋 Goodbye!")
-                break
-            except Exception as e:
-                print(f"\n❌ Error: {e}")
-                continue
-    
-    except Exception as e:
-        print(f"❌ Failed to start {entity_name}: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
-    
-    return 0
-
-
-async def list_entities():
-    """List all available entities."""
-    
-    print("🔍 Discovering available entities...")
-    
-    try:
-        from entities import discover_entities
-        
-        entities = discover_entities()
-        
-        print(f"\n📋 Available Entities ({len(entities)}):")
-        print("=" * 40)
-        
-        for name, info in entities.items():
-            description = info.get('description', 'No description')
-            version = info.get('version', '1.0.0')
-            capabilities = info.get('capabilities', [])
-            
-            print(f"🤖 {name}")
-            print(f"   Description: {description}")
-            print(f"   Version: {version}")
-            if capabilities:
-                print(f"   Capabilities: {', '.join(capabilities)}")
-            print()
-        
-    except Exception as e:
-        print(f"❌ Error discovering entities: {e}")
-        return 1
-    
-    return 0
-
-
-async def quick_status(entity_name: str):
-    """Show quick status for an entity without starting interactive mode."""
-    
-    print(f"📊 {entity_name.title()} Quick Status")
-    print("=" * 40)
-    
-    try:
-        from entities import get_entity_class
-        
-        print(f"📦 Loading {entity_name} entity...")
-        EntityClass = get_entity_class(entity_name)
-        entity = EntityClass()
-        
-        status = await entity.get_status()
-        
-        print(f"\n✅ Entity: {status['entity_name']}")
-        print(f"🆔 Session: {status['session_id']}")
-        print(f"🧠 Memory: {status['memory_system']}")
-        print(f"🎯 Tasks completed: {status['tasks_completed']}")
-        print(f"📡 Local LLM: {'✅' if status['router_health']['local_llm_available'] else '❌'}")
-        print(f"🌐 External LLM: {'✅' if status['router_health']['external_llm_available'] else '❌'}")
-        
-        if status['memory_stats']:
-            print(f"💾 Memory stats: {status['memory_stats']}")
-        
-    except Exception as e:
-        print(f"❌ Failed to get status for {entity_name}: {e}")
-        return 1
-    
-    return 0
-
-
 def main():
-    """Main CLI entry point."""
-    
-    # Handle no arguments case
-    if len(sys.argv) == 1:
-        print("🚀 Prometheus Framework - AI Entity CLI")
-        print("\nUsage:")
-        print("  python prometheus.py <entity_name>        # Run entity interactively")
-        print("  python prometheus.py list                 # List available entities")
-        print("  python prometheus.py status <entity_name> # Quick status check")
-        print("  python prometheus.py --help               # Show detailed help")
-        print("\nExamples:")
-        print("  python prometheus.py aletheia")
-        print("  poetry run python prometheus.py aletheia")
-        print("  python prometheus.py list")
-        return 0
+    """Main entry point with mode selection."""
     
     parser = argparse.ArgumentParser(
-        description="Prometheus Framework - AI Entity CLI",
+        description="Prometheus Aletheia Service - Multi-Frontend AI Agent",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  python prometheus.py aletheia          # Run Aletheia interactively
-  python prometheus.py list              # List available entities
-  python prometheus.py status aletheia   # Quick status check
+Frontend Modes:
+  api       Launch FastAPI REST server on port 8000
+  telegram  Launch Telegram bot (requires TELEGRAM_TOKEN env var)
+  shell     Launch interactive terminal shell
   
-  poetry run python prometheus.py aletheia
+Examples:
+  python prometheus.py --mode api       # REST API server
+  python prometheus.py --mode telegram  # Telegram bot
+  python prometheus.py --mode shell     # Interactive shell
+  
+Environment Variables:
+  TELEGRAM_TOKEN  Required for telegram mode
         """
     )
     
     parser.add_argument(
-        'command',
-        help='Entity name to run, or command (list, status)'
+        '--mode',
+        choices=['api', 'telegram', 'shell'],
+        required=True,
+        help='Service mode to launch'
     )
     
     parser.add_argument(
-        'entity',
-        nargs='?',
-        help='Entity name (required for status command)'
+        '--host',
+        default='0.0.0.0',
+        help='Host for API server (default: 0.0.0.0)'
+    )
+    
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=8000,
+        help='Port for API server (default: 8000)'
     )
     
     args = parser.parse_args()
     
-    # Handle different commands
-    if args.command == 'list':
-        return asyncio.run(list_entities())
-    elif args.command == 'status':
-        if not args.entity:
-            print("❌ Error: status command requires entity name")
-            print("Usage: python prometheus.py status <entity_name>")
+    # Check if service is already running
+    from core.service.singleton import is_service_running
+    
+    if is_service_running():
+        print(f"⚠️ Warning: Aletheia service may already be running")
+        print("   Multiple frontends can share the same instance")
+        print("   Continue? [y/N]: ", end="")
+        
+        try:
+            response = input().strip().lower()
+            if response not in ['y', 'yes']:
+                print("Aborted.")
+                return 1
+        except KeyboardInterrupt:
+            print("\nAborted.")
             return 1
-        return asyncio.run(quick_status(args.entity))
+    
+    # Launch selected mode
+    if args.mode == 'api':
+        return launch_api_server(args.host, args.port)
+    elif args.mode == 'telegram':
+        return launch_telegram_bot()
+    elif args.mode == 'shell':
+        return launch_shell()
     else:
-        # Treat first argument as entity name
-        entity_name = args.command
-        return asyncio.run(run_entity_interactive(entity_name))
+        print(f"❌ Unknown mode: {args.mode}")
+        return 1
+
+
+def launch_api_server(host: str, port: int) -> int:
+    """Launch FastAPI server."""
+    try:
+        import uvicorn
+        print(f"🚀 Starting Aletheia API server on {host}:{port}")
+        print(f"📖 API docs will be available at http://{host}:{port}/docs")
+        print("Press Ctrl+C to stop")
+        
+        # Launch uvicorn server
+        uvicorn.run(
+            "core.service.api_server:app",
+            host=host,
+            port=port,
+            reload=False,  # Disable reload for production
+            access_log=True
+        )
+        
+        return 0
+        
+    except ImportError:
+        print("❌ FastAPI/uvicorn not installed. Run: pip install fastapi[all]")
+        return 1
+    except KeyboardInterrupt:
+        print("\n🛑 API server stopped")
+        return 0
+    except Exception as e:
+        print(f"❌ Failed to start API server: {e}")
+        return 1
+
+
+def launch_telegram_bot() -> int:
+    """Launch Telegram bot."""
+    try:
+        import os
+        
+        # Check for telegram token
+        if not os.getenv('TELEGRAM_TOKEN'):
+            print("❌ TELEGRAM_TOKEN environment variable not set!")
+            print("   Get a bot token from @BotFather on Telegram")
+            print("   Then set: export TELEGRAM_TOKEN=your_token_here")
+            return 1
+        
+        print("🤖 Starting Aletheia Telegram bot...")
+        print("Press Ctrl+C to stop")
+        
+        # Launch telegram bot
+        from core.service.telegram_bot import main as telegram_main
+        asyncio.run(telegram_main())
+        
+        return 0
+        
+    except ImportError:
+        print("❌ python-telegram-bot not installed. Run: pip install python-telegram-bot")
+        return 1
+    except KeyboardInterrupt:
+        print("\n🛑 Telegram bot stopped")
+        return 0
+    except Exception as e:
+        print(f"❌ Failed to start Telegram bot: {e}")
+        return 1
+
+
+def launch_shell() -> int:
+    """Launch interactive shell."""
+    try:
+        print("🐚 Starting Aletheia interactive shell...")
+        
+        # Launch shell
+        from core.cli import run_shell
+        return asyncio.run(run_shell())
+        
+    except KeyboardInterrupt:
+        print("\n🛑 Shell stopped")
+        return 0
+    except Exception as e:
+        print(f"❌ Failed to start shell: {e}")
+        return 1
 
 
 if __name__ == "__main__":

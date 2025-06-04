@@ -96,9 +96,14 @@ class ConversationContext:
             
         return self.running_summaries[user_id]
 
-    def update_from_input(self, user_input: str) -> None:
-        """Extract basic information from user input (names, language)."""
+    def update_from_input(self, user_input: str, user_id: Optional[str] = None) -> None:
+        """Extract basic information from user input (names, language) and manage user sessions."""
         self.interaction_count += 1
+        
+        # Handle user_id switching if provided
+        if user_id and user_id != self.current_user_id:
+            logger.info(f"👤 User session switch: {self.current_user_id} → {user_id}")
+            self.current_user_id = user_id
         
         # Detect language
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in user_input.lower())
@@ -114,7 +119,7 @@ class ConversationContext:
             if any(pattern in user_input.lower() for pattern in intro_patterns):
                 new_user_id = name_result.data[0] if isinstance(name_result.data, list) else name_result.data
                 if new_user_id != self.current_user_id:
-                    logger.info(f"👤 User switch detected: {self.current_user_id} → {new_user_id}")
+                    logger.info(f"👤 User switch detected from input: {self.current_user_id} → {new_user_id}")
                     self.current_user_id = new_user_id
 
     async def update_summary_from_exchange(
