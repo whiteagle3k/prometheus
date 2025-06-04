@@ -134,12 +134,6 @@ class UniversalTelegramBot:
             text, update, context, request_time, entity_name = await queue.get()
             processing_start = time.time()
 
-            # Get conversation context for continuation detection
-            conversation_context = self._get_conversation_context(user_id)
-            
-            # Add current user message to conversation history
-            self._add_to_conversation(user_id, "user", text)
-
             # Get agent instance from registry
             try:
                 agent = await get_agent(entity_name)
@@ -151,8 +145,8 @@ class UniversalTelegramBot:
                 )
                 return
 
-            # Process message with conversation context
-            response = await agent.think(text, user_id=user_id, context=conversation_context)
+            # Process message - entity context system handles conversation continuity
+            response = await agent.think(text, user_id=user_id)
 
             # Calculate processing time
             processing_time = time.time() - processing_start
@@ -212,9 +206,6 @@ class UniversalTelegramBot:
                 text=response_text,
                 parse_mode=None  # Plain text to avoid markdown issues
             )
-
-            # Add assistant response to conversation history
-            self._add_to_conversation(user_id, "assistant", answer)
 
             # Mark task as done and reset timeout on success
             queue.task_done()
@@ -470,44 +461,7 @@ class EntitySpecificTelegramBot:
         self.base_timeout = 5    # Base timeout in seconds
         self.max_timeout = 300   # Max timeout (5 minutes)
 
-        # Track conversation history for proper context detection
-        self.user_conversations: dict[str, list] = {}
-        self.max_context_messages = 3  # Keep last 3 exchanges for context
-
         logger.info(f"🤖 Created entity-specific bot for: {entity_name}")
-
-    def _get_conversation_context(self, user_id: str) -> str:
-        """Get formatted conversation context for the user."""
-        if user_id not in self.user_conversations:
-            return ""
-        
-        conversations = self.user_conversations[user_id]
-        if not conversations:
-            return ""
-        
-        # Format recent conversation history with markers for detection
-        context_lines = []
-        for entry in conversations[-self.max_context_messages:]:
-            if entry["role"] == "user":
-                context_lines.append(f"👤 User: {entry['content']}")
-            else:
-                context_lines.append(f"🤖 Assistant: {entry['content']}")
-        
-        return "\n".join(context_lines)
-
-    def _add_to_conversation(self, user_id: str, role: str, content: str):
-        """Add message to conversation history."""
-        if user_id not in self.user_conversations:
-            self.user_conversations[user_id] = []
-        
-        self.user_conversations[user_id].append({
-            "role": role,
-            "content": content[:200]  # Truncate for memory efficiency
-        })
-        
-        # Keep only recent messages
-        if len(self.user_conversations[user_id]) > self.max_context_messages * 2:
-            self.user_conversations[user_id] = self.user_conversations[user_id][-self.max_context_messages * 2:]
 
     async def _get_user_queue(self, user_id: str) -> asyncio.Queue:
         """Get or create rate limiting queue for user."""
@@ -556,12 +510,6 @@ class EntitySpecificTelegramBot:
             text, update, context, request_time = await queue.get()
             processing_start = time.time()
 
-            # Get conversation context for continuation detection
-            conversation_context = self._get_conversation_context(user_id)
-            
-            # Add current user message to conversation history
-            self._add_to_conversation(user_id, "user", text)
-
             # Get agent instance from registry (fixed entity)
             try:
                 agent = await get_agent(self.entity_name)
@@ -572,8 +520,8 @@ class EntitySpecificTelegramBot:
                 )
                 return
 
-            # Process message with conversation context
-            response = await agent.think(text, user_id=user_id, context=conversation_context)
+            # Process message - entity context system handles conversation continuity
+            response = await agent.think(text, user_id=user_id)
 
             # Calculate processing time
             processing_time = time.time() - processing_start
@@ -631,9 +579,6 @@ class EntitySpecificTelegramBot:
                 text=answer,
                 parse_mode=None  # Plain text to avoid markdown issues
             )
-            
-            # Add assistant response to conversation history
-            self._add_to_conversation(user_id, "assistant", answer)
 
             # Mark task as done and reset timeout on success
             queue.task_done()
