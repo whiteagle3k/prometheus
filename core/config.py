@@ -156,10 +156,4 @@ class AppSettings(BaseSettings):
 config = AppSettings()
 config._init_paths_and_hardware()
 
-# Load identity and update config accordingly
-try:
-    from .identity import identity
-    config.update_from_identity(identity)
-    print(f"✅ Identity loaded: {identity.name} v{identity.meta.version}")
-except Exception as e:
-    print(f"⚠️  Warning: Could not load identity configuration: {e}")
+# Identity is now loaded at the entity level, not globally

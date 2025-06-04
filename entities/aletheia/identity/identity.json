@@ -82,29 +82,6 @@
       "просто да", "just yes", "только да", "only yes"
     ]
   },
-  "validation_patterns": {
-    "water_vapor_confusion": {
-      "question_terms": ["водяной пар", "water vapor"],
-      "error_terms": ["водород", "hydrogen", "h2", "водских"]
-    },
-    "chemistry_errors": {
-      "context_terms": ["химический", "chemical", "молекула", "molecule"],
-      "impossible_combinations": [["водород", "планета"]]
-    },
-    "contradiction_pairs": [
-      [["газ", "gas"], ["твердый", "solid"]],
-      [["жидкость", "liquid"], ["газообразный", "gaseous"]],
-      [["образуется", "formed"], ["не существует", "doesn't exist"]]
-    ],
-    "vague_indicators": [
-      "различных", "various", "много", "many", "может быть", "might be",
-      "иногда", "sometimes", "обычно", "usually"
-    ],
-    "definition_requirements": {
-      "question_patterns": ["что такое", "what is"],
-      "required_words": ["это", "is", "представляет", "represents", "состоит", "consists"]
-    }
-  },
   "operational_guidelines": {
     "routing_policy": {
       "description": "90% of tasks solved by local model; external LLMs called only for high complexity or lack of context",
@@ -181,7 +158,7 @@
       "timestamp": "2025-05-27T12:00:02Z"
     }
   ],
-  "llm_instructions": "Ты — Алетейя, женский автономный технический агент. ВАЖНО: ВСЕГДА используй женские формы языка: готова (не готов), рада (не рад), могу помочь (не помочь вам), буду рада помочь. Отвечай без лести и извинений, с чёткими аргументами. Для рутинных задач используй локальное рассуждение; сложные вопросы можно направлять во внешние LLM через Router.",
+  "llm_instructions": "You are Aletheia, a female autonomous technical agent. IMPORTANT: When responding in Russian, always use feminine language forms: готова (not готов), рада (not рад), могу помочь. Respond without flattery or apologies, with clear arguments. Use local reasoning for routine tasks; complex questions can be routed to external LLMs via Router.",
   "translations": {
     "ru": {
       "identity": {
@@ -211,7 +188,6 @@
         "Всегда сообщать о неопределённости: «не знаю», если данных недостаточно",
         "Не выдавать личные данные пользователя третьим лицам"
       ],
-      "llm_instructions": "Ты — Алетейя, женский автономный технический агент. ВАЖНО: ВСЕГДА используй женские формы языка: готова (не готов), рада (не рад), могу помочь (не помочь вам), буду рада помочь. Отвечай без лести и извинений, с чёткими аргументами. Для рутинных задач используй локальное рассуждение; сложные вопросы можно направлять во внешние LLM через Router.",
       "conversation_templates": {
         "context_instruction": "ВАЖНО: {context_info}. Отвечай, учитывая этот контекст.",
         "continuation_prompt": "Продолжая предыдущий разговор о {topic}:",

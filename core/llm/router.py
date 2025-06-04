@@ -6,10 +6,11 @@ from enum import Enum
 from typing import Any, Optional, Union
 
 from ..config import config
-from ..identity import identity
+# TODO: Remove direct identity import - should be passed from entity
+# from ..identity import identity
 from ..llm.providers import ExternalLLMManager
 from .local_llm import LocalLLM
-from .utility_llm import UtilityLLM
+from .fast_llm import FastLLM
 from .confidence_calibrator import calibrator
 
 
@@ -17,6 +18,7 @@ class RouteDecision(Enum):
     """Routing decision options."""
     LOCAL = "local"
     EXTERNAL = "external"
+    FAST = "fast"  # For fast classification tasks
 
 
 @dataclass
@@ -24,6 +26,7 @@ class TaskContext:
     """Context for routing decisions."""
     prompt: str
     max_tokens: int = 512
+    temperature: float = 0.7
     requires_deep_reasoning: bool = False
     is_creative: bool = False
     needs_latest_knowledge: bool = False
@@ -38,12 +41,30 @@ class TaskContext:
 class LLMRouter:
     """Router for deciding between local and external LLMs."""
 
-    def __init__(self) -> None:
+    def __init__(self, identity_config: Optional[dict] = None) -> None:
         """Initialize the router."""
-        self.local_llm = LocalLLM()
-        self.utility_llm = UtilityLLM()  # NEW: Fast utility model
+        # TODO: Properly inject identity configuration from entity
+        self.identity_config = identity_config or {
+            "name": "AI Assistant",
+            "personality": {
+                "summary": "A helpful AI assistant",
+                "personality": ["helpful", "analytical", "precise"]
+            },
+            "core_values": ["accuracy", "helpfulness"],
+            "routing_threshold": 1000,
+            "require_deep_reasoning": True,
+            "system_prompts": {
+                "en": "You are a helpful AI assistant.",
+                "ru": "Вы полезный ИИ-помощник."
+            },
+            "llm_instructions": "You are a helpful AI assistant."
+        }
+        
+        self.local_llm = LocalLLM(identity_config=self.identity_config)
+        self.utility_llm = FastLLM()  # NEW: Fast utility model
         self.external_manager = ExternalLLMManager()
         self.use_calibrator = True  # Enable calibrated routing
+        
         self._routing_stats: dict[str, int] = {
             "local_routes": 0,
             "external_routes": 0,
@@ -98,7 +119,7 @@ class LLMRouter:
         total_estimated_tokens = estimated_tokens + task.max_tokens
 
         # Rule 1: Token threshold check - use identity configuration
-        routing_threshold = identity.get_routing_threshold()
+        routing_threshold = self.identity_config["routing_threshold"]
         if estimated_tokens > routing_threshold:
             return RouteDecision.EXTERNAL
 
@@ -109,7 +130,7 @@ class LLMRouter:
 
         # Rule 3: Explicit deep reasoning requirement - use identity configuration
         # This should NOT be overridden by calibrator for scientific accuracy
-        if task.requires_deep_reasoning and identity.should_require_deep_reasoning():
+        if task.requires_deep_reasoning and self.identity_config["require_deep_reasoning"]:
             return RouteDecision.EXTERNAL
 
         # Rule 4: Latest knowledge requirement
@@ -219,9 +240,18 @@ class LLMRouter:
         try:
             # Make routing decision
             route = await self.route_task(task)
+            
+            # Show routing decision
+            if route == RouteDecision.LOCAL:
+                print("🎯 Router: Local LLM selected")
+            elif route == RouteDecision.EXTERNAL:
+                print("🌐 Router: External LLM selected")
+            else:
+                print(f"🔀 Router: {route.value} selected")
 
             if route == RouteDecision.LOCAL:
                 # Execute locally
+                print("🔧 LocalLLM: Using English system instructions")
                 structured_result = await self.local_llm.generate_structured(
                     prompt=task.prompt,
                     max_tokens=task.max_tokens,
@@ -231,6 +261,10 @@ class LLMRouter:
                 
                 response = structured_result.get('answer', '')
                 local_confidence = structured_result.get('confidence', 'medium')
+                
+                # Show local model response generation
+                user_language = "Russian" if any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in task.prompt.lower()) else "English"
+                print(f"🔧 LocalLLM: Generating {user_language} response")
                 
                 # Calculate entropy for calibrator logging
                 confidence_to_entropy = {'high': 0.8, 'medium': 0.5, 'low': 0.2}
@@ -243,6 +277,7 @@ class LLMRouter:
                 # Execute externally  
                 external_llm = await self.external_manager.get_best_available()
                 if not external_llm:
+                    print("⚠️ External LLM unavailable, falling back to local")
                     # Fallback to local
                     structured_result = await self.local_llm.generate_structured(
                         prompt=task.prompt,
@@ -258,6 +293,8 @@ class LLMRouter:
                     route_used = "local_fallback"
                     consultation_metadata = None
                 else:
+                    print(f"📡 Consulting external: {external_llm.provider_type.value}")
+                    
                     # Enhance prompt with context for external LLM
                     enhanced_prompt = await self._prepare_external_prompt(task)
                     
@@ -344,10 +381,10 @@ class LLMRouter:
         """Prepare a consultation request for external LLM."""
         
         # Build Aletheia's self-description for the consultation
-        aletheia_intro = f"I am {identity.name}, {identity.personality.summary}."
+        aletheia_intro = f"I am {self.identity_config['name']}, {self.identity_config['personality']['summary']}."
         
         # Get key personality traits
-        personality_traits = ", ".join(identity.personality.personality[:3]) if identity.personality.personality else "technically precise, analytical"
+        personality_traits = ", ".join(self.identity_config['personality']['personality'][:3]) if self.identity_config['personality']['personality'] else "technically precise, analytical"
         
         # Detect language for response format
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in task.prompt.lower())
@@ -504,21 +541,21 @@ Your role is to be a knowledgeable consultant, not to impersonate the requesting
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in original_prompt.lower())
         
         # Create a personality filter prompt using English core identity for better model understanding
-        core_traits = ', '.join(identity.personality.personality[:3])
-        core_values = ', '.join(identity.core_values[:2])
+        core_traits = ', '.join(self.identity_config['personality']['personality'][:3])
+        core_values = ', '.join(self.identity_config['core_values'][:2])
         
         if is_russian:
             filter_prompt = f"""Original user question: {original_prompt}
 
 External system response: {external_response}
 
-Reframe this response as {identity.name} - {identity.personality.summary}. Important personality traits: {core_traits}. Core principles: {core_values}.
+Reframe this response as {self.identity_config['name']} - {self.identity_config['personality']['summary']}. Important personality traits: {core_traits}. Core principles: {core_values}.
 
 Requirements:
 1. Maintain my personality and traits listed above
 2. Keep all useful information from the response
 3. Make the response natural according to my character
-4. Don't mention ChatGPT or other systems - you are {identity.name}
+4. Don't mention ChatGPT or other systems - you are {self.identity_config['name']}
 5. Respond in Russian with natural grammar and cultural context
 6. Follow my core principles
 
@@ -528,13 +565,13 @@ Response in Russian:"""
 
 External system response: {external_response}
 
-Reframe this response as {identity.name} - {identity.personality.summary}. Important personality traits: {core_traits}. Core principles: {core_values}.
+Reframe this response as {self.identity_config['name']} - {self.identity_config['personality']['summary']}. Important personality traits: {core_traits}. Core principles: {core_values}.
 
 Requirements:
 1. Maintain my personality and traits listed above
 2. Keep all useful information from the response
 3. Make the response natural according to my character
-4. Don't mention ChatGPT or other systems - you are {identity.name}
+4. Don't mention ChatGPT or other systems - you are {self.identity_config['name']}
 5. Respond in English
 6. Follow my core principles
 
@@ -555,9 +592,9 @@ Response:"""
             print(f"Error filtering response: {e}")
             # Fallback: return external response with identity disclaimer
             if is_russian:
-                return f"[От {identity.name}] {external_response}", {}
+                return f"[От {self.identity_config['name']}] {external_response}", {}
             else:
-                return f"[From {identity.name}] {external_response}", {}
+                return f"[From {self.identity_config['name']}] {external_response}", {}
 
     def get_routing_stats(self) -> dict[str, Any]:
         """Get routing statistics including calibrator metrics."""

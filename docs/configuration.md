@@ -1,66 +1,239 @@
-# Configuration Guide
+# Configuration Reference
 
-## Environment Configuration
+## Overview
 
-### Core Settings
-```env
-# Local Model Configuration
-LOCAL_MODEL_PATH=./models/phi-3-medium-4k-instruct-q4_k_m.gguf
-LOCAL_MODEL_CONTEXT_SIZE=8192
-LOCAL_MODEL_GPU_LAYERS=40
+Prometheus uses entity-based configuration where each autonomous agent has its own identity file containing personality, model settings, and behavioral parameters. The framework supports **dual-model configuration** with separate settings for the main reasoning model and the Fast LLM routing oracle.
 
-# Routing Configuration
-META_COGNITIVE_ROUTING=true
-SCIENTIFIC_UNCERTAINTY_THRESHOLD=0.7
-ROUTING_CONTEXT_WINDOW=2
+## Identity Configuration Structure
 
-# Memory Management
-MAX_MEMORY_ENTRIES=1000
-MEMORY_SUMMARIZATION_THRESHOLD=500
-REFLECTION_ENABLED=true
-USE_HIERARCHICAL_MEMORY=true
-
-# User Data Management
-USER_PROFILE_STORAGE=storage/user_profiles
-USER_DATA_EXTRACTION_ENABLED=true
-USER_DATA_RETENTION_DAYS=365
-
-# External API Keys
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
-
-# Logging
-LOG_LEVEL=INFO
-```
-
-## Identity Configuration
-
-The identity system uses JSON-based configuration for agent personalities.
-
-### Basic Identity Structure
+### Basic Structure
 ```json
 {
   "meta": {
+    "snapshot_id": "unique-id",
+    "created_at": "timestamp",
     "version": "0.4.0"
   },
-  "name": "Aletheia",
+  "name": "EntityName",
   "primary_language": "en",
+  "supported_languages": ["en", "ru"],
+  "identity": { ... },
+  "module_paths": { ... },
+  "external_llms": { ... },
+  "routing_configuration": { ... }
+}
+```
+
+## Core Configuration Sections
+
+### Entity Identity
+```json
+{
   "identity": {
-    "summary": "Female autonomous research agent",
+    "summary": "Brief description of the entity's role and purpose",
     "personality": [
-      "Presents as a thoughtful female AI",
-      "Technically precise and concise",
-      "Uses appropriate feminine language forms"
+      "Key personality trait 1",
+      "Key personality trait 2",
+      "Uses appropriate language forms when needed"
     ]
   },
-  "translations": {
-    "ru": {
-      "identity": {
-        "summary": "Женский автономный исследователь-агент",
-        "personality": ["Позиционирует себя как женский ИИ"]
-      },
-      "llm_instructions": "Ты — Алетейя, женский автономный агент..."
+  "core_values": [
+    "Honesty and transparency",
+    "Evidence-based reasoning"
+  ],
+  "goals": [
+    "Primary objective",
+    "Secondary objective"
+  ],
+  "llm_instructions": "System prompt template for the entity. IMPORTANT: When responding in Russian, always use feminine language forms: готова (not готов), рада (not рад)..."
+}
+```
+
+### Model Configuration
+The framework supports **dual-model architecture** with separate configuration for reasoning and routing:
+
+```json
+{
+  "module_paths": {
+    "local_llm_binary": "models/llama.cpp/build/bin/llama",
+    "local_model_gguf": "models/Phi-3-medium-4k-instruct-Q4_K_M.gguf",
+    "utility_model_gguf": "models/phi-3-mini-3.8b-q4_k.gguf",
+    "memory_dir": "storage/chroma",
+    
+    "performance_config": {
+      "gpu_layers": 40,
+      "context_size": 8192,
+      "batch_size": 512,
+      "threads": 8
+    },
+    
+    "utility_performance_config": {
+      "gpu_layers": 12,
+      "context_size": 2048,
+      "batch_size": 256,
+      "threads": 4
     }
+  },
+  "routing_threshold": 1024
+}
+```
+
+#### Performance Configuration Options
+
+**Main Model (Local LLM)**:
+- `gpu_layers`: Number of layers to run on GPU (0-40 for Phi-3-medium)
+- `context_size`: Maximum context window (recommended: 8192)
+- `batch_size`: Processing batch size (recommended: 512)
+- `threads`: CPU threads when not using GPU (recommended: 8)
+
+**Utility Model (Fast LLM)**:
+- `gpu_layers`: GPU layers for routing model (recommended: 12)
+- `context_size`: Context for routing decisions (recommended: 2048)
+- `batch_size`: Batch size for fast processing (recommended: 256)
+- `threads`: CPU threads for utility tasks (recommended: 4)
+
+**Routing Configuration**:
+- `routing_threshold`: Token limit before forcing external LLM (recommended: 1024)
+
+### External LLM Configuration
+```json
+{
+  "external_llms": {
+    "primary_provider": "openai",
+    "fallback_provider": "anthropic",
+    "providers": {
+      "openai": {
+        "enabled": true,
+        "model": "gpt-4.1-mini",
+        "max_tokens_default": 1000,
+        "temperature_default": 0.7,
+        "cost_per_1k_input": 0.0015,
+        "cost_per_1k_output": 0.006,
+        "context_size": 128000,
+        "use_for": ["technical_analysis", "detailed_explanations", "factual_questions"]
+      },
+      "anthropic": {
+        "enabled": false,
+        "model": "claude-3-5-sonnet-20241022",
+        "max_tokens_default": 1000,
+        "temperature_default": 0.7,
+        "cost_per_1k_input": 0.003,
+        "cost_per_1k_output": 0.015,
+        "context_size": 200000,
+        "use_for": ["creative_tasks", "complex_reasoning", "analysis"]
+      }
+    },
+    "routing_preferences": {
+      "prefer_local": true,
+      "external_threshold_tokens": 1024,
+      "cost_optimization": true,
+      "max_cost_per_query": 0.05
+    }
+  }
+}
+```
+
+### Routing Configuration
+Configure how the Fast LLM routing oracle makes decisions:
+
+```json
+{
+  "routing_configuration": {
+    "planning_indicators": [
+      "step by step", "пошагово", "explain how to", "объясни как"
+    ],
+    "simple_conversation": [
+      "привет", "hello", "как дела", "how are you"
+    ],
+    "dismissive_phrases": [
+      "нет", "no", "хорошо", "спасибо"
+    ]
+  },
+  "operational_guidelines": {
+    "routing_policy": {
+      "description": "90% local, external only for high complexity",
+      "thresholds": {
+        "max_tokens_local": 1024,
+        "requires_deep_reasoning": true,
+        "factual_question_min_words": 5
+      }
+    }
+  }
+}
+```
+
+## Hardware-Specific Configuration
+
+### Apple Silicon (M1/M2/M3)
+Optimized configuration for Metal acceleration:
+
+```json
+{
+  "performance_config": {
+    "gpu_layers": 40,
+    "context_size": 8192,
+    "batch_size": 512,
+    "threads": 8
+  },
+  "utility_performance_config": {
+    "gpu_layers": 12,
+    "context_size": 2048,
+    "batch_size": 256,
+    "threads": 4
+  }
+}
+```
+
+### NVIDIA GPU Systems
+Configuration for CUDA acceleration:
+
+```json
+{
+  "performance_config": {
+    "gpu_layers": 35,
+    "context_size": 8192,
+    "batch_size": 1024,
+    "threads": 12
+  },
+  "utility_performance_config": {
+    "gpu_layers": 10,
+    "context_size": 2048,
+    "batch_size": 512,
+    "threads": 6
+  }
+}
+```
+
+### CPU-Only Systems
+Configuration for systems without GPU acceleration:
+
+```json
+{
+  "performance_config": {
+    "gpu_layers": 0,
+    "context_size": 4096,
+    "batch_size": 256,
+    "threads": 16
+  },
+  "utility_performance_config": {
+    "gpu_layers": 0,
+    "context_size": 1024,
+    "batch_size": 128,
+    "threads": 8
+  }
+}
+```
+
+## Memory Configuration
+
+### Vector Storage Settings
+```json
+{
+  "memory_dir": "storage/chroma",
+  "memory_management": {
+    "storage": "ChromaDB (vector)",
+    "summarisation": "TL;DR every 500 records by local LLM",
+    "retention": "raw records > 30 days deleted after compression"
   }
 }
 ```
@@ -70,404 +243,178 @@ The identity system uses JSON-based configuration for agent personalities.
 {
   "conversation_management": {
     "context_window_size": 3,
+    "context_summary_max_length": 300,
     "reference_detection": {
       "enabled": true,
-      "pronouns": ["it", "that", "this", "это", "то", "такое"],
-      "continuation_phrases": ["tell me more", "расскажи подробнее"]
-    },
-    "name_extraction": {
-      "patterns": [
-        "меня зовут\\s+(\\w+)",
-        "my name is\\s+(\\w+)"
+      "pronouns": ["it", "that", "это", "то"],
+      "continuation_phrases": [
+        "tell me more", "расскажи подробнее",
+        "explain further", "детально"
       ]
-    },
-    "context_questions": ["как меня зовут", "what's my name"]
-  }
-}
-```
-
-### Routing Configuration
-```json
-{
-  "routing_configuration": {
-    "planning_indicators": ["step by step", "пошагово"],
-    "simple_conversation": ["привет", "hello", "как дела"]
-  }
-}
-```
-
-### Validation Patterns
-```json
-{
-  "validation_patterns": {
-    "water_vapor_confusion": {
-      "question_terms": ["водяной пар", "water vapor"],
-      "error_terms": ["водород", "hydrogen"]
-    },
-    "contradiction_pairs": [
-      [["газ", "gas"], ["твердый", "solid"]]
-    ]
-  }
-}
-```
-
-## Processing System Configuration
-
-The processing system uses modular JSON configurations for all text processing components.
-
-### User Data Extraction Configuration
-```json
-{
-  "enabled": true,
-  "parameters": {
-    "physical_patterns": [
-      {
-        "pattern": "(?:я\\s+)?(?:вешу|весу|мой\\s+вес)\\s+(\\d+(?:[.,]\\d+)?)\\s*(?:кг|килограмм)",
-        "key": "weight",
-        "unit": "kg",
-        "confidence": 0.95
-      },
-      {
-        "pattern": "(?:при\\s+)?(?:росте|высота|рост)\\s+(\\d+(?:[.,]\\d+)?)\\s*(?:см|сантиметр)",
-        "key": "height",
-        "unit": "cm",
-        "confidence": 0.95
-      },
-      {
-        "pattern": "(?:процент\\s+)?(?:жира|жир)\\s+(\\d+(?:[.,]\\d+)?)\\s*(?:%|процент)?",
-        "key": "body_fat_percentage",
-        "unit": "%",
-        "confidence": 0.9
-      }
-    ],
-    "goal_patterns": [
-      {
-        "pattern": "(?:хочу|цель|планирую)\\s+(.+?)(?:\\.|!|$)",
-        "key": "fitness_goal",
-        "confidence": 0.8
-      }
-    ],
-    "preference_patterns": [
-      {
-        "pattern": "(?:я\\s+)?(?:люблю|нравится|предпочитаю)\\s+(.+?)(?:\\.|,|и|$)",
-        "key": "likes",
-        "confidence": 0.7
-      },
-      {
-        "pattern": "(?:я\\s+)?(?:не\\s+люблю|не\\s+нравится)\\s+(.+?)(?:\\.|,|и|$)",
-        "key": "dislikes",
-        "confidence": 0.7
-      }
-    ],
-    "data_query_patterns": [
-      "(?:напомни|расскажи|покажи)\\s+(?:мне\\s+)?(?:мои\\s+)?(?:данные|информацию|профиль)",
-      "(?:remind|tell|show)\\s+(?:me\\s+)?(?:my\\s+)?(?:data|information|profile)"
-    ]
-  }
-}
-```
-
-### Entity Extractor Configuration
-```json
-{
-  "enabled": true,
-  "parameters": {
-    "scientific_terms": [
-      "водяной пар", "water vapor", "динозавры", "dinosaurs",
-      "эволюция", "evolution", "химия", "chemistry"
-    ],
-    "compound_terms": [
-      "водяной пар", "water vapor", "body fat", "процент жира"
-    ],
-    "exclude_words": [
-      "это", "то", "такое", "когда", "где", "что",
-      "the", "that", "this", "when", "where", "what"
-    ],
-    "max_entities": 5,
-    "min_word_length": 3
-  }
-}
-```
-
-### Name Extractor Configuration
-```json
-{
-  "enabled": true,
-  "parameters": {
-    "name_patterns": [
-      "меня зовут\\s+(\\w+)",
-      "мое имя\\s+(\\w+)", 
-      "я\\s+(\\w+)",
-      "my name is\\s+(\\w+)",
-      "i'?m\\s+(\\w+)",
-      "call me\\s+(\\w+)"
-    ],
-    "exclude_words": [
-      "вверх", "вниз", "up", "down", "what", "who", "где", "кто"
-    ],
-    "min_name_length": 2
-  }
-}
-```
-
-### Reference Detector Configuration
-```json
-{
-  "enabled": true,
-  "parameters": {
-    "pronouns": {
-      "ru": ["он", "она", "оно", "они", "его", "её", "их"],
-      "en": ["it", "that", "this", "them", "those"]
-    },
-    "continuation_phrases": {
-      "ru": ["а что", "а если", "расскажи подробнее", "что дальше"],
-      "en": ["tell me more", "what about", "explain further", "what's next"]
-    },
-    "implicit_patterns": [
-      "\\bа\\s+если\\b",
-      "\\bа\\s+что\\b",
-      "^\\s*(а|но|и)\\s+"
-    ],
-    "confidence_threshold": 0.7
-  }
-}
-```
-
-## User Profile Management
-
-### Profile Storage Configuration
-User profiles are stored in JSON format in the configured directory:
-
-```json
-{
-  "physical": {
-    "weight": {
-      "value": "80",
-      "timestamp": "2025-06-02T12:00:00",
-      "confidence": 0.95,
-      "source": "Session context..."
-    },
-    "height": {
-      "value": "190",
-      "timestamp": "2025-06-02T12:00:00",
-      "confidence": 0.95,
-      "source": "Session context..."
     }
-  },
-  "personal": {
-    "name": {
-      "value": "Игорь",
-      "timestamp": "2025-06-02T12:00:00",
-      "confidence": 0.9,
-      "source": "Name extraction..."
-    }
-  },
-  "goals": {
-    "fitness_goal": [
-      {
-        "value": "похудеть на 5кг",
-        "timestamp": "2025-06-02T12:00:00",
-        "confidence": 0.8,
-        "source": "User stated goal..."
-      }
-    ]
-  },
-  "preferences": {
-    "likes": [],
-    "dislikes": []
-  },
-  "feedback": [],
-  "last_updated": "2025-06-02T12:00:00"
+  }
 }
 ```
 
-### Profile Privacy Settings
-```env
-# User data privacy controls
-USER_PROFILE_ENCRYPTION=false  # Enable for production
-USER_PROFILE_EXPORT_ENABLED=true
-USER_PROFILE_DELETE_ENABLED=true
-USER_DATA_EXTERNAL_SHARING=false  # Never share with external LLMs
+## Language Configuration
+
+### Multilingual Support
+```json
+{
+  "primary_language": "en",
+  "supported_languages": ["en", "ru"],
+  "translations": {
+    "ru": {
+      "identity": {
+        "summary": "Женский автономный исследователь-агент",
+        "personality": [
+          "Позиционирует себя как женский ИИ",
+          "Использует соответствующие женские формы языка"
+        ]
+      },
+      "greeting_templates": {
+        "introduction": "Привет! Я {name}, {summary}. Чем могу помочь?",
+        "casual": "Привет! Как дела?",
+        "professional": "Здравствуйте! Я {name}, готова помочь."
+      }
+    }
+  }
+}
 ```
 
-## Hardware Optimization
+## Environment Variables
 
-### Apple Silicon (M1/M2/M3)
+### Required Environment Variables
 ```bash
-# Enable Metal acceleration
-CMAKE_ARGS="-DLLAMA_METAL=on" poetry install
+# OpenAI API access (if using external LLMs)
+OPENAI_API_KEY=your_openai_api_key_here
 
-# Verify Metal support
-poetry run python -c "
-from aletheia.llm.local_llm import LocalLLM
-import asyncio
-llm = LocalLLM()
-print(asyncio.run(llm.get_model_info()))
-"
+# Anthropic API access (optional)
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# Optional: Custom model paths
+PROMETHEUS_MODEL_DIR=/path/to/models
+PROMETHEUS_STORAGE_DIR=/path/to/storage
 ```
 
-### Memory Configuration
-- **16GB RAM**: Basic operation with reduced context
-- **32GB+ RAM**: Optimal performance with full context
-- **Model Storage**: ~2.3GB for Phi-3 Medium Q4_K_M
-
-### Performance Tuning
-```env
-# Adjust based on available memory
-LOCAL_MODEL_GPU_LAYERS=40  # All layers for M3 Max
-LOCAL_MODEL_CONTEXT_SIZE=8192  # Increased for better context
-LOCAL_MODEL_THREADS=8  # Adjust for CPU cores
-LOCAL_MODEL_BATCH_SIZE=512  # Optimize for throughput
+### Development Environment
+```bash
+# For development and testing
+PROMETHEUS_DEBUG=true
+PROMETHEUS_LOG_LEVEL=debug
+PROMETHEUS_CACHE_DISABLED=true
 ```
 
-## Memory System Configuration
+## Performance Tuning
 
-### Hierarchical Memory Settings
-```env
-# Memory tier configuration
-HIERARCHICAL_MEMORY_ENABLED=true
-RAW_MEMORY_LIMIT=200
-SUMMARY_MEMORY_LIMIT=100
-KEY_FACTS_LIMIT=50
+### Memory Usage Optimization
+- **16GB RAM**: Use 12 GPU layers for utility model, 25 for main model
+- **32GB RAM**: Use 12 GPU layers for utility model, 40 for main model  
+- **64GB+ RAM**: Use 12 GPU layers for utility model, full model on GPU
 
-# Automatic archiving
-MEMORY_ARCHIVE_ENABLED=true
-MEMORY_ARCHIVE_AGE_DAYS=30
-MEMORY_COMPRESSION_RATIO=0.5
-```
+### Speed vs Quality Trade-offs
+- **Speed Priority**: Lower context size, fewer GPU layers, smaller batch
+- **Quality Priority**: Higher context size, more GPU layers, larger batch
+- **Balanced**: Default recommended settings
 
-### Vector Database Settings
-```env
-# ChromaDB configuration
-CHROMA_PERSIST_DIRECTORY=./storage/chroma
-CHROMA_COLLECTION_NAME=aletheia_memory
-CHROMA_ANONYMIZED_TELEMETRY=false
-CHROMA_ALLOW_RESET=true
-```
+### Context Management
+- **Routing Context**: Keep under 300 characters for fast decisions
+- **Generation Context**: Full conversation history for quality responses
+- **Memory Context**: Semantic filtering for relevance
 
-## External API Configuration
+## Configuration Examples
 
-### Anthropic Claude (Recommended)
-```env
-ANTHROPIC_API_KEY=your_key_here
-ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
-ANTHROPIC_MAX_TOKENS=1000
-ANTHROPIC_TEMPERATURE=0.7
-```
-
-### OpenAI GPT-4 (Alternative)
-```env
-OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-4.1-mini
-OPENAI_MAX_TOKENS=1000
-OPENAI_TEMPERATURE=0.7
-```
-
-### Cost Management
-```env
-# External routing controls
-EXTERNAL_THRESHOLD_TOKENS=1024
-COST_OPTIMIZATION=true
-MAX_COST_PER_QUERY=0.05
-PREFER_LOCAL=true
-```
-
-## Advanced Configuration
-
-### Custom Pattern Creation
-1. Create new JSON config file in `aletheia/processing/configs/`
-2. Define patterns with confidence scores
-3. Register in processing pipeline
-4. Test with validation tools
-
-### Multi-Language Pattern Support
+### Minimal Configuration
+Basic setup for development:
 ```json
 {
-  "physical_patterns": [
-    {
-      "pattern": "(?:I\\s+)?(?:weigh|weight\\s+is)\\s+(\\d+(?:[.,]\\d+)?)\\s*(?:kg|lbs)",
-      "key": "weight",
-      "unit": "extracted",
-      "confidence": 0.95,
-      "language": "en"
-    },
-    {
-      "pattern": "(?:я\\s+)?(?:вешу|весу)\\s+(\\d+(?:[.,]\\d+)?)\\s*(?:кг|килограмм)",
-      "key": "weight", 
-      "unit": "kg",
-      "confidence": 0.95,
-      "language": "ru"
+  "name": "TestAgent",
+  "llm_instructions": "You are a helpful AI assistant.",
+  "module_paths": {
+    "local_model_gguf": "models/Phi-3-medium-4k-instruct-Q4_K_M.gguf",
+    "utility_model_gguf": "models/phi-3-mini-3.8b-q4_k.gguf",
+    "utility_performance_config": {
+      "gpu_layers": 12,
+      "context_size": 2048
     }
-  ]
+  }
 }
 ```
 
-### Custom Agent Creation
-1. Copy `aletheia/identity/identity.json` to new file
-2. Modify personality traits and language instructions
-3. Update processing configurations as needed
-4. Configure user data extraction patterns
-5. Test with framework validation tools
+### Production Configuration  
+Full setup for production deployment:
+```json
+{
+  "name": "ProductionAgent",
+  "llm_instructions": "Detailed system instructions...",
+  "module_paths": {
+    "local_model_gguf": "models/Phi-3-medium-4k-instruct-Q4_K_M.gguf",
+    "utility_model_gguf": "models/phi-3-mini-3.8b-q4_k.gguf",
+    "performance_config": {
+      "gpu_layers": 40,
+      "context_size": 8192,
+      "batch_size": 512,
+      "threads": 8
+    },
+    "utility_performance_config": {
+      "gpu_layers": 12,
+      "context_size": 2048,
+      "batch_size": 256,
+      "threads": 4
+    }
+  },
+  "external_llms": {
+    "primary_provider": "openai",
+    "providers": {
+      "openai": {
+        "enabled": true,
+        "model": "gpt-4.1-mini"
+      }
+    }
+  },
+  "routing_threshold": 1024
+}
+```
 
-## Configuration Validation
+## Validation and Testing
 
-The framework includes built-in validation for all configuration files:
+### Configuration Validation
+The framework automatically validates configuration on startup:
+- Required fields presence
+- Model file existence  
+- Hardware compatibility
+- External API availability
 
+### Testing Configuration
 ```bash
-# Validate identity configuration
-poetry run python -c "
-from aletheia.identity.validator import validate_identity
-from aletheia.identity.loader import load_identity_config
-config = load_identity_config()
-print('Identity valid:', validate_identity(config))
-"
+# Test entity configuration
+poetry run python prometheus.py your_entity --validate
 
-# Validate processing configurations
-poetry run python -c "
-from aletheia.processing.config import get_processor_config
-config = get_processor_config('user_data_extractor')
-print('User data config valid:', config is not None)
-"
+# Test routing configuration
+poetry run python test_comprehensive.py
 
-# Test user data extraction
-poetry run python -c "
-from aletheia.processing.extractors import UserDataExtractor
-extractor = UserDataExtractor()
-test_input = 'меня зовут Тест, я вешу 70кг'
-data_points = extractor.extract(test_input)
-print(f'Extracted {len(data_points)} data points')
-"
+# Test external LLM connectivity
+poetry run python -c "from core.llm.providers import ExternalLLMManager; print(ExternalLLMManager().test_connectivity())"
 ```
 
-## Configuration File Locations
+## Troubleshooting Configuration
 
+### Common Issues
+1. **Model not found**: Check file paths in `module_paths`
+2. **Out of memory**: Reduce `gpu_layers` or `context_size`
+3. **Slow routing**: Check `utility_performance_config` settings
+4. **Context contamination**: Verify Fast LLM context isolation settings
+
+### Debug Configuration
+```json
+{
+  "debug": {
+    "enable_detailed_logging": true,
+    "show_routing_decisions": true,
+    "show_context_flow": true,
+    "performance_monitoring": true
+  }
+}
 ```
-aletheia/
-├── identity/
-│   └── identity.json              # Agent personality and behavior
-├── processing/
-│   └── configs/
-│       ├── user_data_extractor.json    # Personal data patterns
-│       ├── entity_extractor.json       # Topic extraction
-│       ├── name_extractor.json         # Name detection
-│       ├── reference_detector.json     # Context references  
-│       ├── complexity_detector.json    # Task complexity
-│       ├── contamination_filter.json   # Content filtering
-│       ├── duplication_filter.json     # Duplicate detection
-│       └── factual_validator.json      # Response validation
-└── config.py                     # Core system configuration
-```
 
-## New in v0.4.0
-
-### User Data Intelligence
-- **Automatic extraction** from natural conversation
-- **Instant queries** with zero-latency profile access
-- **Privacy-first** local storage design
-- **Configurable patterns** for different data types
-
-### Enhanced Processing Pipeline
-- **Modular extractors** with JSON configuration
-- **Multi-language support** for pattern matching
-- **Confidence scoring** for data quality assessment
-- **Extensible architecture** for custom data types 
+See [Troubleshooting Guide](troubleshooting.md) for detailed debugging information. 

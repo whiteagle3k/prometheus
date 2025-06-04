@@ -1,309 +1,501 @@
 # Troubleshooting Guide
 
-## Installation Issues
+## Overview
 
-### Model Download Problems
-```bash
-# Manually download Aletheia's model
-./scripts/download_models.sh
+This guide covers common issues with the Prometheus framework, particularly focusing on **context contamination**, **Fast LLM routing problems**, and **cross-LLM coordination issues** that can arise in the advanced architecture.
 
-# Verify model file exists and is correct size (~2.3GB)
-ls -la models/phi-3-mini-3.8b-q4_k.gguf
+## Context Contamination Issues
 
-# Check model integrity
-poetry run python -c "
-from aletheia.llm.local_llm import LocalLLM
-llm = LocalLLM()
-print('Model loaded successfully')
-"
+### Problem: Incorrect Routing Decisions Based on Previous Queries
+
+**Symptoms**:
+- Fast LLM makes routing decisions that seem influenced by previous queries
+- Example: Simple query routed to EXTERNAL because of previous scientific topic
+- Routing confidence and reasoning doesn't match current query
+
+**Example Problem**:
+```
+🧑 You: расскажи про Сферу Дайсона
+🔧 Fast LLM routing: EXTERNAL (scientific topic) ✓
+
+🧑 You: как тебя зовут?
+🔧 Fast LLM routing: EXTERNAL (confidence: high, complexity: scientific)
+🔧 Reasoning: Scientific principle explanation  ❌ WRONG!
 ```
 
-### Metal Acceleration Issues (macOS)
-```bash
-# Reinstall llama-cpp-python with Metal support
-CMAKE_ARGS="-DLLAMA_METAL=on" poetry run pip install llama-cpp-python --force-reinstall --no-cache-dir
+**Root Cause**: Fast LLM context contamination where previous query context affects new routing decisions.
 
-# Verify Metal acceleration is working
-poetry run python -c "
-from aletheia.llm.local_llm import LocalLLM
-import asyncio
-llm = LocalLLM()
-info = asyncio.run(llm.get_model_info())
-print('Metal supported:', 'metal' in str(info).lower())
-"
+**Solutions**:
 
-# Check system Metal support
-system_profiler SPDisplaysDataType | grep Metal
-```
-
-### Poetry/Python Environment Issues
-```bash
-# Reset poetry environment
-poetry env remove python
-poetry install
-
-# Verify Python version (3.11+ required)
-poetry run python --version
-
-# Check for conflicting packages
-poetry run pip list | grep llama
-```
-
-## Runtime Issues
-
-### Memory and Conversation Problems
-```bash
-# Reset Aletheia's memory and conversation history
-poetry run python -c "
-from aletheia.agent.orchestrator import AletheiaAgent
-import asyncio
-agent = AletheiaAgent()
-asyncio.run(agent.reset_memory())
-print('Memory reset complete')
-"
-
-# Check Aletheia's current status
-poetry run python -m aletheia.agent.orchestrator
-# Then type: status
-```
-
-### Context and Reference Issues
-If Aletheia loses context or doesn't understand references:
-
-1. **Check conversation history**:
-   ```bash
-   # In Aletheia CLI, type: context
-   ```
-
-2. **Verify entity extraction**:
-   ```python
-   from aletheia.processing.extractors import EntityExtractor
-   extractor = EntityExtractor()
-   result = extractor.process("your problematic input")
-   print("Entities:", result.data if result.success else "None")
-   ```
-
-3. **Test reference detection**:
-   ```python
-   from aletheia.processing.detectors import ReferenceDetector
-   detector = ReferenceDetector()
-   result = detector.process("your reference question")
-   print("Has references:", result.data.get("has_references", False))
-   ```
-
-### External API Issues
-```bash
-# Test Anthropic API connectivity
-poetry run python -c "
-import os
-from aletheia.llm.external_llm import ExternalLLMManager
-manager = ExternalLLMManager()
-print('Available providers:', manager.list_available_providers())
-print('Anthropic key set:', bool(os.getenv('ANTHROPIC_API_KEY')))
-"
-
-# Test OpenAI API connectivity
-poetry run python -c "
-import os
-print('OpenAI key set:', bool(os.getenv('OPENAI_API_KEY')))
-"
-```
-
-### Performance Issues
-
-#### Slow Response Times
-1. **Check GPU acceleration**:
-   ```bash
-   # Verify Metal is being used
-   poetry run python -c "
-   from aletheia.llm.local_llm import LocalLLM
-   llm = LocalLLM()
-   # Look for 'Metal' or 'GPU' in output
-   "
-   ```
-
-2. **Reduce context size** (if memory limited):
-   ```env
-   LOCAL_MODEL_CONTEXT_SIZE=2048  # Reduce from 4096
-   LOCAL_MODEL_GPU_LAYERS=16      # Reduce if needed
-   ```
-
-3. **Monitor memory usage**:
-   ```bash
-   # Check system memory while running
-   top -o MEM
-   ```
-
-#### High Memory Usage
-```bash
-# Reduce memory footprint
-export LOCAL_MODEL_GPU_LAYERS=16  # Use fewer GPU layers
-export MAX_MEMORY_ENTRIES=500     # Reduce memory entries
-
-# Clear accumulated memory
-poetry run python -c "
-from aletheia.agent.orchestrator import AletheiaAgent
-import asyncio
-agent = AletheiaAgent()
-asyncio.run(agent.reset_memory())
-"
-```
-
-## Language and Grammar Issues
-
-### Russian Grammar Problems
-If Aletheia uses masculine forms instead of feminine:
-
-1. **Check identity configuration**:
-   ```bash
-   # Verify feminine instructions in identity.json
-   grep -A 5 "llm_instructions" aletheia/identity/identity.json
-   ```
-
-2. **Test language detection**:
-   ```python
-   text = "я готов помочь"  # Should be "готова" for female
-   # Check if identity correctly specifies feminine forms
-   ```
-
-3. **Restart Aletheia** - Sometimes model state needs refresh
-
-### Multilingual Context Issues
-If context is lost when switching languages:
-
-1. **Check language detection**:
-   ```python
-   from aletheia.agent.context_manager import ContextManager
-   context = ContextManager()
-   context.update_from_input("твой русский текст")
-   print("Detected language:", context.last_user_language)
-   ```
-
-2. **Verify translation coverage**:
-   ```bash
-   # Check if all necessary phrases are translated
-   grep -r "translations" aletheia/identity/identity.json
-   ```
-
-## Error Messages
-
-### Common Error Solutions
-
-#### `ModuleNotFoundError: No module named 'llama_cpp'`
-```bash
-CMAKE_ARGS="-DLLAMA_METAL=on" poetry install
-```
-
-#### `FileNotFoundError: [Errno 2] No such file or directory: 'models/...'`
-```bash
-./scripts/download_models.sh
-```
-
-#### `ImportError: No module named 'chromadb'`
-```bash
-poetry install --extras all
-```
-
-#### `ValueError: Failed to load model`
-```bash
-# Check model file integrity
-ls -la models/phi-3-mini-3.8b-q4_k.gguf
-# Re-download if corrupted
-rm models/phi-3-mini-3.8b-q4_k.gguf
-./scripts/download_models.sh
-```
-
-#### Context building errors
+1. **Verify Context Reset**: Check if `_reset_model_context()` is working:
 ```python
-# Test context building manually
-from aletheia.agent.orchestrator import AletheiaAgent
-agent = AletheiaAgent()
-context = agent._build_context_summary()
-print("Context:", context)
+# In FastLLM, verify reset methods are being called
+async def make_routing_decision(self, query: str) -> dict:
+    # This should be called first
+    await self._reset_model_context()
+    
+    # Then make decision
+    routing_result = await self.model(prompt, ...)
 ```
 
-## Debugging Tools
-
-### Enable Debug Logging
-```env
-LOG_LEVEL=DEBUG
+2. **Enable Debug Logging**: Add debugging to see reset attempts:
+```python
+async def _reset_model_context(self) -> None:
+    print("🔄 Attempting Fast LLM context reset...")
+    try:
+        if hasattr(self.model, 'reset'):
+            self.model.reset()
+            print("✅ Model reset successful")
+        # ... other reset methods
+    except Exception as e:
+        print(f"⚠️ Reset failed: {e}")
 ```
 
-### Test Individual Components
+3. **Enhanced Prompt Isolation**: Use stronger context separation:
+```python
+system_prompt = """You are a routing oracle. 
+
+CRITICAL: Judge this query INDEPENDENTLY. Completely ignore any previous queries, contexts, or decisions.
+
+Only consider the current query below:"""
+```
+
+4. **Fallback to Rule-based Routing**: If Fast LLM continues to have issues:
+```python
+# Check routing consistency
+def _validate_routing_decision(self, query: str, decision: dict) -> bool:
+    # Simple validation
+    if "привет" in query.lower() and decision['route'] == 'EXTERNAL':
+        return False  # Obviously wrong
+    return True
+```
+
+### Problem: Memory Context Bleeding Between Conversations
+
+**Symptoms**:
+- User information from previous sessions appears in new conversations
+- Context window contains irrelevant historical data
+- Memory retrieval returns wrong user profiles
+
+**Solutions**:
+
+1. **Check Memory Isolation**: Verify proper session management:
+```python
+# In memory system
+async def get_relevant_memories(self, query: str, user_id: str = None):
+    # Should filter by user_id
+    if user_id:
+        filter_criteria = {"user_id": user_id}
+    else:
+        filter_criteria = {}
+```
+
+2. **Clean Context Preparation**: Ensure context cleaning:
+```python
+def _prepare_clean_context(self, conversation_context: str) -> str:
+    """Extract only relevant recent context."""
+    if not conversation_context:
+        return ""
+    
+    # Limit to recent exchanges only
+    lines = conversation_context.strip().split('\n')
+    recent_lines = lines[-4:]  # Only last 4 lines
+    
+    return '\n'.join(recent_lines)
+```
+
+## Fast LLM Routing Issues
+
+### Problem: Slow Routing Decisions
+
+**Symptoms**:
+- Routing takes 5+ seconds
+- High memory usage during routing
+- System becomes unresponsive
+
+**Solutions**:
+
+1. **Check GPU Allocation**: Verify utility model configuration:
+```json
+{
+  "utility_performance_config": {
+    "gpu_layers": 12,     // Not too high
+    "context_size": 2048, // Appropriate size
+    "batch_size": 256,    // Reasonable batch
+    "threads": 4          // Balanced
+  }
+}
+```
+
+2. **Monitor Resource Usage**: Add performance monitoring:
+```python
+import time
+start_time = time.time()
+routing_result = await self.utility_llm.make_routing_decision(query)
+duration = time.time() - start_time
+
+if duration > 2.0:
+    print(f"⚠️ Slow routing: {duration:.1f}s")
+```
+
+3. **Reduce Context Size**: Limit routing context:
+```python
+# Keep routing context minimal
+if len(routing_context) > 300:
+    routing_context = routing_context[-300:]  # Last 300 chars only
+```
+
+### Problem: Fast LLM Model Not Loading
+
+**Symptoms**:
+- `Fast LLM routing failed` errors
+- Falls back to rule-based routing constantly
+- Model path errors in logs
+
+**Solutions**:
+
+1. **Verify Model Path**: Check utility model exists:
+```python
+utility_model_path = identity_config["module_paths"]["utility_model_gguf"]
+if not Path(utility_model_path).exists():
+    print(f"❌ Utility model not found: {utility_model_path}")
+```
+
+2. **Check Download**: Ensure both models downloaded:
 ```bash
-# Test local LLM only
-poetry run python -c "
-from aletheia.llm.local_llm import LocalLLM
-import asyncio
-llm = LocalLLM()
-result = asyncio.run(llm.generate('Hello, how are you?'))
-print(result)
-"
-
-# Test processing pipeline
-poetry run python -c "
-from aletheia.processing.pipeline import create_context_analysis_pipeline
-pipeline = create_context_analysis_pipeline()
-result = pipeline.process('test input')
-print(result)
-"
-
-# Test memory system
-poetry run python -c "
-from aletheia.memory.vector_store import VectorStore
-import asyncio
-store = VectorStore()
-print('Memory count:', asyncio.run(store.get_memory_count()))
-"
+ls -la models/
+# Should show both:
+# Phi-3-medium-4k-instruct-Q4_K_M.gguf  (main model)
+# phi-3-mini-3.8b-q4_k.gguf            (utility model)
 ```
 
-### Performance Profiling
+3. **Download Missing Model**:
 ```bash
-# Profile memory usage
-poetry run python -m memory_profiler -m aletheia.agent.orchestrator
+cd models/
+wget https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf
+mv Phi-3-mini-4k-instruct-q4.gguf phi-3-mini-3.8b-q4_k.gguf
+```
 
-# Profile execution time
-poetry run python -m cProfile -m aletheia.agent.orchestrator
+### Problem: Inconsistent Routing Decisions
+
+**Symptoms**:
+- Same query gets different routing decisions
+- LOCAL/EXTERNAL decisions seem random
+- Low confidence in routing decisions
+
+**Solutions**:
+
+1. **Stabilize Temperature**: Use lower temperature for routing:
+```python
+result = self.model(
+    formatted_prompt,
+    max_tokens=80,
+    temperature=0.1,  # Lower for consistency
+    stop=["<|end|>"]
+)
+```
+
+2. **Improve Prompt Structure**: Use clearer instructions:
+```python
+system_prompt = f"""You are a routing oracle. Decide if query needs LOCAL or EXTERNAL LLM.
+
+RULES:
+- LOCAL: Simple greetings, basic questions, conversations
+- EXTERNAL: Scientific topics, complex explanations, technical details
+
+Respond ONLY in JSON:
+{{"route": "LOCAL", "confidence": "high", "reasoning": "simple greeting"}}
+
+Query: {query}"""
+```
+
+3. **Add Validation**: Check decision consistency:
+```python
+def _validate_routing_decision(self, query: str, decision: dict) -> bool:
+    route = decision.get('route', 'LOCAL')
+    
+    # Basic sanity checks
+    if any(word in query.lower() for word in ['привет', 'hello', 'hi']):
+        return route == 'LOCAL'
+    
+    if any(word in query.lower() for word in ['квантов', 'физик', 'quantum', 'physics']):
+        return route == 'EXTERNAL'
+    
+    return True
+```
+
+## Cross-LLM Coordination Problems
+
+### Problem: External LLM Context Not Preserved
+
+**Symptoms**:
+- External LLM doesn't receive conversation context
+- User name not passed to external consultation
+- Response lacks personalization
+
+**Solutions**:
+
+1. **Check Context Preparation**: Verify external prompt building:
+```python
+def _prepare_external_prompt(self, task: TaskContext) -> str:
+    consultation_prompt = f"I am {self.identity_config['name']}..."
+    
+    # Add conversation context
+    if task.conversation_context:
+        consultation_prompt += f"\n\nCONVERSATION CONTEXT:\n{task.conversation_context}"
+    
+    consultation_prompt += f"\n\nQuestion: {task.prompt}"
+    return consultation_prompt
+```
+
+2. **Verify Context Assembly**: Check task context creation:
+```python
+task_context = TaskContext(
+    prompt=user_input,
+    conversation_context=self.get_conversation_context(),  # This should exist
+    user_name=self.get_current_user_name(),               # This should exist
+    session_context={"user_profile": user_profile}        # This should exist
+)
+```
+
+### Problem: Response Quality Degradation
+
+**Symptoms**:
+- Local responses become generic
+- External responses lose entity personality
+- Context not maintained across turns
+
+**Solutions**:
+
+1. **Verify Identity Injection**: Check if identity config is passed:
+```python
+# In BaseEntity initialization
+router = LLMRouter(identity_config=self.identity_config)  # Must pass config
+local_llm = LocalLLM(identity_config=self.identity_config)  # Must pass config
+```
+
+2. **Check System Prompt Generation**: Verify prompts use identity:
+```python
+def _get_system_prompt(self, language: str) -> str:
+    if language == "ru":
+        return self.identity_config["system_prompts"]["ru"]
+    else:
+        return self.identity_config["system_prompts"]["en"]
+```
+
+3. **Monitor Response Pipeline**: Add debugging to response generation:
+```python
+print(f"🔧 Using identity: {self.identity_config['name']}")
+print(f"🔧 Language detected: {language}")
+print(f"🔧 System prompt: {system_prompt[:100]}...")
+```
+
+## Memory System Issues
+
+### Problem: Memory Not Retrieving Relevant Context
+
+**Symptoms**:
+- "No relevant memories found" despite previous conversations
+- User profile data not retrieved
+- Context seems lost between sessions
+
+**Solutions**:
+
+1. **Check Memory Storage**: Verify memories are being saved:
+```python
+# After conversation, check if memory was stored
+stored_memories = await self.memory_manager.search_memories("test query", limit=5)
+print(f"📂 Found {len(stored_memories)} memories")
+```
+
+2. **Test Memory Retrieval**: Debug memory search:
+```python
+# Test semantic search
+query = "как меня зовут"
+memories = await self.memory_manager.search_memories(query)
+for memory in memories:
+    print(f"Memory: {memory['content'][:50]}... (score: {memory.get('score', 0):.3f})")
+```
+
+3. **Verify User Profile Storage**: Check profile directory:
+```bash
+ls -la storage/user_profiles/
+# Should contain JSON files with user data
+```
+
+### Problem: Memory Storage Errors
+
+**Symptoms**:
+- "ChromaDB connection failed" errors
+- Memory directory not created
+- Persistence errors
+
+**Solutions**:
+
+1. **Check Directory Permissions**:
+```bash
+mkdir -p storage/chroma
+chmod 755 storage/chroma
+```
+
+2. **Test ChromaDB Directly**:
+```python
+import chromadb
+client = chromadb.PersistentClient(path="storage/chroma")
+collection = client.get_or_create_collection("test")
+print("ChromaDB working correctly")
+```
+
+3. **Reset Memory Storage**:
+```bash
+# If corrupted, reset memory
+rm -rf storage/chroma
+mkdir -p storage/chroma
+```
+
+## Performance Issues
+
+### Problem: High Memory Usage
+
+**Symptoms**:
+- System uses 20GB+ RAM
+- Models loading slowly
+- Out of memory errors
+
+**Solutions**:
+
+1. **Reduce GPU Layers**: Lower memory usage:
+```json
+{
+  "performance_config": {
+    "gpu_layers": 25,     // Reduce from 40
+    "context_size": 4096  // Reduce from 8192
+  },
+  "utility_performance_config": {
+    "gpu_layers": 8,      // Reduce from 12
+    "context_size": 1024  // Reduce from 2048
+  }
+}
+```
+
+2. **Enable Model Unloading**: Free memory when not in use:
+```python
+# After long idle periods
+await self.local_llm.unload()
+```
+
+### Problem: Slow Response Times
+
+**Symptoms**:
+- Responses take 30+ seconds
+- High CPU usage
+- System becomes unresponsive
+
+**Solutions**:
+
+1. **Optimize Hardware Settings**: Match your system capabilities:
+```bash
+# Check system resources
+system_profiler SPHardwareDataType | grep "Total Number of Cores"
+sysctl hw.memsize
+```
+
+2. **Profile Performance**: Add timing to identify bottlenecks:
+```python
+import time
+
+start_time = time.time()
+routing_time = time.time()
+routing_result = await self.router.route_task(task)
+routing_duration = time.time() - routing_time
+
+generation_time = time.time()
+response = await self.generate_response(task)
+generation_duration = time.time() - generation_time
+
+total_duration = time.time() - start_time
+
+print(f"⏱️  Routing: {routing_duration:.1f}s, Generation: {generation_duration:.1f}s, Total: {total_duration:.1f}s")
+```
+
+## Debug Output and Monitoring
+
+### Enable Comprehensive Debugging
+
+1. **Framework Debug Mode**:
+```bash
+export PROMETHEUS_DEBUG=true
+export PROMETHEUS_LOG_LEVEL=debug
+```
+
+2. **Component-Specific Debugging**:
+```python
+# In router.py
+print(f"🔧 Fast LLM routing: {route} (confidence: {confidence})")
+print(f"🔧 Reasoning: {reasoning}")
+
+# In local_llm.py  
+print(f"🔧 LocalLLM: Using {language} system instructions")
+print(f"🔧 LocalLLM: Generating {user_language} response")
+
+# In memory system
+print(f"📂 Found {len(memories)} memories, filtering for relevance...")
+```
+
+3. **Performance Monitoring**:
+```python
+# Add to all major operations
+execution_time = asyncio.get_event_loop().time() - start_time
+print(f"💭 Total: {execution_time:.1f}s | Route: {route_used}")
+```
+
+### Monitor Context Flow
+
+Add context flow debugging:
+```python
+def debug_context_flow(self, stage: str, context: str):
+    context_preview = context[:100] + "..." if len(context) > 100 else context
+    print(f"🔄 Context at {stage}: {context_preview}")
+
+# Use throughout the pipeline
+self.debug_context_flow("fast_llm_input", routing_context)
+self.debug_context_flow("local_llm_input", generation_context)
+self.debug_context_flow("external_llm_input", consultation_context)
 ```
 
 ## Getting Help
 
-### Collecting Debug Information
+### Collect Debug Information
+
 When reporting issues, include:
 
-1. **System information**:
-   ```bash
-   uname -a
-   poetry --version
-   poetry run python --version
-   ```
+1. **System Information**:
+```bash
+uname -a
+python --version
+poetry --version
+```
 
-2. **Aletheia status**:
-   ```bash
-   poetry run python -m aletheia.agent.orchestrator
-   # Type: status
-   ```
+2. **Model Information**:
+```bash
+ls -la models/
+du -h models/
+```
 
-3. **Error logs**:
-   ```bash
-   # Run with debug logging
-   LOG_LEVEL=DEBUG poetry run python -m aletheia.agent.orchestrator
-   ```
+3. **Configuration**:
+```bash
+# Sanitized identity config (remove API keys)
+cat identity/identity.json | jq 'del(.external_llms.providers[].api_key)'
+```
 
-4. **Configuration**:
-   ```bash
-   # Check configuration (remove sensitive keys)
-   cat .env | grep -v API_KEY
-   ```
+4. **Debug Output**: Include full debug output showing the problem
 
-### Community Support
-- **GitHub Issues**: For bugs and feature requests
-- **Discussions**: For usage questions and ideas
-- **Documentation**: Check `docs/` for detailed guides
+5. **Performance Metrics**: Include timing information from debug output
 
-### Known Limitations
-- **Apple Silicon only**: Currently optimized for M1/M2/M3 Macs
-- **Memory requirements**: 16GB+ RAM recommended
-- **Model size**: Large model files (~2.3GB) required
-- **Context windows**: Limited by local model capabilities
-- **External API costs**: Usage-based pricing for external consultations 
+### Contact and Resources
+
+- **GitHub Issues**: Report bugs and feature requests
+- **Documentation**: Check docs/ folder for detailed information
+- **Configuration Examples**: See sample configurations in the repository
+
+Remember: Most issues are related to configuration, context handling, or resource limitations. The debug output is your best tool for identifying the root cause. 
