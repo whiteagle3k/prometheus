@@ -2,20 +2,21 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional, List
+from typing import Any
+
 from .enums import MemoryTier, MemoryType
 
 
 @dataclass
 class MemoryChunk:
     """Core memory storage unit for the three-tier system.
-    
+
     Each chunk contains content, embedding, tier assignment, and metadata
     for efficient storage and retrieval across Core-Self, User, and Environment contexts.
     """
     id: str
     text: str
-    embedding: List[float]
+    embedding: list[float]
     tier: MemoryTier
     memory_type: MemoryType
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -23,7 +24,7 @@ class MemoryChunk:
     is_summary: bool = False
     confidence: float = 1.0
     source: str = ""
-    
+
     def __post_init__(self):
         """Ensure required metadata fields are present."""
         if "user_id" not in self.metadata and self.tier == MemoryTier.USER:
@@ -35,11 +36,11 @@ class MemoryChunk:
 @dataclass
 class RetrievalResult:
     """Result from memory retrieval with tier information and scoring."""
-    chunks: List[MemoryChunk]
+    chunks: list[MemoryChunk]
     tier_counts: dict[MemoryTier, int] = field(default_factory=dict)
     total_retrieved: int = 0
     search_query: str = ""
-    
+
     def __post_init__(self):
         """Calculate tier counts and total."""
         self.tier_counts = {}
@@ -56,8 +57,8 @@ class MemoryStats:
     env_count: int = 0
     total_count: int = 0
     summaries_count: int = 0
-    last_summarization: Optional[datetime] = None
-    
+    last_summarization: datetime | None = None
+
     def __post_init__(self):
         """Calculate total count."""
         self.total_count = self.core_self_count + self.user_count + self.env_count
@@ -70,12 +71,11 @@ class TierConfig:
     similarity_threshold: float
     summarization_ratio: float = 0.1  # Keep 10% when summarizing
     collection_name: str = ""
-    
+
     def __post_init__(self):
         """Set default collection name if not provided."""
-        if not self.collection_name:
-            if hasattr(self, 'tier'):
-                self.collection_name = f"aletheia_{self.tier.value}"
+        if not self.collection_name and hasattr(self, "tier"):
+            self.collection_name = f"aletheia_{self.tier.value}"
 
 
 # Default tier configurations
@@ -95,4 +95,4 @@ DEFAULT_TIER_CONFIGS = {
         similarity_threshold=0.65,
         collection_name="aletheia_environment"
     )
-} 
+}

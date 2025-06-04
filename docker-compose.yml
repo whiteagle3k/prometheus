@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # API Server
+  aletheia-api:
+    build: .
+    container_name: aletheia-api
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AUTONOMY_ENABLED=${AUTONOMY_ENABLED:-false}
+    volumes:
+      - ./data:/app/data
+      - ./storage:/app/storage
+    command: ["api", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
+    stop_grace_period: 30s  # Allow time for memory snapshots
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Telegram Bot (optional, requires TELEGRAM_TOKEN)
+  aletheia-telegram:
+    build: .
+    container_name: aletheia-telegram
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AUTONOMY_ENABLED=${AUTONOMY_ENABLED:-false}
+    volumes:
+      - ./data:/app/data
+      - ./storage:/app/storage
+    command: ["telegram"]
+    restart: unless-stopped
+    stop_grace_period: 30s  # Allow time for memory snapshots
+    depends_on:
+      aletheia-api:
+        condition: service_healthy
+    profiles:
+      - telegram
+
+  # Shell (for debugging, not typically needed in production)
+  aletheia-shell:
+    build: .
+    container_name: aletheia-shell
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AUTONOMY_ENABLED=${AUTONOMY_ENABLED:-false}
+    volumes:
+      - ./data:/app/data
+      - ./storage:/app/storage
+    command: ["shell"]
+    stdin_open: true
+    tty: true
+    stop_grace_period: 30s  # Allow time for memory snapshots
+    depends_on:
+      aletheia-api:
+        condition: service_healthy
+    profiles:
+      - debug
+
+volumes:
+  aletheia-data:
+    driver: local
+  aletheia-storage:
+    driver: local
+
+# Usage:
+# API only:           docker-compose up aletheia-api
+# API + Telegram:     docker-compose --profile telegram up
+# API + Shell:        docker-compose --profile debug up
+# Everything:         docker-compose --profile telegram --profile debug up 

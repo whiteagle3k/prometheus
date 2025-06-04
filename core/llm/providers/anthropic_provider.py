@@ -2,7 +2,6 @@
 
 import warnings
 from collections.abc import AsyncGenerator
-from typing import Any, Dict, Optional
 
 try:
     import anthropic
@@ -10,7 +9,8 @@ except ImportError:
     print("Warning: anthropic not installed. Anthropic provider will not work.")
     anthropic = None
 
-from ...config import config
+from core.config import config
+
 from .base import (
     ExternalLLMProvider,
     GenerationRequest,
@@ -43,10 +43,12 @@ class AnthropicProvider(ExternalLLMProvider):
     async def _setup_client(self) -> None:
         """Setup Anthropic client."""
         if not anthropic:
-            raise RuntimeError("anthropic package not installed")
-        
+            msg = "anthropic package not installed"
+            raise RuntimeError(msg)
+
         if not config.anthropic_api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY not configured")
+            msg = "ANTHROPIC_API_KEY not configured"
+            raise RuntimeError(msg)
 
         try:
             # Suppress warnings for compatibility issues
@@ -54,7 +56,8 @@ class AnthropicProvider(ExternalLLMProvider):
                 warnings.simplefilter("ignore")
                 self._client = anthropic.AsyncAnthropic(api_key=config.anthropic_api_key)
         except Exception as e:
-            raise RuntimeError(f"Failed to setup Anthropic client: {e}")
+            msg = f"Failed to setup Anthropic client: {e}"
+            raise RuntimeError(msg)
 
     async def _generate_text(self, request: GenerationRequest) -> GenerationResponse:
         """Generate text using Anthropic API."""
@@ -62,7 +65,7 @@ class AnthropicProvider(ExternalLLMProvider):
             await self._setup_client()
 
         model = request.model or self.config.get("model", "claude-3-5-sonnet-20241022")
-        
+
         messages = [{"role": "user", "content": request.prompt}]
 
         request_kwargs = {
@@ -82,14 +85,14 @@ class AnthropicProvider(ExternalLLMProvider):
 
         try:
             response = await self._client.messages.create(**request_kwargs)
-            
+
             content = response.content[0].text if response.content else ""
-            
+
             # Anthropic doesn't return token usage in all responses, estimate it
             input_tokens = await self._estimate_tokens(request.prompt + (request.system_prompt or ""))
             output_tokens = await self._estimate_tokens(content)
             total_tokens = input_tokens + output_tokens
-            
+
             # Calculate cost estimate
             cost_estimate = self.estimate_cost(input_tokens, output_tokens)
 
@@ -103,11 +106,12 @@ class AnthropicProvider(ExternalLLMProvider):
                     "stop_reason": response.stop_reason,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
-                    "usage": getattr(response, 'usage', None),  # Some models return usage
+                    "usage": getattr(response, "usage", None),  # Some models return usage
                 },
             )
         except Exception as e:
-            raise RuntimeError(f"Anthropic API error: {e}")
+            msg = f"Anthropic API error: {e}"
+            raise RuntimeError(msg)
 
     async def _generate_stream(self, request: GenerationRequest) -> AsyncGenerator[str, None]:
         """Generate text with streaming using Anthropic API."""
@@ -115,7 +119,7 @@ class AnthropicProvider(ExternalLLMProvider):
             await self._setup_client()
 
         model = request.model or self.config.get("model", "claude-3-5-sonnet-20241022")
-        
+
         messages = [{"role": "user", "content": request.prompt}]
 
         request_kwargs = {
@@ -139,7 +143,8 @@ class AnthropicProvider(ExternalLLMProvider):
                 async for text in stream.text_stream:
                     yield text
         except Exception as e:
-            raise RuntimeError(f"Anthropic streaming error: {e}")
+            msg = f"Anthropic streaming error: {e}"
+            raise RuntimeError(msg)
 
     async def _estimate_tokens(self, text: str) -> int:
         """Estimate token count for Anthropic models."""
@@ -170,14 +175,14 @@ class AnthropicProvider(ExternalLLMProvider):
         """Check if this provider supports function calling."""
         return False
 
-    def get_rate_limits(self) -> Dict[str, Optional[int]]:
+    def get_rate_limits(self) -> dict[str, int | None]:
         """Get rate limits for this provider."""
         return {
             "requests_per_minute": self.capabilities.rate_limit_rpm,
             "tokens_per_minute": self.capabilities.rate_limit_tpm,
         }
 
-    def get_context_analysis_capabilities(self) -> Dict[str, bool]:
+    def get_context_analysis_capabilities(self) -> dict[str, bool]:
         """Get Claude-specific context analysis capabilities."""
         return {
             "supports_large_context": True,
@@ -185,4 +190,4 @@ class AnthropicProvider(ExternalLLMProvider):
             "good_for_analysis": True,
             "good_for_reasoning": True,
             "good_for_creative_tasks": True,
-        } 
+        }

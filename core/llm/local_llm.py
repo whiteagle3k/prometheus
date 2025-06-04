@@ -2,8 +2,8 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
-from typing import Any, Optional
 from pathlib import Path
+from typing import Any
 
 try:
     from llama_cpp import Llama
@@ -11,21 +11,22 @@ except ImportError:
     print("Warning: llama-cpp-python not installed. Local LLM will not work.")
     Llama = None
 
-from ..config import config
+from core.config import config
+
 # TODO: Remove direct identity import - should be passed from entity
 # from ..identity import identity
-from ..processing.pipeline import create_simple_response_pipeline
+from core.processing.pipeline import create_simple_response_pipeline
 
 
 class LocalLLM:
     """Local LLM using llama.cpp with hardware acceleration."""
 
-    def __init__(self, identity_config: Optional[dict] = None) -> None:
+    def __init__(self, identity_config: dict | None = None) -> None:
         """Initialize the local LLM."""
-        self.model: Optional[Llama] = None
+        self.model: Llama | None = None
         self.model_loaded = False
         self._init_lock = asyncio.Lock()
-        
+
         # TODO: Properly inject identity configuration from entity
         self.identity_config = identity_config or {
             "name": "AI Assistant",
@@ -37,7 +38,7 @@ class LocalLLM:
             },
             "llm_instructions": "You are a helpful AI assistant."
         }
-        
+
         # Initialize processing pipeline for response cleanup
         self.response_pipeline = create_simple_response_pipeline()
 
@@ -48,7 +49,7 @@ class LocalLLM:
 
         # Get model path from identity configuration first, then fall back to config
         model_path = config.local_model_path  # Default fallback
-        
+
         try:
             if "module_paths" in self.identity_config and "local_model_gguf" in self.identity_config["module_paths"]:
                 identity_model_path = Path(self.identity_config["module_paths"]["local_model_gguf"])
@@ -61,9 +62,12 @@ class LocalLLM:
             print(f"⚠️ Error reading model path from identity: {e}, using default")
 
         if not model_path.exists():
-            raise FileNotFoundError(
+            msg = (
                 f"Model not found at {model_path}. "
                 "Run scripts/download_models.sh first."
+            )
+            raise FileNotFoundError(
+                msg
             )
 
         print(f"🔄 Loading local model: {model_path}")
@@ -121,15 +125,16 @@ class LocalLLM:
         max_tokens: int = 512,
         temperature: float = 0.7,
         top_p: float = 0.9,
-        stop: Optional[list] = None,
-        system_prompt: Optional[str] = None,
+        stop: list | None = None,
+        system_prompt: str | None = None,
         **kwargs: Any,
     ) -> str:
         """Generate text using the local model."""
         await self.ensure_loaded()
 
         if not self.model:
-            raise RuntimeError("Local model not available")
+            msg = "Local model not available"
+            raise RuntimeError(msg)
 
         # Format prompt for Phi-3 chat format
         formatted_prompt = self._format_chat_prompt(prompt, system_prompt)
@@ -157,10 +162,10 @@ class LocalLLM:
 
         # Basic cleanup that's still needed
         response = response.replace("<|end|>", "").replace("<|assistant|>", "").strip()
-        
+
         # Detect language for fallback
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in prompt.lower())
-        
+
         # If response is too short or corrupted after processing, provide fallback
         if len(response) < 20 or not any(char.isalpha() for char in response):
             response = self._get_fallback_response(is_russian)
@@ -169,20 +174,19 @@ class LocalLLM:
 
     def _get_fallback_response(self, is_russian: bool) -> str:
         """Get fallback response based on identity configuration."""
-        language = "ru" if is_russian else "en"
-        
+
         if is_russian:
             # Use explicit feminine forms for Russian fallback
             return f"Привет! Я {self.identity_config['name']}, женский автономный агент. Готова помочь! Чем могу быть полезна?"
         else:
             return f"Hello! I'm {self.identity_config['name']}, {self.identity_config['personality']['summary'].lower()}. How can I help you?"
 
-    def _format_chat_prompt(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+    def _format_chat_prompt(self, prompt: str, system_prompt: str | None = None) -> str:
         """Format prompt for Phi-3 chat format using identity configuration."""
-        
+
         # Detect language of the prompt
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in prompt.lower())
-        
+
         formatted = ""
 
         # Use provided system prompt or get from identity
@@ -205,14 +209,15 @@ class LocalLLM:
         max_tokens: int = 512,
         temperature: float = 0.7,
         top_p: float = 0.9,
-        stop: Optional[list] = None,
+        stop: list | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[str, None]:
         """Generate text with streaming output."""
         await self.ensure_loaded()
 
         if not self.model:
-            raise RuntimeError("Local model not available")
+            msg = "Local model not available"
+            raise RuntimeError(msg)
 
         generate_kwargs = {
             "max_tokens": max_tokens,
@@ -312,7 +317,7 @@ class LocalLLM:
     async def generate_structured(
         self,
         prompt: str,
-        context: Optional[str] = None,
+        context: str | None = None,
         max_tokens: int = 512,
         temperature: float = 0.7,
         **kwargs: Any,
@@ -321,7 +326,8 @@ class LocalLLM:
         await self.ensure_loaded()
 
         if not self.model:
-            raise RuntimeError("Local model not available")
+            msg = "Local model not available"
+            raise RuntimeError(msg)
 
         # Build structured prompt
         structured_prompt = self._format_structured_prompt(prompt, context)
@@ -340,52 +346,68 @@ class LocalLLM:
         )
 
         raw_response = result["choices"][0]["text"].strip()
-        
-        # Parse structured response
-        return self._parse_structured_response(raw_response, prompt)
 
-    def _format_structured_prompt(self, prompt: str, context: Optional[str] = None) -> str:
-        """Format prompt to request structured response from local LLM."""
+        # Parse structured response
+        parsed_result = self._parse_structured_response(raw_response, prompt)
         
+        return parsed_result
+
+    def _format_structured_prompt(self, prompt: str, context: str | None = None) -> str:
+        """Format prompt to request structured response from local LLM."""
+
         # Use the system instructions from identity config directly
         system_prompt = self.identity_config.get("llm_instructions", "You are a helpful AI assistant.")
-        
+
         # Detect if user is asking in Russian to emphasize feminine forms
         is_russian_query = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in prompt.lower())
-        
+
         # Enhance system prompt for Russian queries to ensure feminine forms
         if is_russian_query:
             system_prompt += "\n\nIMPORTANT FOR RUSSIAN: Use ONLY feminine forms: готова (never готов), рада (never рад), смогу помочь, могу помочь. Your identity is female."
+
+        # Check if this is an ongoing conversation (similar to external LLM logic)
+        is_ongoing_conversation = bool(context and context.strip() and any(
+            marker in context
+            for marker in ["👤 You:", "🧠", "User:", "Assistant:", "Human:", "AI:", "Exchange", "🤖"]
+        ))
+
+        # Add conversation flow instructions
+        if is_ongoing_conversation:
+            system_prompt += """\n\nCRITICAL INSTRUCTION: This is a CONTINUATION of an ongoing conversation. You are already talking to this user. 
+DO NOT SAY: "Привет", "Здравствуйте", "Hello", "Hi", or any greetings.
+DO NOT SAY: "Как дела", "How are you", or ask how they are.
+DO NOT SAY: "Рада познакомиться", "Nice to meet you", or similar introductions.
+CONTINUE the conversation naturally without any greetings or introductions.
+The user is asking a follow-up question in an ongoing conversation."""
         
         # Build context section
         context_section = ""
         if context:
-            context_section = f"\n\nCONTEXT: {context}"
+            context_section = f"\n\nCONVERSATION CONTEXT: {context}"
 
         # Simple structured instruction format
-        instruction = f"""<|system|>{system_prompt}<|end|>
+        return f"""<|system|>{system_prompt}<|end|>
 <|user|>{prompt}{context_section}
 
 Please respond in this format:
 
 ANSWER: [your response to the user]
-CONFIDENCE: [high/medium/low] 
+CONFIDENCE: [high/medium/low]
 REASONING: [brief explanation]
 
 Respond naturally in the user's language.<|end|>
 <|assistant|>"""
 
-        return instruction
 
     def _parse_structured_response(self, raw_response: str, original_prompt: str) -> dict[str, Any]:
         """Parse structured response from local LLM using processing pipeline."""
-        
+
         # Use contamination filter for basic cleanup first
-        from ..processing.filters import ContaminationFilter
+        from core.processing.filters import ContaminationFilter
         filter_processor = ContaminationFilter()
         filter_result = filter_processor.process(raw_response)
         response = filter_result.data if filter_result.success else raw_response.strip()
-        
+
         # Default structure (simplified - no routing logic)
         parsed = {
             "answer": "",
@@ -396,7 +418,7 @@ Respond naturally in the user's language.<|end|>
 
         # Try inline parsing first
         self._parse_inline_format(response, parsed)
-        
+
         # If inline parsing didn't work well, try line-based parsing
         if not parsed["answer"]:
             self._parse_line_format(response, parsed)
@@ -416,118 +438,121 @@ Respond naturally in the user's language.<|end|>
     def _clean_answer_from_markers(self, answer: str) -> str:
         """Completely remove any structured field markers from the answer."""
         import re
-        
-        # Remove structured field patterns
-        cleaned = re.sub(r'\b(?:ANSWER|CONFIDENCE|REASONING):\s*[^\n]*\n?', '', answer, flags=re.IGNORECASE)
-        
+
+        # Remove structured field patterns (English and Russian)
+        cleaned = re.sub(r"\b(?:ANSWER|CONFIDENCE|REASONING|КОНФИДЕНЦИЯ|РАЗУМЕНИЕ|ОТВЕТ):\s*[^\n]*\n?", "", answer, flags=re.IGNORECASE)
+
         # Remove any remaining field patterns at start/end
-        cleaned = re.sub(r'^(?:ANSWER|CONFIDENCE|REASONING):\s*', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'(?:CONFIDENCE|REASONING):\s*.*$', '', cleaned, flags=re.IGNORECASE)
-        
+        cleaned = re.sub(r"^(?:ANSWER|CONFIDENCE|REASONING|КОНФИДЕНЦИЯ|РАЗУМЕНИЕ|ОТВЕТ):\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"(?:CONFIDENCE|REASONING|КОНФИДЕНЦИЯ|РАЗУМЕНИЕ):\s*.*$", "", cleaned, flags=re.IGNORECASE)
+
         # Remove common contamination patterns at start of response
-        cleaned = re.sub(r'^[A-ZА-Я]{5,}:\s*', '', cleaned)
-        
+        cleaned = re.sub(r"^[A-ZА-Я]{5,}:\s*", "", cleaned)
+
         # Clean up extra whitespace
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        
-        # Remove common contamination patterns
-        cleaned = re.sub(r'\b(high|medium|low)\s*confidence\b', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'\breasoning:\s*', '', cleaned, flags=re.IGNORECASE)
-        
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+        # Remove common contamination patterns (English and Russian)
+        cleaned = re.sub(r"\b(high|medium|low|высокая|средняя|низкая)\s*(confidence|конфиденция)\b", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\b(reasoning|разумение):\s*", "", cleaned, flags=re.IGNORECASE)
+
         # Remove any remaining field markers that might be scattered in text
-        cleaned = re.sub(r'\bCONFIDENCE\b[:\s]*', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'\bREASONING\b[:\s]*', '', cleaned, flags=re.IGNORECASE)
-        
+        cleaned = re.sub(r"\b(CONFIDENCE|КОНФИДЕНЦИЯ)\b[:\s]*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\b(REASONING|РАЗУМЕНИЕ)\b[:\s]*", "", cleaned, flags=re.IGNORECASE)
+
+        # Remove specific Russian contamination patterns seen in output
+        cleaned = re.sub(r"КОНФИДЕНЦИЯ:\s*высокая\s*РАЗУМЕНИЕ:\s*[^.]*\.", "", cleaned, flags=re.IGNORECASE)
+
         return cleaned.strip()
 
     def _parse_inline_format(self, response: str, parsed: dict) -> None:
         """Parse inline format where all fields are on one line."""
         import re
-        
-        # Extract answer (from start to first field marker)
-        answer_match = re.search(r'ANSWER:\s*(.+?)(?=\s+(?:CONFIDENCE|REASONING):|$)', response, re.IGNORECASE)
+
+        # Extract answer (from start to first field marker) - English and Russian
+        answer_match = re.search(r"(?:ANSWER|Ответ):\s*(.+?)(?=\s+(?:CONFIDENCE|REASONING|Доверие|Причина):|$)", response, re.IGNORECASE)
         if answer_match:
             parsed["answer"] = answer_match.group(1).strip()
-        
-        # Extract confidence  
-        conf_match = re.search(r'CONFIDENCE:\s*(\w+)', response, re.IGNORECASE)
+
+        # Extract confidence - English and Russian
+        conf_match = re.search(r"(?:CONFIDENCE|Доверие):\s*(\w+)", response, re.IGNORECASE)
         if conf_match:
             conf_text = conf_match.group(1).lower()
-            if 'high' in conf_text:
+            if "high" in conf_text or "высокое" in conf_text or "высокая" in conf_text:
                 parsed["confidence"] = "high"
-            elif 'low' in conf_text:
+            elif "low" in conf_text or "низкое" in conf_text or "низкая" in conf_text:
                 parsed["confidence"] = "low"
             else:
                 parsed["confidence"] = "medium"
-        
-        # Extract reasoning
-        reason_match = re.search(r'REASONING:\s*(.+?)$', response, re.IGNORECASE)
+
+        # Extract reasoning - English and Russian
+        reason_match = re.search(r"(?:REASONING|Причина|Разумение):\s*(.+?)$", response, re.IGNORECASE)
         if reason_match:
             parsed["reasoning"] = reason_match.group(1).strip()
 
     def _parse_line_format(self, response: str, parsed: dict) -> None:
         """Parse line-based format where each field is on a separate line."""
-        lines = response.split('\n')
+        lines = response.split("\n")
         for line in lines:
             line = line.strip()
             if not line:
                 continue
-                
-            # Parse different fields
-            if line.startswith('ANSWER:'):
-                answer_text = line.split(':', 1)[1].strip()
+
+            # Parse different fields (English and Russian)
+            if line.startswith("ANSWER:") or line.startswith("Ответ:"):
+                answer_text = line.split(":", 1)[1].strip()
                 if answer_text and not parsed["answer"]:
                     parsed["answer"] = answer_text
-            elif line.startswith('CONFIDENCE:'):
-                conf_text = line.split(':', 1)[1].strip().lower()
-                if 'high' in conf_text:
+            elif line.startswith("CONFIDENCE:") or line.startswith("Доверие:"):
+                conf_text = line.split(":", 1)[1].strip().lower()
+                if "high" in conf_text or "высокое" in conf_text or "высокая" in conf_text:
                     parsed["confidence"] = "high"
-                elif 'low' in conf_text:
+                elif "low" in conf_text or "низкое" in conf_text or "низкая" in conf_text:
                     parsed["confidence"] = "low"
                 else:
                     parsed["confidence"] = "medium"
-            elif line.startswith('REASONING:'):
-                reasoning_text = line.split(':', 1)[1].strip()
+            elif line.startswith("REASONING:") or line.startswith("Причина:") or line.startswith("Разумение:"):
+                reasoning_text = line.split(":", 1)[1].strip()
                 if reasoning_text and not parsed["reasoning"]:
                     parsed["reasoning"] = reasoning_text
 
     def _extract_contextual_answer(self, response: str, parsed: dict, original_prompt: str) -> None:
         """Extract answer with better context preservation, avoiding topic loss."""
-        
+
         # First, try to find any substantial content that could be an answer
-        lines = response.split('\n')
+        lines = response.split("\n")
         potential_answers = []
-        
+
         for line in lines:
             line = line.strip()
-            if (line and 
-                not line.upper().startswith(('ANSWER:', 'CONFIDENCE:', 'REASONING:', 'EXTERNAL_NEEDED:')) and
+            if (line and
+                not line.upper().startswith(("ANSWER:", "CONFIDENCE:", "REASONING:", "EXTERNAL_NEEDED:")) and
                 len(line) > 15 and  # Increase minimum length
-                not line.startswith('<|') and  # Skip format tokens
+                not line.startswith("<|") and  # Skip format tokens
                 any(char.isalpha() for char in line) and  # Must contain letters
-                not line.startswith(('Привет!', 'Hello!', 'Здравствуйте'))):  # Skip generic greetings
+                not line.startswith(("Привет!", "Hello!", "Здравствуйте"))):  # Skip generic greetings
                 potential_answers.append(line)
-        
+
         # Pick the longest substantial answer
         if potential_answers:
             parsed["answer"] = max(potential_answers, key=len)
             parsed["confidence"] = "low"  # Set low confidence for extracted answers
             parsed["reasoning"] = "Answer extracted from unstructured response"
             return
-        
+
         # If still no good answer, try to find any content at all
-        all_text = ' '.join(lines).strip()
+        all_text = " ".join(lines).strip()
         # Remove structured markers
         import re
-        clean_text = re.sub(r'\b(?:ANSWER|CONFIDENCE|REASONING|EXTERNAL_NEEDED):\s*[^\n]*', '', all_text)
-        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
-        
+        clean_text = re.sub(r"\b(?:ANSWER|CONFIDENCE|REASONING|EXTERNAL_NEEDED):\s*[^\n]*", "", all_text)
+        clean_text = re.sub(r"\s+", " ", clean_text).strip()
+
         if clean_text and len(clean_text) > 20:
             parsed["answer"] = clean_text
             parsed["confidence"] = "low"
             parsed["reasoning"] = "Fallback extraction from response"
             return
-        
+
         # Last resort: Generate contextual fallback instead of generic greeting
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in original_prompt.lower())
         parsed["answer"] = self._get_contextual_fallback(original_prompt, is_russian)
@@ -536,26 +561,26 @@ Respond naturally in the user's language.<|end|>
 
     def _get_contextual_fallback(self, original_prompt: str, is_russian: bool) -> str:
         """Generate contextual fallback response instead of generic greeting."""
-        
+
         # Detect topic/domain from the prompt for better fallbacks
         prompt_lower = original_prompt.lower()
-        
+
         # Technical/scientific topics
-        if any(word in prompt_lower for word in ['двигатель', 'тепловой', 'квантов', 'физик', 'engine', 'thermal', 'quantum', 'physics']):
+        if any(word in prompt_lower for word in ["двигатель", "тепловой", "квантов", "физик", "engine", "thermal", "quantum", "physics"]):
             if is_russian:
-                return f"Извините, у меня возникли сложности с ответом на ваш технический вопрос. Возможно, стоит обратиться к внешним источникам для получения более точной информации."
+                return "Извините, у меня возникли сложности с ответом на ваш технический вопрос. Возможно, стоит обратиться к внешним источникам для получения более точной информации."
             else:
-                return f"I'm having difficulty providing a complete answer to your technical question. You might want to consult external sources for more accurate information."
-        
+                return "I'm having difficulty providing a complete answer to your technical question. You might want to consult external sources for more accurate information."
+
         # Questions about processes or explanations
-        if any(word in prompt_lower for word in ['как', 'что такое', 'расскажи', 'объясни', 'how', 'what is', 'explain', 'tell me']):
+        if any(word in prompt_lower for word in ["как", "что такое", "расскажи", "объясни", "how", "what is", "explain", "tell me"]):
             if is_russian:
-                return f"Извините, мне нужно больше времени, чтобы правильно ответить на ваш вопрос. Можете переформулировать его или обратиться за более подробной информацией?"
+                return "Извините, мне нужно больше времени, чтобы правильно ответить на ваш вопрос. Можете переформулировать его или обратиться за более подробной информацией?"
             else:
-                return f"I need more time to properly answer your question. Could you rephrase it or seek more detailed information elsewhere?"
-        
+                return "I need more time to properly answer your question. Could you rephrase it or seek more detailed information elsewhere?"
+
         # Generic fallback (last resort)
         if is_russian:
-            return f"Извините, я испытываю технические трудности с обработкой вашего запроса. Попробуйте переформулировать вопрос."
+            return "Извините, я испытываю технические трудности с обработкой вашего запроса. Попробуйте переформулировать вопрос."
         else:
-            return f"I'm experiencing technical difficulties processing your request. Please try rephrasing your question."
+            return "I'm experiencing technical difficulties processing your request. Please try rephrasing your question."

@@ -8,12 +8,13 @@ Optimized based on performance testing:
 - Rule-based routing (100% accurate, instant)
 - SmolLM2-135M for classification (~0.25s vs 1.08s)
 - Intelligent fallbacks for reliability
+- Singleton pattern to prevent multiple model loads
 """
 
 import asyncio
 import time
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any
 
 try:
     from llama_cpp import Llama
@@ -21,28 +22,44 @@ except ImportError:
     print("Warning: llama-cpp-python not installed. Fast LLM will not work.")
     Llama = None
 
-from ..config import config
+from core.config import config
+from core.processing.config import get_processor_config
+
 # TODO: Remove direct identity import - should be passed from entity
 # from ..identity import identity
 
 
 class FastLLM:
     """Small, fast LLM for utility tasks like classification, extraction, preprocessing."""
+    
+    # Singleton pattern to prevent multiple instances
+    _instance = None
+    _instance_lock = asyncio.Lock()
 
-    def __init__(self, identity_config: Optional[dict] = None) -> None:
-        """Initialize the utility LLM."""
-        self.model: Optional[Llama] = None
+    def __new__(cls, identity_config: dict | None = None):
+        """Singleton pattern to reuse model across components."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self, identity_config: dict | None = None) -> None:
+        """Initialize the utility LLM (singleton pattern)."""
+        if hasattr(self, '_initialized') and self._initialized:
+            return  # Already initialized
+            
+        self.model: Llama | None = None
         self.model_loaded = False
         self._init_lock = asyncio.Lock()
         self.identity_config = identity_config
         self._fallback_mode = False
-        
+
         # Find the best available utility model
         self.model_path = self._find_best_utility_model()
-        
+
         # Get utility performance config from identity or use defaults
         self.utility_config = self._get_utility_config()
-        
+
         # Performance tracking
         self._performance_stats = {
             "avg_inference_time": 0.0,
@@ -52,19 +69,22 @@ class FastLLM:
             "rule_based_routing_calls": 0,
             "model_classification_calls": 0
         }
-        
-        # Performance optimization flags
-        self._use_rule_based_routing = True  # Rule-based routing is 100% accurate and instant
-        self._classification_threshold = 1.0  # Switch to fallback if model is too slow
 
-    def _find_best_utility_model(self) -> Optional[Path]:
+        # Performance optimization flags
+        self._use_rule_based_routing = False  # Use intelligent model-based routing with rule-based fallback
+        self._classification_threshold = 1.0  # Switch to fallback if model is too slow
+        
+        self._initialized = True
+        print("🎯 FastLLM: Using singleton instance (prevents multiple model loads)")
+
+    def _find_best_utility_model(self) -> Path | None:
         """Find the best available utility model using identity configuration."""
         models_dir = config.local_model_path.parent
-        
+
         # First priority: Check identity configuration
         if self.identity_config and "module_paths" in self.identity_config:
             module_paths = self.identity_config["module_paths"]
-            
+
             # Check for specific utility model configuration
             configured_utility_model = module_paths.get("utility_model_gguf")
             if configured_utility_model:
@@ -75,38 +95,38 @@ class FastLLM:
                     return utility_path
                 else:
                     print(f"⚠️  Configured utility model not found: {configured_utility_model}")
-            
+
             # Check for utility model candidates in identity (if specified)
             utility_candidates = module_paths.get("utility_model_candidates", [])
             if utility_candidates:
-                print(f"🔍 Checking identity-specified utility model candidates...")
+                print("🔍 Checking identity-specified utility model candidates...")
                 for model_name in utility_candidates:
                     model_path = models_dir / model_name
                     if model_path.exists():
                         model_size = self._get_model_size_mb(model_path)
                         print(f"🚀 Found identity candidate: {model_name} ({model_size:.1f}MB)")
                         return model_path
-        
+
         # Second priority: Auto-discovery of small models (optimized order based on testing)
         print(f"🔍 Auto-discovering utility models in {models_dir}...")
-        
+
         # Prioritized list based on performance testing results
         auto_discovery_candidates = [
             # Proven fast models (tested and optimized)
             "SmolLM2-135M-Instruct-Q4_K_S.gguf",  # 97MB, ~0.25s classification
-            "SmolLM2-135M-Q4_K_S.gguf", 
+            "SmolLM2-135M-Q4_K_S.gguf",
             "SmolLM2-360M-Instruct-Q4_K_M.gguf",
             "TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf",
-            
+
             # Small general models
             "minillama.gguf",
             "tinyllama.gguf",
-            
+
             # Larger fallback models (for compatibility)
             "phi-3-mini-3.8b-q4_k.gguf",  # 2.3GB, slower but capable
             "llama-2-7b-chat.q4_k_m.gguf",
         ]
-        
+
         # Prefer smaller models for speed
         for model_name in auto_discovery_candidates:
             model_path = models_dir / model_name
@@ -117,7 +137,7 @@ class FastLLM:
                     return model_path
                 else:
                     print(f"📝 Found large model: {model_name} ({model_size:.1f}MB) - will use if no alternatives")
-        
+
         # Third priority: Use any available model (even large ones)
         for model_name in auto_discovery_candidates:
             model_path = models_dir / model_name
@@ -125,13 +145,13 @@ class FastLLM:
                 model_size = self._get_model_size_mb(model_path)
                 print(f"🐌 Using large utility model: {model_name} ({model_size:.1f}MB) - expect slower performance")
                 return model_path
-        
+
         # Fourth priority: Use main model as fallback
         if config.local_model_path.exists():
             main_model_size = self._get_model_size_mb(config.local_model_path)
             print(f"🔄 Fallback to main model: {config.local_model_path.name} ({main_model_size:.1f}MB)")
             return config.local_model_path
-            
+
         print("💡 No utility model found - using rule-based heuristics (actually very fast!)")
         return None
 
@@ -146,7 +166,7 @@ class FastLLM:
         """Get utility model performance configuration optimized for small models."""
         if self.identity_config and "module_paths" in self.identity_config:
             utility_config = self.identity_config["module_paths"].get("utility_performance_config", {})
-            
+
             # Use identity config with optimizations for small models
             return {
                 "gpu_layers": utility_config.get("gpu_layers", 32),  # More GPU layers for small models
@@ -166,18 +186,18 @@ class FastLLM:
     async def _load_model(self) -> None:
         """Load the utility model with optimized settings for speed."""
         load_start = time.time()
-        
+
         if self.model_loaded or not Llama or not self.model_path:
             self._fallback_mode = True
             return
 
         if not self.model_path.exists():
-            print(f"💡 Utility model not found - using fast rule-based heuristics")
+            print("💡 Utility model not found - using fast rule-based heuristics")
             self._fallback_mode = True
             return
 
         model_size_mb = self._get_model_size_mb(self.model_path)
-        
+
         print(f"⚡ Loading utility model: {self.model_path.name} ({model_size_mb:.1f}MB)")
 
         # Optimized settings for small, fast model
@@ -211,16 +231,16 @@ class FastLLM:
             self.model_loaded = True
             load_time = time.time() - load_start
             self._performance_stats["load_time"] = load_time
-            
+
             print(f"✅ Utility model loaded in {load_time:.2f}s")
-            
+
         except Exception as e:
             print(f"⚠️  Model loading failed: {e}")
             print("   Using rule-based heuristics (often just as good!)")
             self._fallback_mode = True
 
     async def ensure_loaded(self) -> None:
-        """Ensure model is loaded, thread-safe."""        
+        """Ensure model is loaded, thread-safe."""
         if not self.model_loaded and not self._fallback_mode:
             async with self._init_lock:
                 if not self.model_loaded and not self._fallback_mode:
@@ -229,9 +249,9 @@ class FastLLM:
     async def classify_query(self, query: str) -> str:
         """Classify user query into semantic categories."""
         classify_start = time.time()
-        
+
         await self.ensure_loaded()
-        
+
         if self._fallback_mode or not self.model:
             result = self._fallback_classify_query(query)
             classify_time = time.time() - classify_start
@@ -261,19 +281,19 @@ Query:"""
                 )
             )
             inference_time = time.time() - inference_start
-            
+
             # Update performance stats
             self._performance_stats["total_calls"] += 1
             self._performance_stats["model_classification_calls"] += 1
             self._performance_stats["avg_inference_time"] = (
-                (self._performance_stats["avg_inference_time"] * (self._performance_stats["total_calls"] - 1) + 
+                (self._performance_stats["avg_inference_time"] * (self._performance_stats["total_calls"] - 1) +
                  inference_time) / self._performance_stats["total_calls"]
             )
-            
+
             classification = result["choices"][0]["text"].strip().lower()
-            
+
             # Validate classification
-            valid_categories = ['technical', 'conversational', 'personal_data', 'general']
+            valid_categories = ["technical", "conversational", "personal_data", "general"]
             if any(cat in classification for cat in valid_categories):
                 final_classification = next(cat for cat in valid_categories if cat in classification)
                 total_time = time.time() - classify_start
@@ -285,8 +305,8 @@ Query:"""
                 total_time = time.time() - classify_start
                 print(f"⚡ FastLLM classify_query (fallback): {total_time:.3f}s -> {fallback_result}")
                 return fallback_result
-                
-        except Exception as e:
+
+        except Exception:
             self._performance_stats["failed_calls"] += 1
             fallback_result = self._fallback_classify_query(query)
             total_time = time.time() - classify_start
@@ -297,22 +317,22 @@ Query:"""
         """Classify memory content for semantic matching."""
         # For memory content, always use fast classification
         content_to_classify = content
-        if content.startswith('Task:'):
-            lines = content.split('\n')
-            task_line = next((line for line in lines if line.startswith('Task:')), '')
-            content_to_classify = task_line.replace('Task:', '').strip()
+        if content.startswith("Task:"):
+            lines = content.split("\n")
+            task_line = next((line for line in lines if line.startswith("Task:")), "")
+            content_to_classify = task_line.replace("Task:", "").strip()
 
         return await self.classify_query(content_to_classify)
 
-    async def make_routing_decision(self, query: str, context: Optional[str] = None) -> dict[str, Any]:
+    async def make_routing_decision(self, query: str, context: str | None = None) -> dict[str, Any]:
         """
         Make a routing decision for the query.
-        
+
         OPTIMIZED: Uses rule-based routing (100% accuracy, instant performance)
         based on comparison testing results.
         """
         routing_start = time.time()
-        
+
         # Use optimized rule-based routing (proven 100% accurate and instant)
         if self._use_rule_based_routing:
             result = self._optimized_rule_based_routing(query)
@@ -320,23 +340,34 @@ Query:"""
             self._performance_stats["rule_based_routing_calls"] += 1
             print(f"⚡ FastLLM routing (rule-based): {routing_time:.3f}s -> {result['route']}")
             return result
-        
+
         # Fallback to model-based routing (if needed for special cases)
         await self.ensure_loaded()
-        
+
         if self._fallback_mode or not self.model:
             result = self._fallback_routing_decision(query)
             routing_time = time.time() - routing_start
             print(f"⚡ FastLLM routing (heuristic): {routing_time:.3f}s -> {result['route']}")
             return result
 
-        # Model-based routing (rarely used now)
-        system_prompt = """Route as: LOCAL or EXTERNAL
+        # Model-based routing (intelligent content understanding)
+        system_prompt = """Analyze the query and route to LOCAL or EXTERNAL:
 
-LOCAL: simple chat, basic questions
-EXTERNAL: complex analysis, scientific topics
+EXTERNAL for:
+- Current events, news, today's information
+- Scientific topics (astronomy, physics, medicine, biology)
+- Complex technical explanations
+- Recent research or developments
+- Specialized knowledge requiring up-to-date data
 
-Decision:"""
+LOCAL for:
+- Simple greetings and conversation
+- Basic personal questions
+- General chat without specific expertise needs
+
+Think about what knowledge is required, not just keywords.
+
+Query type:"""
 
         formatted_prompt = f"<|system|>{system_prompt}<|end|>\n<|user|>Query: {query[:100]}<|end|>\n<|assistant|>"
 
@@ -352,24 +383,25 @@ Decision:"""
                 )
             )
             inference_time = time.time() - inference_start
-            
+
+            # Fix: llama-cpp-python response format, not OpenAI format
             response = result["choices"][0]["text"].strip().upper()
-            
+
             route = "LOCAL"
             if "EXTERNAL" in response:
                 route = "EXTERNAL"
-            
+
             total_time = time.time() - routing_start
             print(f"⚡ FastLLM routing (model): {total_time:.3f}s -> {route}")
-            
+
             return {
-                'route': route,
-                'confidence': 'medium',
-                'complexity': 'simple' if route == "LOCAL" else 'complex',
-                'reasoning': f'Model decision: {response[:30]}'
+                "route": route,
+                "confidence": "medium",
+                "complexity": "simple" if route == "LOCAL" else "complex",
+                "reasoning": f"Model decision: {response[:30]}"
             }
-            
-        except Exception as e:
+
+        except Exception:
             result = self._fallback_routing_decision(query)
             total_time = time.time() - routing_start
             print(f"⚠️ Model routing failed, using fallback: {total_time:.3f}s -> {result['route']}")
@@ -378,7 +410,7 @@ Decision:"""
     async def classify_prompt(self, prompt: str, classification_type: str) -> dict[str, Any]:
         """General-purpose classification method for Self-RAG components."""
         await self.ensure_loaded()
-        
+
         if self._fallback_mode or not self.model:
             return {"classification": f"Rule-based classification for {classification_type}", "model_used": "fallback"}
 
@@ -396,18 +428,18 @@ Decision:"""
                     echo=False
                 )
             )
-            
+
             classification = result["choices"][0]["text"].strip()
-            
+
             return {
                 "classification": classification,
                 "classification_type": classification_type,
                 "model_used": "utility_model"
             }
-            
+
         except Exception as e:
             return {
-                "classification": f"Classification failed: {str(e)}",
+                "classification": f"Classification failed: {e!s}",
                 "classification_type": classification_type,
                 "model_used": "fallback"
             }
@@ -428,107 +460,85 @@ Decision:"""
         """Extract and expand key concepts from query for better semantic matching."""
         if language == "auto":
             language = await self.detect_language(query)
-        
+
         # Fast rule-based concept expansion
         return self._fallback_expand_concepts(query, language)
 
     # Optimized rule-based methods
     def _optimized_rule_based_routing(self, query: str) -> dict[str, Any]:
         """
-        Optimized rule-based routing based on comparison test results.
-        This achieved 100% accuracy in testing - better than LLM models!
+        Optimized rule-based routing using processing config patterns.
+        Uses the external_routing.json configuration to determine what should go to external LLM.
         """
         query_lower = query.lower()
         
-        # Enhanced scientific/technical keywords for external routing
-        external_keywords = [
-            # Russian scientific terms
-            'квантов', 'физик', 'химия', 'биология', 'математика', 'инженер', 'научн',
-            'механизм', 'принцип', 'теория', 'формула', 'уравнение', 'исследование',
-            'двигатель', 'энергия', 'мощность', 'система', 'процесс', 'технология',
-            'молекула', 'атом', 'электрон', 'ракет', 'космос', 'астрономия', 'реактор',
-            'орбит', 'вычисли', 'рассчита', 'анализ', 'сложн',
-            # English scientific terms  
-            'quantum', 'physics', 'chemistry', 'biology', 'mathematics', 'engineering', 'science',
-            'mechanism', 'principle', 'theory', 'formula', 'equation', 'research',
-            'engine', 'energy', 'power', 'system', 'process', 'technology',
-            'molecule', 'atom', 'electron', 'rocket', 'space', 'astronomy', 'reactor',
-            'orbital', 'calculate', 'compute', 'analysis', 'complex'
-        ]
-        
-        # Simple conversational keywords that stay local
-        local_keywords = [
-            'привет', 'hello', 'hi', 'как дела', 'how are you', 'кто ты', 'who are you',
-            'спасибо', 'thank', 'пока', 'bye', 'хорошо', 'good', 'да', 'yes', 'нет', 'no',
-            'утро', 'morning', 'день', 'day', 'вечер', 'evening'
-        ]
-        
-        # Check for external routing triggers
-        if any(keyword in query_lower for keyword in external_keywords):
-            return {
-                "route": "EXTERNAL",
-                "confidence": "high", 
-                "reasoning": "Scientific/technical content detected",
-                "complexity": "complex"
-            }
-        
-        # Check for simple local conversations
-        if any(keyword in query_lower for keyword in local_keywords):
-            return {
-                "route": "LOCAL",
-                "confidence": "high",
-                "reasoning": "Simple conversation detected",
-                "complexity": "simple"
-            }
-        
+        # Load routing patterns from processing config
+        try:
+            routing_config = get_processor_config("external_routing")
+            params = routing_config.parameters
+            
+            # Check external routing keywords in priority order
+            external_categories = params.get("external_routing_priority", [])
+            
+            for category in external_categories:
+                keywords = params.get(category, [])
+                if any(keyword in query_lower for keyword in keywords):
+                    category_name = category.replace("_keywords", "").replace("_", " ")
+                    return {
+                        "route": "EXTERNAL",
+                        "confidence": "high",
+                        "reasoning": f"{category_name.title()} detected",
+                        "complexity": "complex"
+                    }
+            
+            # Check conversational keywords for local routing
+            conversational_keywords = params.get("conversational_keywords", [])
+            if any(keyword in query_lower for keyword in conversational_keywords):
+                return {
+                    "route": "LOCAL",
+                    "confidence": "high", 
+                    "reasoning": "Simple conversation detected",
+                    "complexity": "simple"
+                }
+                
+        except Exception as e:
+            print(f"⚠️ Failed to load routing config: {e}")
+            # Fallback to basic hardcoded logic if config fails
+            pass
+
         # Default to local for moderate complexity (most queries)
         return {
-            "route": "LOCAL", 
+            "route": "LOCAL",
             "confidence": "medium",
             "reasoning": "General query, using local model",
             "complexity": "moderate"
         }
 
     def _fallback_classify_query(self, query: str) -> str:
-        """Enhanced rule-based query classification."""
-        query_lower = query.lower()
-        
-        # Technical indicators (expanded for better detection)
-        technical_keywords = [
-            'двигатель', 'тепловой', 'физик', 'квантов', 'механизм', 'принцип', 'энергия', 'система',
-            'engine', 'thermal', 'physics', 'quantum', 'mechanism', 'principle', 'energy', 'system',
-            'научн', 'science', 'химия', 'chemistry', 'биология', 'biology', 'математика', 'mathematics',
-            'реактор', 'reactor', 'орбит', 'orbital', 'ракет', 'rocket'
-        ]
-        
-        # Conversational indicators
-        conversational_keywords = [
-            'привет', 'как дела', 'кто', 'меня зовут', 'спасибо', 'пока', 'утро',
-            'hello', 'how are', 'who are', 'my name', 'thank', 'bye', 'hi', 'morning'
-        ]
-        
-        # Personal data indicators  
-        personal_keywords = [
-            'данные', 'рост', 'вес', 'возраст', 'измерения', 'см', 'кг',
-            'data', 'height', 'weight', 'age', 'measurements', 'cm', 'kg'
-        ]
-        
-        # Explanation indicators
-        explanation_keywords = [
-            'как', 'что такое', 'расскажи', 'объясни', 'устроен', 'работает',
-            'how', 'what is', 'explain', 'tell me', 'works', 'describe'
-        ]
-        
-        if any(word in query_lower for word in technical_keywords):
-            return 'technical'
-        elif any(word in query_lower for word in explanation_keywords):
-            return 'explanation'
-        elif any(word in query_lower for word in conversational_keywords):
-            return 'conversational'
-        elif any(word in query_lower for word in personal_keywords):
-            return 'personal_data'
-        else:
-            return 'general'
+        """Enhanced rule-based query classification using processing config."""
+        try:
+            routing_config = get_processor_config("external_routing")
+            params = routing_config.parameters
+            query_lower = query.lower()
+            
+            # Check each category using config patterns
+            if any(keyword in query_lower for keyword in params.get("medical_and_health_keywords", [])):
+                return "technical"
+            elif any(keyword in query_lower for keyword in params.get("scientific_keywords", [])):
+                return "technical"
+            elif any(keyword in query_lower for keyword in params.get("detailed_explanation_keywords", [])):
+                return "explanation"
+            elif any(keyword in query_lower for keyword in params.get("conversational_keywords", [])):
+                return "conversational"
+            elif any(keyword in query_lower for keyword in params.get("news_and_events_keywords", [])):
+                return "explanation"
+            else:
+                return "general"
+                
+        except Exception as e:
+            print(f"⚠️ Failed to load classification config: {e}")
+            # Simple fallback if config fails
+            return "general"
 
     def _fallback_classify_memory(self, content: str) -> str:
         """Rule-based memory classification."""
@@ -539,44 +549,101 @@ Decision:"""
         # Simple extraction - first meaningful words
         words = text.split()
         topic_words = []
-        
+
         for word in words[:8]:  # Look at first 8 words
             clean_word = word.strip('.,!?:;()[]{}"\'-')
-            if len(clean_word) > 2 and not clean_word.lower() in ['the', 'and', 'or', 'but', 'что', 'как', 'это']:
+            if len(clean_word) > 2 and clean_word.lower() not in ["the", "and", "or", "but", "что", "как", "это"]:
                 topic_words.append(clean_word)
-                if len(' '.join(topic_words)) >= max_length - 10:
+                if len(" ".join(topic_words)) >= max_length - 10:
                     break
-        
-        topic = ' '.join(topic_words)
+
+        topic = " ".join(topic_words)
         if len(topic) > max_length:
             topic = topic[:max_length-3] + "..."
-        
+
         return topic if topic else "general_topic"
 
     def _fallback_expand_concepts(self, query: str, language: str) -> list[str]:
-        """Fallback concept expansion using simple keyword matching."""
+        """Fallback concept expansion using processing config patterns."""
         concepts = []
         query_lower = query.lower()
-        
-        # Technical concepts
-        if any(word in query_lower for word in ['система', 'механизм', 'принцип', 'процесс']):
-            concepts.extend(['технология', 'инженерия', 'принцип работы'])
-        
-        if any(word in query_lower for word in ['system', 'mechanism', 'principle', 'process']):
-            concepts.extend(['technology', 'engineering', 'working principle'])
-        
-        # Scientific concepts
-        if any(word in query_lower for word in ['квантовый', 'физика', 'химия']):
-            concepts.extend(['наука', 'исследование', 'теория'])
+
+        try:
+            routing_config = get_processor_config("external_routing")
+            params = routing_config.parameters
             
-        if any(word in query_lower for word in ['quantum', 'physics', 'chemistry']):
-            concepts.extend(['science', 'research', 'theory'])
-        
+            # Check each category and add related concepts
+            if any(keyword in query_lower for keyword in params.get("scientific_keywords", [])):
+                if language == "ru":
+                    concepts.extend(["наука", "исследование", "теория"])
+                else:
+                    concepts.extend(["science", "research", "theory"])
+                    
+            if any(keyword in query_lower for keyword in params.get("medical_and_health_keywords", [])):
+                if language == "ru":
+                    concepts.extend(["медицина", "здоровье", "лечение"])
+                else:
+                    concepts.extend(["medicine", "health", "treatment"])
+                    
+            if any(keyword in query_lower for keyword in params.get("detailed_explanation_keywords", [])):
+                if language == "ru":
+                    concepts.extend(["объяснение", "анализ", "подробности"])
+                else:
+                    concepts.extend(["explanation", "analysis", "details"])
+                    
+        except Exception as e:
+            print(f"⚠️ Failed to load concept expansion config: {e}")
+            # Simple fallback if config fails
+            pass
+
         return concepts[:3]  # Limit to avoid noise
 
     def _fallback_routing_decision(self, query: str) -> dict[str, Any]:
-        """Fallback routing using the optimized rule-based logic."""
-        return self._optimized_rule_based_routing(query)
+        """Intelligent fallback routing using processing config patterns."""
+        from core.processing.config import get_processor_config
+        
+        query_lower = query.lower()
+        
+        try:
+            routing_config = get_processor_config("external_routing")
+            params = routing_config.parameters
+            
+            # Check external routing keywords in priority order
+            external_categories = params.get("external_routing_priority", [])
+            
+            for category in external_categories:
+                keywords = params.get(category, [])
+                if any(keyword in query_lower for keyword in keywords):
+                    category_name = category.replace("_keywords", "").replace("_", " ")
+                    return {
+                        "route": "EXTERNAL",
+                        "confidence": "high",
+                        "reasoning": f"{category_name.title()} content detected",
+                        "complexity": "complex"
+                    }
+            
+            # Check conversational keywords for local routing
+            conversational_keywords = params.get("conversational_keywords", [])
+            if any(keyword in query_lower for keyword in conversational_keywords):
+                return {
+                    "route": "LOCAL",
+                    "confidence": "high", 
+                    "reasoning": "Simple conversation detected",
+                    "complexity": "simple"
+                }
+                
+        except Exception as e:
+            print(f"⚠️ Failed to load routing config: {e}")
+            # Simple fallback if config fails
+            pass
+
+        # Default to local for moderate complexity
+        return {
+            "route": "LOCAL",
+            "confidence": "medium",
+            "reasoning": "General query, using local model",
+            "complexity": "moderate"
+        }
 
     async def is_available(self) -> bool:
         """Check if utility model is available."""
@@ -585,7 +652,7 @@ Decision:"""
     def get_model_info(self) -> dict[str, Any]:
         """Get information about the utility model."""
         model_size = self._get_model_size_mb(self.model_path) if self.model_path else 0
-        
+
         return {
             "model_path": str(self.model_path) if self.model_path else "Rule-based only",
             "model_size_mb": model_size,
@@ -601,22 +668,22 @@ Decision:"""
     def get_performance_summary(self) -> str:
         """Get performance summary."""
         stats = self._performance_stats
-        
+
         if stats["total_calls"] == 0:
             return "No operations performed yet"
-        
+
         routing_calls = stats["rule_based_routing_calls"]
         classification_calls = stats["model_classification_calls"]
-        
-        summary = f"FastLLM Performance Summary:\n"
+
+        summary = "FastLLM Performance Summary:\n"
         summary += f"  🚀 Rule-based routing: {routing_calls} calls (instant)\n"
         summary += f"  📊 Model classification: {classification_calls} calls\n"
-        
+
         if classification_calls > 0:
             avg_time = stats["avg_inference_time"]
             summary += f"  ⚡ Avg classification time: {avg_time:.3f}s\n"
-        
+
         if stats["failed_calls"] > 0:
             summary += f"  ⚠️  Failed calls: {stats['failed_calls']}\n"
-            
-        return summary 
+
+        return summary

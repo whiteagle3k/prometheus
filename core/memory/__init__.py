@@ -5,16 +5,16 @@ Provides vector storage, hierarchical memory management,
 user profile storage, and memory compression capabilities.
 """
 
-from .vector_store import VectorStore
-from .hierarchical_store import HierarchicalMemoryStore
-from .user_profile_store import UserProfileStore
-from .summariser import MemorySummariser
 from .enums import MemoryTier
+from .hierarchical_store import HierarchicalMemoryStore
+from .summariser import MemorySummariser
+from .user_profile_store import UserProfileStore
+from .vector_store import VectorStore
 
 __all__ = [
-    "VectorStore", 
-    "HierarchicalMemoryStore", 
-    "UserProfileStore", 
+    "VectorStore",
+    "HierarchicalMemoryStore",
+    "UserProfileStore",
     "MemorySummariser",
     "MemoryTier"
 ]

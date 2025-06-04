@@ -3,12 +3,12 @@
 import asyncio
 import uuid
 from datetime import datetime
-from typing import Any, Optional, List
+from typing import Any
 
 import chromadb
 from chromadb.config import Settings
 
-from ..config import config
+from core.config import config
 
 
 class VectorStore:
@@ -23,7 +23,7 @@ class VectorStore:
                 allow_reset=True,
             ),
         )
-        
+
         # Add lock for parallel access protection (o3's issue #6)
         self._access_lock = asyncio.Lock()
 
@@ -42,7 +42,7 @@ class VectorStore:
         self,
         content: str,
         memory_type: str = "experience",
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Store a memory entry."""
         memory_id = str(uuid.uuid4())
@@ -69,7 +69,7 @@ class VectorStore:
         self,
         query: str,
         n_results: int = 5,
-        memory_type: Optional[str] = None,
+        memory_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Search for relevant memories."""
         where_filter = {}
@@ -81,10 +81,10 @@ class VectorStore:
             None,
             lambda: self.memory_collection.count(),
         )
-        
+
         # Adjust n_results to not exceed available entries
         actual_n_results = min(n_results, collection_count) if collection_count > 0 else 0
-        
+
         # Skip search if no memories available
         if actual_n_results == 0:
             return []
@@ -116,7 +116,7 @@ class VectorStore:
         task: str,
         critique: str,
         improvements: str,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Store a reflection/self-critique entry."""
         reflection_id = str(uuid.uuid4())
@@ -142,11 +142,10 @@ class VectorStore:
 
     async def get_memory_count(self) -> int:
         """Get total number of memory entries."""
-        count = await asyncio.get_event_loop().run_in_executor(
+        return await asyncio.get_event_loop().run_in_executor(
             None,
             lambda: self.memory_collection.count(),
         )
-        return count
 
     async def update_memory_metadata(self, memory_id: str, metadata_updates: dict[str, Any]) -> bool:
         """Update metadata for a specific memory entry (needed for summarization)."""
@@ -157,17 +156,17 @@ class VectorStore:
                     None,
                     lambda: self.memory_collection.get(ids=[memory_id]),
                 )
-                
+
                 if not current["ids"] or memory_id not in current["ids"]:
                     return False
-                
+
                 # Find the index of the memory
                 idx = current["ids"].index(memory_id)
                 current_metadata = current["metadatas"][idx]
-                
+
                 # Update metadata
                 updated_metadata = {**current_metadata, **metadata_updates}
-                
+
                 # Update in ChromaDB
                 await asyncio.get_event_loop().run_in_executor(
                     None,
@@ -176,18 +175,18 @@ class VectorStore:
                         metadatas=[updated_metadata],
                     ),
                 )
-                
+
                 return True
-                
+
         except Exception as e:
             print(f"❌ Failed to update memory metadata for {memory_id}: {e}")
             return False
 
-    async def delete_memories(self, memory_ids: List[str]) -> int:
+    async def delete_memories(self, memory_ids: list[str]) -> int:
         """Delete multiple memory entries by IDs (needed for cleanup after summarization)."""
         if not memory_ids:
             return 0
-            
+
         try:
             async with self._access_lock:
                 # Filter out any IDs that don't exist
@@ -195,25 +194,25 @@ class VectorStore:
                     None,
                     lambda: self.memory_collection.get(ids=memory_ids),
                 )
-                
+
                 valid_ids = [id_ for id_ in memory_ids if id_ in existing["ids"]]
-                
+
                 if not valid_ids:
                     return 0
-                
+
                 # Delete the memories
                 await asyncio.get_event_loop().run_in_executor(
                     None,
                     lambda: self.memory_collection.delete(ids=valid_ids),
                 )
-                
+
                 return len(valid_ids)
-                
+
         except Exception as e:
             print(f"❌ Failed to delete memories: {e}")
             return 0
 
-    async def cleanup_old_memories(self, keep_count: int = None) -> int:
+    async def cleanup_old_memories(self, keep_count: int | None = None) -> int:
         """Remove old memories if over threshold."""
         if keep_count is None:
             keep_count = config.max_memory_entries

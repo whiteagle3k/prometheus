@@ -1,9 +1,9 @@
 """Base classes for text processing components."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 
 class ProcessorType(Enum):
@@ -20,8 +20,8 @@ class ProcessingResult:
     success: bool
     data: Any = None
     confidence: float = 1.0
-    metadata: Dict[str, Any] = None
-    
+    metadata: dict[str, Any] = None
+
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
@@ -29,32 +29,30 @@ class ProcessingResult:
 
 class TextProcessor(ABC):
     """Base class for all text processors."""
-    
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+
+    def __init__(self, config: dict[str, Any] | None = None):
         """Initialize processor with configuration."""
         self.config = config or {}
         self.enabled = self.config.get("enabled", True)
         self.name = self.__class__.__name__
-    
+
     @abstractmethod
-    def process(self, text: str, context: Optional[Dict[str, Any]] = None) -> ProcessingResult:
+    def process(self, text: str, context: dict[str, Any] | None = None) -> ProcessingResult:
         """Process text and return result."""
-        pass
-    
-    def is_applicable(self, text: str, context: Optional[Dict[str, Any]] = None) -> bool:
+
+    def is_applicable(self, text: str, context: dict[str, Any] | None = None) -> bool:
         """Check if this processor should be applied to the text."""
         return self.enabled
 
 
 class FilterProcessor(TextProcessor):
     """Base class for text filters (cleanup, sanitization)."""
-    
+
     @abstractmethod
-    def filter(self, text: str, context: Optional[Dict[str, Any]] = None) -> str:
+    def filter(self, text: str, context: dict[str, Any] | None = None) -> str:
         """Filter text and return cleaned version."""
-        pass
-    
-    def process(self, text: str, context: Optional[Dict[str, Any]] = None) -> ProcessingResult:
+
+    def process(self, text: str, context: dict[str, Any] | None = None) -> ProcessingResult:
         """Process by filtering text."""
         try:
             filtered_text = self.filter(text, context)
@@ -69,13 +67,12 @@ class FilterProcessor(TextProcessor):
 
 class ExtractorProcessor(TextProcessor):
     """Base class for extracting information from text."""
-    
+
     @abstractmethod
-    def extract(self, text: str, context: Optional[Dict[str, Any]] = None) -> List[Any]:
+    def extract(self, text: str, context: dict[str, Any] | None = None) -> list[Any]:
         """Extract entities/information from text."""
-        pass
-    
-    def process(self, text: str, context: Optional[Dict[str, Any]] = None) -> ProcessingResult:
+
+    def process(self, text: str, context: dict[str, Any] | None = None) -> ProcessingResult:
         """Process by extracting information."""
         try:
             extracted = self.extract(text, context)
@@ -90,13 +87,12 @@ class ExtractorProcessor(TextProcessor):
 
 class DetectorProcessor(TextProcessor):
     """Base class for detecting patterns/conditions in text."""
-    
+
     @abstractmethod
-    def detect(self, text: str, context: Optional[Dict[str, Any]] = None) -> bool:
+    def detect(self, text: str, context: dict[str, Any] | None = None) -> bool:
         """Detect if pattern/condition exists in text."""
-        pass
-    
-    def process(self, text: str, context: Optional[Dict[str, Any]] = None) -> ProcessingResult:
+
+    def process(self, text: str, context: dict[str, Any] | None = None) -> ProcessingResult:
         """Process by detecting patterns."""
         try:
             detected = self.detect(text, context)
@@ -111,13 +107,12 @@ class DetectorProcessor(TextProcessor):
 
 class ValidatorProcessor(TextProcessor):
     """Base class for validating text content."""
-    
+
     @abstractmethod
-    def validate(self, text: str, context: Optional[Dict[str, Any]] = None) -> List[str]:
+    def validate(self, text: str, context: dict[str, Any] | None = None) -> list[str]:
         """Validate text and return list of issues found."""
-        pass
-    
-    def process(self, text: str, context: Optional[Dict[str, Any]] = None) -> ProcessingResult:
+
+    def process(self, text: str, context: dict[str, Any] | None = None) -> ProcessingResult:
         """Process by validating text."""
         try:
             issues = self.validate(text, context)
@@ -128,4 +123,4 @@ class ValidatorProcessor(TextProcessor):
                 metadata={"issue_count": len(issues)}
             )
         except Exception as e:
-            return ProcessingResult(success=False, metadata={"error": str(e)}) 
+            return ProcessingResult(success=False, metadata={"error": str(e)})
