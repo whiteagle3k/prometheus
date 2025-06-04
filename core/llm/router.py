@@ -18,8 +18,8 @@ from .fast_llm import FastLLM
 from .confidence_calibrator import calibrator
 
 # Create logs directory if it doesn't exist
-LOGS_DIR = Path("core/logs")
-LOGS_DIR.mkdir(exist_ok=True)
+LOGS_DIR = Path("data/logs")
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
 ROUTER_LOG_FILE = LOGS_DIR / "router.csv"
 
 class RouteDecision(Enum):
