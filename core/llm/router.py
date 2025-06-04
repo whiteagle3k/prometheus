@@ -1,8 +1,12 @@
 """LLM routing logic for hybrid local/external model usage."""
 
 import asyncio
+import csv
+import os
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Optional, Union
 
 from ..config import config
@@ -13,6 +17,10 @@ from .local_llm import LocalLLM
 from .fast_llm import FastLLM
 from .confidence_calibrator import calibrator
 
+# Create logs directory if it doesn't exist
+LOGS_DIR = Path("core/logs")
+LOGS_DIR.mkdir(exist_ok=True)
+ROUTER_LOG_FILE = LOGS_DIR / "router.csv"
 
 class RouteDecision(Enum):
     """Routing decision options."""
@@ -72,6 +80,45 @@ class LLMRouter:
             "calibrator_predictions": 0,
             "fallback_threshold_used": 0,
         }
+        
+        # Initialize CSV logging
+        self._init_router_logging()
+
+    def _init_router_logging(self):
+        """Initialize CSV logging for routing decisions."""
+        try:
+            if not ROUTER_LOG_FILE.exists():
+                with open(ROUTER_LOG_FILE, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        'timestamp', 'query', 'route_decision', 'oracle_confidence', 
+                        'oracle_reasoning', 'complexity', 'execution_time', 
+                        'actual_route_used', 'success', 'error_details'
+                    ])
+        except Exception as e:
+            print(f"⚠️ Could not initialize router logging: {e}")
+
+    def _log_routing_decision(self, query: str, route_decision: str, oracle_result: dict, 
+                            execution_time: float, actual_route: str, success: bool, 
+                            error_details: str = ""):
+        """Log routing decision to CSV for analysis."""
+        try:
+            with open(ROUTER_LOG_FILE, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    datetime.now().isoformat(),
+                    query[:100],  # Truncate query for readability
+                    route_decision,
+                    oracle_result.get('confidence', 'unknown'),
+                    oracle_result.get('reasoning', 'unknown'),
+                    oracle_result.get('complexity', 'unknown'),
+                    f"{execution_time:.3f}",
+                    actual_route,
+                    success,
+                    error_details
+                ])
+        except Exception as e:
+            print(f"⚠️ Could not log routing decision: {e}")
 
     async def route_task(self, task: TaskContext) -> RouteDecision:
         """Make routing decision for a task."""
@@ -335,6 +382,17 @@ class LLMRouter:
                     execution_time=execution_time
                 ))
 
+            # Log routing decision to CSV
+            self._log_routing_decision(
+                query=task.prompt,
+                route_decision=route.value,
+                oracle_result=routing_result,
+                execution_time=execution_time,
+                actual_route=route_used,
+                success=is_correct,
+                error_details=str(e) if e else ""
+            )
+
             return result
 
         except Exception as e:
@@ -351,6 +409,17 @@ class LLMRouter:
                     user_feedback=f"Error: {str(e)}",
                     execution_time=execution_time
                 ))
+            
+            # Log routing decision to CSV
+            self._log_routing_decision(
+                query=task.prompt,
+                route_decision="error",
+                oracle_result={},
+                execution_time=execution_time,
+                actual_route="error",
+                success=False,
+                error_details=str(e)
+            )
             
             raise e
 

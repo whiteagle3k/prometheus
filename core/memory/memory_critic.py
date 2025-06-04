@@ -143,18 +143,38 @@ IMPROVEMENTS: [list of specific suggestions]"""
         for memory in memories:
             quality_score = await self.evaluate_memory_quality(memory)
             
-            # Determine actions based on quality
-            should_keep = quality_score.overall >= 0.3  # Keep if above threshold
-            should_enhance = 0.3 <= quality_score.overall < 0.7  # Enhance if medium quality
+            # Tightened critic rules as suggested by o3:
+            # Require higher quality threshold and more strict relevance
+            should_keep = (
+                quality_score.overall >= 0.4 and  # Raised from 0.3
+                quality_score.relevance > 0.35    # New relevance threshold
+            )
+            should_enhance = (
+                0.35 <= quality_score.overall < 0.7 and  # Adjusted range
+                quality_score.relevance > 0.35           # Must meet relevance threshold
+            )
+            
+            # If relevance is too low, drop the memory entirely
+            if quality_score.relevance <= 0.35:
+                should_keep = False
+                should_enhance = False
+                print(f"🗑️ Dropping low-relevance memory (relevance: {quality_score.relevance:.2f})")
             
             enhanced_version = None
             if should_enhance:
                 enhanced_version = await self._enhance_memory(memory, quality_score)
+                if enhanced_version:
+                    self.critique_stats["memories_enhanced"] += 1
             
-            # Find consolidation candidates
-            consolidation_candidates = await self._find_consolidation_candidates(
-                memory, memories
-            )
+            if not should_keep:
+                self.critique_stats["memories_purged"] += 1
+            
+            # Find consolidation candidates only for kept memories
+            consolidation_candidates = []
+            if should_keep:
+                consolidation_candidates = await self._find_consolidation_candidates(
+                    memory, memories
+                )
             
             result = MemoryCritiqueResult(
                 original_memory=memory,

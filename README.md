@@ -63,7 +63,7 @@ Aletheia is our first autonomous AI entity - a thoughtful research assistant wit
 - **📈 Quality Metrics**: 94% reflection accuracy, 89% memory retrieval improvement, 91% context relevance
 
 ### **Ultra-Fast Performance Optimization (v0.5.0)**
-- **⚡ Instant Routing**: Rule-based routing achieves 0.000s decisions with 100% accuracy
+- **⚡ Near-Instant Routing**: Rule-based routing achieves near-instant decisions with 100% accuracy
 - **🎯 4x Classification Speed**: SmolLM2-135M model provides ~0.3s classification vs 1.0s+
 - **📊 Comprehensive Testing**: 96 classifications + 18 routing calls, 0 errors
 - **🏗️ Smart Architecture**: Optimized dual-model setup with intelligent fallbacks
@@ -74,7 +74,7 @@ Performance Comparison (Comprehensive Testing):
 ┌─────────────────┬─────────────┬─────────────┬─────────────┐
 │ Component       │ Previous    │ Optimized   │ Improvement │
 ├─────────────────┼─────────────┼─────────────┼─────────────┤
-│ Routing Speed   │ 5-10s       │ 0.000s      │ Instant ⚡  │
+│ Routing Speed   │ 5-10s       │ near-instant│ Instant ⚡  │
 │ Routing Accuracy│ ~75%        │ 100%        │ +25% 🎯     │
 │ Classification  │ 1.08s       │ 0.29s       │ 4x faster 🚀│
 │ Model Size      │ 2.3GB       │ 97MB        │ 24x smaller │
@@ -103,7 +103,7 @@ Once running, you can interact with Aletheia in natural language:
 ```
 🤖 Aletheia: Привет! Я Алетейя, готова помочь. Как дела?
 🧑 You: расскажи про квантовую механику
-⚡ FastLLM routing (rule-based): 0.000s -> EXTERNAL
+⚡ FastLLM routing (rule-based): near-instant -> EXTERNAL
 🌐 Router: External LLM selected
 🤖 Aletheia: [Expert consultation, then personalized response with feminine forms]
 ```
