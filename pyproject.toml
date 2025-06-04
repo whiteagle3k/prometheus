@@ -1,10 +1,13 @@
 [tool.poetry]
-name = "aletheia"
-version = "0.1.0"
-description = "A local-first thinking agent with hybrid LLM routing and vector memory"
-authors = ["Aletheia Team"]
+name = "prometheus"
+version = "0.4.0"
+description = "Entity-based AI framework with Fast LLM routing intelligence and robust cross-LLM context coordination"
+authors = ["Prometheus Team"]
 readme = "README.md"
-packages = [{include = "aletheia"}]
+packages = [
+    {include = "core"},
+    {include = "entities"}
+]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -75,4 +78,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-aletheia = "aletheia.orchestrator:main" 
+prometheus = "prometheus:main" 
