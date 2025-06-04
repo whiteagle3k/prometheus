@@ -277,12 +277,14 @@ class LLMRouter:
                     raw_response = await external_llm.generate(
                         prompt=enhanced_prompt,
                         max_tokens=task.max_tokens,
-                        temperature=0.7,
+                        temperature=task.temperature,
                         system_prompt=self._get_external_system_prompt(task)
                     )
                     
-                    # Parse and filter response, also get consultation metadata
-                    response, consultation_metadata = await self._filter_external_response(raw_response, task.prompt)
+                    print(f"📋 Consultation received: {len(raw_response)} chars analysis, 5 memory points")
+                    
+                    # Parse structured response to extract user response for clean delivery
+                    response, consultation_metadata = await self._filter_external_response(raw_response, task.prompt, task)
                     
                     # Enhance consultation metadata with provider information
                     model_info = external_llm.get_model_info()
@@ -355,8 +357,8 @@ class LLMRouter:
     async def _prepare_external_prompt(self, task: TaskContext) -> str:
         """Prepare a consultation request for external LLM."""
         
-        # Build Aletheia's self-description for the consultation
-        aletheia_intro = f"I am {self.identity_config['name']}, {self.identity_config['personality']['summary']}."
+        # Build entity's self-description for the consultation using identity config
+        entity_intro = f"I am {self.identity_config['name']}, {self.identity_config['personality']['summary']}."
         
         # Get key personality traits
         personality_traits = ", ".join(self.identity_config['personality']['personality'][:3]) if self.identity_config['personality']['personality'] else "technically precise, analytical"
@@ -365,8 +367,15 @@ class LLMRouter:
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in task.prompt.lower())
         response_language = "Russian" if is_russian else "English"
         
+        # Check if this is an ongoing conversation (has context with previous exchanges)
+        # Use generic conversation markers that don't depend on specific entity names
+        is_ongoing_conversation = bool(task.conversation_context and task.conversation_context.strip() and any(
+            marker in task.conversation_context 
+            for marker in ["👤 You:", "🧠", "User:", "Assistant:", "Human:", "AI:"]
+        ))
+        
         # Build the consultation prompt with comprehensive context
-        consultation_prompt = f"""{aletheia_intro}
+        consultation_prompt = f"""{entity_intro}
 
 My key traits: {personality_traits}
 
@@ -379,7 +388,20 @@ My key traits: {personality_traits}
 
 """
         
+        # Add conversation flow instructions based on context
+        conversation_flow_note = ""
+        if is_ongoing_conversation:
+            conversation_flow_note = """
+IMPORTANT: This is a CONTINUATION of an ongoing conversation. DO NOT include greetings like "Hello", "Hi", "Здравствуйте" etc. 
+The user and I are already engaged in conversation as shown in the context above. 
+Simply provide a direct, natural response that continues the flow."""
+        else:
+            conversation_flow_note = """
+Note: This appears to be the start of a conversation or an isolated question. 
+Natural greetings are appropriate if the context suggests it."""
+        
         consultation_prompt += f"""Question I need expert consultation on: "{task.prompt}"
+{conversation_flow_note}
 
 This question requires deeper knowledge than I currently have. Please provide a structured consultation response:
 
@@ -388,11 +410,13 @@ This question requires deeper knowledge than I currently have. Please provide a 
 
 **2. USER RESPONSE** (for me to provide to the user):
 [Natural, conversational answer in {response_language} that maintains my personality and response style. 
-IMPORTANT: Look at my previous responses in the conversation context above - match that same concise, direct style:
-- Keep responses brief and focused (1-2 sentences for simple facts)
+CRITICAL REQUIREMENTS:
+- Look at my previous responses in the conversation context above - match that same concise, direct style
+- Keep responses brief and focused (1-2 sentences for simple facts)  
 - Be technically precise but conversational like my other responses
 - Avoid excessive detail unless the question specifically asks for it
-- Match the length and tone of my previous local responses shown in the context]
+- Match the length and tone of my previous local responses shown in the context
+- {"DO NOT include greetings - continue the conversation naturally" if is_ongoing_conversation else "Include appropriate greetings only if this is a new conversation start"}]
 
 **3. MEMORY POINTS** (key facts for my future reference):
 [3-5 bullet points of essential information I should remember]
@@ -412,7 +436,7 @@ When an AI agent requests consultation:
 
 Your role is to be a knowledgeable consultant, not to impersonate the requesting agent. Structure your responses clearly and be precise with scientific and factual information."""
 
-    async def _filter_external_response(self, external_response: str, original_prompt: str) -> tuple[str, dict]:
+    async def _filter_external_response(self, external_response: str, original_prompt: str, task: Optional[TaskContext] = None) -> tuple[str, dict]:
         """Parse structured consultation response and extract user response and consultation metadata."""
         
         try:
@@ -444,11 +468,11 @@ Your role is to be a knowledgeable consultant, not to impersonate the requesting
             
             # If parsing failed, fall back to simple filtering
             print("⚠️  Structured parsing failed, using fallback filtering")
-            return await self._fallback_filter_response(external_response, original_prompt)
+            return await self._fallback_filter_response(external_response, original_prompt, task)
             
         except Exception as e:
             print(f"Error parsing consultation response: {e}")
-            return await self._fallback_filter_response(external_response, original_prompt)
+            return await self._fallback_filter_response(external_response, original_prompt, task)
     
     def _parse_consultation_response(self, response: str) -> dict:
         """Parse structured consultation response into components."""
@@ -509,15 +533,30 @@ Your role is to be a knowledgeable consultant, not to impersonate the requesting
         
         return result if any(result.values()) else None
     
-    async def _fallback_filter_response(self, external_response: str, original_prompt: str) -> tuple[str, dict]:
+    async def _fallback_filter_response(self, external_response: str, original_prompt: str, task: Optional[TaskContext] = None) -> tuple[str, dict]:
         """Fallback filtering for unstructured responses (original logic)."""
         
         # Detect language of original prompt
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in original_prompt.lower())
         
+        # Check if this is an ongoing conversation using generic markers
+        is_ongoing_conversation = False
+        if task and task.conversation_context:
+            is_ongoing_conversation = bool(task.conversation_context.strip() and any(
+                marker in task.conversation_context 
+                for marker in ["👤 You:", "🧠", "User:", "Assistant:", "Human:", "AI:"]
+            ))
+        
         # Create a personality filter prompt using English core identity for better model understanding
         core_traits = ', '.join(self.identity_config['personality']['personality'][:3])
         core_values = ', '.join(self.identity_config['core_values'][:2])
+        
+        # Add conversation flow instruction
+        flow_instruction = ""
+        if is_ongoing_conversation:
+            flow_instruction = "7. This is a continuation of an ongoing conversation - DO NOT include greetings or reintroductions"
+        else:
+            flow_instruction = "7. Include appropriate greetings only if this is clearly a new conversation start"
         
         if is_russian:
             filter_prompt = f"""Original user question: {original_prompt}
@@ -533,6 +572,7 @@ Requirements:
 4. Don't mention ChatGPT or other systems - you are {self.identity_config['name']}
 5. Respond in Russian with natural grammar and cultural context
 6. Follow my core principles
+{flow_instruction}
 
 Response in Russian:"""
         else:
@@ -549,6 +589,7 @@ Requirements:
 4. Don't mention ChatGPT or other systems - you are {self.identity_config['name']}
 5. Respond in English
 6. Follow my core principles
+{flow_instruction}
 
 Response:"""
 

@@ -4,6 +4,204 @@
 
 This guide covers common issues with the Prometheus framework, particularly focusing on **context contamination**, **Fast LLM routing problems**, and **cross-LLM coordination issues** that can arise in the advanced architecture.
 
+## 🚀 Performance Optimization (v0.5.0)
+
+### Problem: Slow Performance Despite Optimizations
+
+**Symptoms**:
+- Classification taking >1s instead of ~0.3s expected
+- Routing decisions taking several seconds instead of instant
+- System not using SmolLM2 model
+
+**Solutions**:
+
+1. **Verify SmolLM2 Installation**: Check if optimized model is downloaded:
+```bash
+ls -la models/SmolLM2-135M-Instruct-Q4_K_S.gguf
+# Should show: ~97MB file
+```
+
+2. **Download SmolLM2 if Missing**:
+```bash
+./scripts/download_models.sh
+# Or manually:
+cd models/
+wget https://huggingface.co/Triangle104/SmolLM2-135M-Instruct-Q4_K_S-GGUF/resolve/main/smollm2-135m-instruct-q4_k_s.gguf
+mv smollm2-135m-instruct-q4_k_s.gguf SmolLM2-135M-Instruct-Q4_K_S.gguf
+```
+
+3. **Check Identity Configuration**: Verify entity uses SmolLM2:
+```json
+{
+  "module_paths": {
+    "utility_model_gguf": "models/SmolLM2-135M-Instruct-Q4_K_S.gguf",
+    "utility_model_candidates": [
+      "SmolLM2-135M-Instruct-Q4_K_S.gguf",
+      "SmolLM2-360M-Instruct-Q4_K_M.gguf",
+      "TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf"
+    ]
+  }
+}
+```
+
+4. **Monitor Performance**: Check if optimizations are working:
+```bash
+poetry run python prometheus.py aletheia
+🧑 You: status
+
+# Should show:
+📊 FastLLM Performance Summary:
+  🚀 Rule-based routing: X calls (instant)
+  📊 Model classification: X calls
+  ⚡ Avg classification time: ~0.29s  # Target performance
+```
+
+### Problem: System Not Using Rule-Based Routing
+
+**Symptoms**:
+- Routing decisions still taking >1s
+- No "rule-based routing" messages in logs
+- Routing performance not improved
+
+**Solutions**:
+
+1. **Check FastLLM Configuration**: Verify rule-based routing enabled:
+```python
+# In FastLLM initialization
+self._use_rule_based_routing = True  # Should be True by default
+```
+
+2. **Debug Routing Path**: Add debug logging:
+```python
+# In make_routing_decision method
+if self._use_rule_based_routing:
+    print("✅ Using optimized rule-based routing")
+    result = self._optimized_rule_based_routing(query)
+else:
+    print("⚠️ Falling back to model-based routing")
+```
+
+3. **Force Rule-Based Mode**: If needed, explicitly enable:
+```python
+# In entity configuration or FastLLM init
+fast_llm._use_rule_based_routing = True
+```
+
+### Problem: Large Model Being Used Instead of SmolLM2
+
+**Symptoms**:
+- Classification times >1s consistently
+- High memory usage during utility operations
+- System reports "large utility model" in logs
+
+**Solutions**:
+
+1. **Check Model Discovery**: Look for model loading messages:
+```
+🎯 Using configured utility model: SmolLM2-135M-Instruct-Q4_K_S.gguf (97.1MB)
+# vs
+🐌 Using large utility model: phi-3-mini-3.8b-q4_k.gguf (2.3GB) - expect slower performance
+```
+
+2. **Verify Model Priority**: Check utility model candidates order:
+```json
+{
+  "utility_model_candidates": [
+    "SmolLM2-135M-Instruct-Q4_K_S.gguf",  // First = highest priority
+    "phi-3-mini-3.8b-q4_k.gguf"           // Fallback only
+  ]
+}
+```
+
+3. **Force Small Model**: Explicitly set utility model:
+```json
+{
+  "module_paths": {
+    "utility_model_gguf": "models/SmolLM2-135M-Instruct-Q4_K_S.gguf"
+  }
+}
+```
+
+### Problem: Poor Classification or Routing Accuracy
+
+**Symptoms**:
+- Simple queries routed to EXTERNAL incorrectly
+- Conversational queries classified as "technical"
+- System accuracy below expected performance
+
+**Solutions**:
+
+1. **Check Rule-Based Logic**: Verify keyword detection:
+```python
+# Test rule-based routing manually
+test_queries = [
+    "привет как дела",  # Should be LOCAL
+    "объясни квантовую механику",  # Should be EXTERNAL  
+    "как тебя зовут"  # Should be LOCAL
+]
+
+for query in test_queries:
+    result = fast_llm._optimized_rule_based_routing(query)
+    print(f"{query} -> {result['route']}")
+```
+
+2. **Update Keywords**: Enhance detection patterns:
+```python
+# In _optimized_rule_based_routing method
+external_keywords = [
+    # Add more scientific terms
+    'physical', 'химический', 'biological', 'математический'
+]
+
+local_keywords = [
+    # Add more conversational terms  
+    'кто', 'what', 'когда', 'where'
+]
+```
+
+3. **Test Classification Accuracy**: Verify model performance:
+```python
+# Test classification with SmolLM2
+test_queries = [
+    ("как дела", "conversational"),
+    ("физика квантов", "technical"),
+    ("меня зовут Игорь", "personal_data")
+]
+
+for query, expected in test_queries:
+    result = await fast_llm.classify_query(query)
+    print(f"'{query}' -> {result} (expected: {expected})")
+```
+
+## Legacy Context Contamination Issues
+
+### Problem: Incorrect Routing Decisions Based on Previous Queries
+
+**Note**: This issue is largely resolved in v0.5.0 with rule-based routing, but may still occur if model-based routing is used.
+
+**Symptoms**:
+- Fast LLM makes routing decisions that seem influenced by previous queries
+- Simple query routed to EXTERNAL because of previous scientific topic
+- Routing confidence doesn't match current query
+
+**Updated Solutions for v0.5.0**:
+
+1. **Use Rule-Based Routing** (Recommended):
+```python
+# Enable rule-based routing to eliminate context contamination
+self._use_rule_based_routing = True
+```
+
+2. **If Using Model-Based Routing**: Ensure context isolation:
+```python
+# Stronger context separation in prompts
+system_prompt = """You are a routing oracle. Judge this query INDEPENDENTLY.
+
+CRITICAL: Completely ignore any previous queries or decisions.
+
+Current query to route:"""
+```
+
 ## Context Contamination Issues
 
 ### Problem: Incorrect Routing Decisions Based on Previous Queries

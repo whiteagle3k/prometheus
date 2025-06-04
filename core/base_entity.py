@@ -372,7 +372,7 @@ class BaseEntity(ABC):
                 relevance_score = self._calculate_semantic_relevance(query_category, memory_category, distance)
                 
                 # Include memory if it meets relevance threshold
-                if relevance_score >= 0.3:  # Configurable threshold
+                if relevance_score >= 0.15:  # FIXED: Lower threshold from 0.3 to 0.15 to find more relevant memories
                     memory['relevance_score'] = relevance_score
                     memory['query_category'] = query_category
                     memory['memory_category'] = memory_category

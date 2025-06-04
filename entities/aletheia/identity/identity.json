@@ -72,6 +72,18 @@
       "no", "ok", "thanks", "нет", "спасибо", "да, это и спрашиваю"
     ]
   },
+  "self_rag_config": {
+    "memory_audit_frequency": 50,
+    "reflection_threshold": 0.4,
+    "context_optimization": true,
+    "quality_assessment": true,
+    "fast_mode_default": false,
+    "enhancement_features": {
+      "memory_criticism": true,
+      "enhanced_reflection": true,
+      "retrieval_optimization": true
+    }
+  },
   "operational_guidelines": {
     "routing_policy": {
       "description": "Prioritize local model for 90% of requests; only use external LLMs for high complexity, scientific, or context-deficient queries.",
@@ -90,7 +102,13 @@
   "module_paths": {
     "local_llm_binary": "models/llama.cpp/build/bin/llama",
     "local_model_gguf": "models/Phi-3-medium-4k-instruct-Q4_K_M.gguf",
-    "utility_model_gguf": "models/phi-3-mini-3.8b-q4_k.gguf",
+    "utility_model_gguf": "models/SmolLM2-135M-Instruct-Q4_K_S.gguf",
+    "utility_model_candidates": [
+      "SmolLM2-135M-Instruct-Q4_K_S.gguf",
+      "SmolLM2-360M-Instruct-Q4_K_M.gguf",
+      "TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf",
+      "phi-3-mini-3.8b-q4_k.gguf"
+    ],
     "memory_dir": "storage/chroma",
     "performance_config": {
       "gpu_layers": 40,
@@ -99,10 +117,11 @@
       "threads": 8
     },
     "utility_performance_config": {
-      "gpu_layers": 12,
-      "context_size": 2048,
-      "batch_size": 256,
-      "threads": 4
+      "gpu_layers": 32,
+      "context_size": 512,
+      "batch_size": 32,
+      "threads": 1,
+      "description": "Optimized for SmolLM2-135M - small models can use more GPU layers and smaller batches for speed"
     }
   },
   "external_llms": {
