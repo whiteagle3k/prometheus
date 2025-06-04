@@ -61,8 +61,8 @@ class LLMRouter:
         }
         
         self.local_llm = LocalLLM(identity_config=self.identity_config)
-        self.utility_llm = FastLLM()  # NEW: Fast utility model
-        self.external_manager = ExternalLLMManager()
+        self.utility_llm = FastLLM(identity_config=self.identity_config)  # Pass identity config
+        self.external_manager = ExternalLLMManager(providers_config=self.identity_config.get("external_llms"))
         self.use_calibrator = True  # Enable calibrated routing
         
         self._routing_stats: dict[str, int] = {
@@ -112,123 +112,98 @@ class LLMRouter:
                 return RouteDecision.EXTERNAL
 
     async def _apply_routing_heuristics(self, task: TaskContext) -> RouteDecision:
-        """Apply routing heuristics to make decision using confidence calibrator and identity configuration."""
+        """Apply routing heuristics to make decision using fast LLM routing oracle."""
 
-        # Estimate token count
+        # Rule 1: Basic sanity checks first
         estimated_tokens = await self.local_llm.count_tokens(task.prompt)
         total_estimated_tokens = estimated_tokens + task.max_tokens
 
-        # Rule 1: Token threshold check - use identity configuration
+        # Rule 1a: Token threshold check - use identity configuration
         routing_threshold = self.identity_config["routing_threshold"]
         if estimated_tokens > routing_threshold:
+            print(f"🎯 Token threshold exceeded ({estimated_tokens} > {routing_threshold})")
             return RouteDecision.EXTERNAL
 
-        # Rule 2: Deep reasoning keyword check
-        prompt_lower = task.prompt.lower()
-        if any(keyword in prompt_lower for keyword in config.deep_reasoning_keywords):
-            task.requires_deep_reasoning = True
-
-        # Rule 3: Explicit deep reasoning requirement - use identity configuration
-        # This should NOT be overridden by calibrator for scientific accuracy
-        if task.requires_deep_reasoning and self.identity_config["require_deep_reasoning"]:
-            return RouteDecision.EXTERNAL
-
-        # Rule 4: Latest knowledge requirement
-        if task.needs_latest_knowledge:
-            return RouteDecision.EXTERNAL
-
-        # Rule 5: Creative tasks with high token requirements
-        if task.is_creative and total_estimated_tokens > 2000:
-            return RouteDecision.EXTERNAL
-
-        # Rule 6: Cost vs latency tradeoff
-        if task.latency_sensitive and not task.cost_sensitive:
-            return RouteDecision.LOCAL
-
-        # Rule 7: Very long outputs
+        # Rule 1b: Very long outputs
         if task.max_tokens > 1500:
+            print(f"🎯 Large output requested ({task.max_tokens} tokens)")
             return RouteDecision.EXTERNAL
 
-        # Rule 8: Context size check
+        # Rule 1c: Context size check
         local_context = self.local_llm.get_context_size()
         if total_estimated_tokens > local_context * 0.8:  # 80% threshold
+            print(f"🎯 Context limit approaching ({total_estimated_tokens} / {local_context})")
             return RouteDecision.EXTERNAL
 
-        # Rule 9: Local LLM self-assessment (NEW!)
-        # Ask the local LLM if it thinks external consultation is needed
+        # Rule 1d: Explicit requirements
+        if task.needs_latest_knowledge:
+            print("🎯 Latest knowledge required")
+            return RouteDecision.EXTERNAL
+
+        if task.is_creative and total_estimated_tokens > 2000:
+            print("🎯 Creative task with large output")
+            return RouteDecision.EXTERNAL
+
+        if task.latency_sensitive and not task.cost_sensitive:
+            print("🎯 Latency-sensitive task")
+            return RouteDecision.LOCAL
+
+        # Rule 2: Fast LLM Routing Oracle (NEW!)
+        # This replaces the old self-assessment logic with unbiased routing
         try:
-            # Enhanced context for better self-assessment
-            assessment_context = self._build_assessment_context(task)
+            print("🔧 Fast LLM: Making routing decision...")
             
-            structured_result = await self.local_llm.generate_structured(
-                prompt=task.prompt,
-                max_tokens=128,  # Small response for routing decision
-                temperature=0.2,  # Lower temperature for more consistent routing
-                context=assessment_context
-            )
-            
-            local_confidence = structured_result.get('confidence', 'medium')
-            external_needed = structured_result.get('external_needed', False)
-            reasoning = structured_result.get('reasoning', '')
-            
-            # Enhanced validation of self-assessment for consistency
-            assessment_valid = self._validate_self_assessment(
-                task.prompt, local_confidence, external_needed, reasoning
-            )
-            
-            if not assessment_valid:
-                print(f"⚠️ Inconsistent self-assessment detected, applying rules-based override")
-                # Override with rules-based assessment for technical topics
-                local_confidence, external_needed = self._rules_based_assessment(task.prompt)
-            
-            # If local LLM explicitly says external consultation is needed, respect that
-            if external_needed:
-                print(f"🧠 Local LLM self-assessment: external consultation needed (confidence: {local_confidence})")
-                return RouteDecision.EXTERNAL
+            # Build clean context for routing decision - only recent relevant context
+            routing_context = None
+            if task.conversation_context:
+                # Extract only the most recent, relevant parts for routing decision
+                # This prevents context contamination while providing necessary information
+                context_lines = task.conversation_context.strip().split('\n')
                 
-            # Store confidence for potential calibrator use
-            task.local_confidence = local_confidence
+                # Take last 3-4 exchanges maximum, limit total length
+                relevant_lines = []
+                for line in context_lines[-8:]:  # Last 8 lines max (4 exchanges)
+                    if line.strip() and not line.startswith('[') and len(line) < 150:
+                        relevant_lines.append(line.strip())
+                
+                # Limit routing context to prevent Fast LLM from being overwhelmed
+                if relevant_lines:
+                    routing_context = '\n'.join(relevant_lines[-4:])  # Max 4 lines
+                    if len(routing_context) > 300:  # Max 300 chars for routing
+                        routing_context = routing_context[-300:]
+            
+            # Get routing decision from fast LLM with clean, focused context
+            routing_result = await self.utility_llm.make_routing_decision(
+                query=task.prompt,
+                context=routing_context  # Clean, focused context only
+            )
+            
+            route = routing_result.get('route', 'LOCAL')
+            confidence = routing_result.get('confidence', 'medium')
+            reasoning = routing_result.get('reasoning', 'No reasoning provided')
+            complexity = routing_result.get('complexity', 'moderate')
+            
+            print(f"🔧 Fast LLM routing: {route} (confidence: {confidence}, complexity: {complexity})")
+            print(f"🔧 Reasoning: {reasoning}")
+            
+            # Follow fast LLM decision
+            if route == 'EXTERNAL':
+                return RouteDecision.EXTERNAL
+            else:
+                return RouteDecision.LOCAL
                 
         except Exception as e:
-            print(f"⚠️ Local LLM self-assessment failed: {e}")
-            # Apply fallback rules-based assessment
-            local_confidence, external_needed = self._rules_based_assessment(task.prompt)
-            if external_needed:
+            print(f"⚠️ Fast LLM routing failed: {e}")
+            
+            # Rule 3: Fallback to basic keyword detection if fast LLM fails
+            prompt_lower = task.prompt.lower()
+            if any(keyword in prompt_lower for keyword in config.deep_reasoning_keywords):
+                print("🔧 Fallback: Deep reasoning keywords detected")
                 return RouteDecision.EXTERNAL
-            task.local_confidence = local_confidence
-
-        # Rule 10: Confidence calibrator decision (only for non-deep-reasoning tasks)
-        # Scientific and complex topics should bypass calibrator to ensure accuracy
-        if self.use_calibrator and not task.requires_deep_reasoning:
-            try:
-                # Use stored confidence if available, otherwise get it fresh
-                local_confidence = getattr(task, 'local_confidence', 'medium')
-                
-                # Calculate entropy-like measure from confidence
-                confidence_to_entropy = {'high': 0.8, 'medium': 0.5, 'low': 0.2}
-                entropy = confidence_to_entropy.get(local_confidence, 0.5)
-                
-                # Use calibrator to make routing decision
-                should_use_local, calibrator_confidence = calibrator.predict_should_use_local(
-                    entropy=entropy,
-                    query=task.prompt,
-                    local_confidence=local_confidence
-                )
-                
-                self._routing_stats["calibrator_predictions"] += 1
-                
-                if should_use_local:
-                    return RouteDecision.LOCAL
-                else:
-                    return RouteDecision.EXTERNAL
-                    
-            except Exception as e:
-                print(f"⚠️ Calibrator failed, using fallback: {e}")
-                self._routing_stats["fallback_threshold_used"] += 1
-                # Fall through to original logic
-
-        # Default: use local for efficiency (aligned with identity's cost optimization goal)
-        return RouteDecision.LOCAL
+            
+            # Default: use local for efficiency
+            print("🔧 Fallback: Defaulting to local")
+            return RouteDecision.LOCAL
 
     async def execute_task(self, task: TaskContext) -> dict[str, Any]:
         """Execute a task using the appropriate LLM."""

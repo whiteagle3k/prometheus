@@ -107,6 +107,12 @@
       "context_size": 8192,
       "batch_size": 512,
       "threads": 8
+    },
+    "utility_performance_config": {
+      "gpu_layers": 12,
+      "context_size": 2048,
+      "batch_size": 256,
+      "threads": 4
     }
   },
   "external_llms": {

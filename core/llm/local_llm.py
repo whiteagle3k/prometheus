@@ -350,6 +350,13 @@ class LocalLLM:
         # Use the system instructions from identity config directly
         system_prompt = self.identity_config.get("llm_instructions", "You are a helpful AI assistant.")
         
+        # Detect if user is asking in Russian to emphasize feminine forms
+        is_russian_query = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in prompt.lower())
+        
+        # Enhance system prompt for Russian queries to ensure feminine forms
+        if is_russian_query:
+            system_prompt += "\n\nIMPORTANT FOR RUSSIAN: Use ONLY feminine forms: готова (never готов), рада (never рад), смогу помочь, могу помочь. Your identity is female."
+        
         # Build context section
         context_section = ""
         if context:

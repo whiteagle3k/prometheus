@@ -23,17 +23,42 @@ from ..config import config
 class FastLLM:
     """Small, fast LLM for utility tasks like classification, extraction, preprocessing."""
 
-    def __init__(self) -> None:
+    def __init__(self, identity_config: Optional[dict] = None) -> None:
         """Initialize the utility LLM."""
         self.model: Optional[Llama] = None
         self.model_loaded = False
         self._init_lock = asyncio.Lock()
+        self.identity_config = identity_config
         
         # Utility model path (should be set in config)
         self.model_path = getattr(config, 'utility_model_path', None)
         if not self.model_path:
             # Fallback to a reasonable default
             self.model_path = config.local_model_path.parent / "phi-3-mini-3.8b-q4_k.gguf"
+        
+        # Get utility performance config from identity or use defaults
+        self.utility_config = self._get_utility_config()
+
+    def _get_utility_config(self) -> dict[str, Any]:
+        """Get utility model performance configuration from identity or defaults."""
+        if self.identity_config and "module_paths" in self.identity_config:
+            utility_config = self.identity_config["module_paths"].get("utility_performance_config", {})
+            
+            # Use identity config with fallbacks to reasonable defaults
+            return {
+                "gpu_layers": utility_config.get("gpu_layers", 12),
+                "context_size": utility_config.get("context_size", 2048),
+                "batch_size": utility_config.get("batch_size", 256),
+                "threads": utility_config.get("threads", 4)
+            }
+        else:
+            # Default configuration for utility model
+            return {
+                "gpu_layers": 12,
+                "context_size": 2048,
+                "batch_size": 256,
+                "threads": 4
+            }
 
     async def _load_model(self) -> None:
         """Load the utility model with optimized settings for speed."""
@@ -47,26 +72,27 @@ class FastLLM:
 
         print(f"🔄 Loading utility model: {self.model_path}")
 
-        # Optimized settings for small, fast model
+        # Optimized settings for small, fast model using configuration
         model_kwargs = {
             "model_path": str(self.model_path),
-            "n_ctx": 2048,  # Small context for utility tasks
+            "n_ctx": self.utility_config["context_size"],
             "verbose": False,
-            "n_batch": 256,  # Smaller batch for speed
-            "n_threads": None,  # Auto-detect
+            "n_batch": self.utility_config["batch_size"],
+            "n_threads": self.utility_config["threads"],
             # Speed optimizations
             "use_mmap": True,
             "use_mlock": True,
             "f16_kv": True,
         }
 
-        # Hardware acceleration with fewer layers for small model
+        # Hardware acceleration with configurable layers
+        gpu_layers = self.utility_config["gpu_layers"]
         if config.use_metal:
-            model_kwargs["n_gpu_layers"] = 32  # Fewer layers for mini model
-            print(f"🚀 Utility model using Metal with {model_kwargs['n_gpu_layers']} GPU layers")
+            model_kwargs["n_gpu_layers"] = gpu_layers
+            print(f"🚀 Utility model using Metal with {gpu_layers} GPU layers")
         elif config.use_cuda:
-            model_kwargs["n_gpu_layers"] = 32
-            print(f"🚀 Utility model using CUDA with {model_kwargs['n_gpu_layers']} GPU layers")
+            model_kwargs["n_gpu_layers"] = gpu_layers
+            print(f"🚀 Utility model using CUDA with {gpu_layers} GPU layers")
         else:
             model_kwargs["n_gpu_layers"] = 0
             print("💻 Utility model using CPU-only mode")
@@ -93,6 +119,9 @@ class FastLLM:
         if not self.model:
             # Fallback to rule-based classification
             return self._fallback_classify_query(query)
+
+        # Reset context for independent classification
+        await self._reset_model_context()
 
         system_prompt = """You are a fast query classifier. Classify the user query into ONE category:
 
@@ -139,6 +168,9 @@ Respond with ONLY the category name."""
         if not self.model:
             return self._fallback_classify_memory(content)
 
+        # Reset context for independent classification
+        await self._reset_model_context()
+
         # Extract key part for classification if it's a task memory
         content_to_classify = content
         if content.startswith('Task:'):
@@ -180,6 +212,115 @@ Respond with ONLY the category name."""
         except Exception as e:
             print(f"⚠️ Utility model memory classification failed: {e}")
             return self._fallback_classify_memory(content)
+
+    async def make_routing_decision(self, query: str, context: Optional[str] = None) -> dict[str, Any]:
+        """Make LLM routing decision: LOCAL vs EXTERNAL with reasoning."""
+        await self.ensure_loaded()
+        
+        if not self.model:
+            return self._fallback_routing_decision(query)
+
+        # CRITICAL: Reset model context to prevent contamination between routing decisions
+        await self._reset_model_context()
+
+        # Build context-aware prompt with explicit isolation
+        context_info = f"\n\nContext: {context}" if context else ""
+        
+        # Enhanced system prompt with explicit instruction for independence
+        system_prompt = f"""You are a routing oracle. Decide if a query should be handled by LOCAL or EXTERNAL LLM.
+
+IMPORTANT: Judge this query independently. Ignore any previous queries or context.
+
+LOCAL: Simple conversations, greetings, basic questions our local model handles well
+EXTERNAL: Scientific topics, complex explanations, detailed technical questions, physics, chemistry, engineering
+
+Respond ONLY in this JSON format:
+{{"route": "LOCAL", "confidence": "high", "reasoning": "Simple greeting", "complexity": "simple"}}
+
+Valid values:
+- route: "LOCAL" or "EXTERNAL" 
+- confidence: "high", "medium", "low"
+- reasoning: brief explanation (max 10 words)
+- complexity: "simple", "moderate", "complex", "scientific"
+
+Query{context_info}: {query}"""
+
+        # Use explicit separators to isolate this decision
+        formatted_prompt = f"<|system|>{system_prompt}<|end|>\n<|user|>Route this query independently<|end|>\n<|assistant|>"
+
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self.model(
+                    formatted_prompt,
+                    max_tokens=80,  # Enough for JSON response
+                    temperature=0.2,  # Low for consistent routing
+                    stop=["<|end|>", "<|user|>"],
+                    echo=False
+                )
+            )
+            
+            response_text = result["choices"][0]["text"].strip()
+            
+            # Parse JSON response
+            try:
+                import json
+                routing_decision = json.loads(response_text)
+                
+                # Validate required fields
+                required_fields = ['route', 'confidence', 'reasoning', 'complexity']
+                if all(field in routing_decision for field in required_fields):
+                    # Validate values
+                    if routing_decision['route'] in ['LOCAL', 'EXTERNAL'] and \
+                       routing_decision['confidence'] in ['high', 'medium', 'low'] and \
+                       routing_decision['complexity'] in ['simple', 'moderate', 'complex', 'scientific']:
+                        return routing_decision
+                
+            except json.JSONDecodeError:
+                pass
+                
+            # Fallback if parsing failed
+            print(f"⚠️ Failed to parse routing response: {response_text}")
+            return self._fallback_routing_decision(query)
+                
+        except Exception as e:
+            print(f"⚠️ Utility model routing failed: {e}")
+            return self._fallback_routing_decision(query)
+
+    async def _reset_model_context(self) -> None:
+        """Reset model context to prevent contamination between independent tasks."""
+        if not self.model:
+            return
+            
+        try:
+            # Method 1: Try explicit reset if available
+            if hasattr(self.model, 'reset'):
+                await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: self.model.reset()
+                )
+                return
+            
+            # Method 2: Clear internal state if available  
+            if hasattr(self.model, '_ctx'):
+                await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: setattr(self.model, '_ctx', None)
+                )
+                return
+                
+            # Method 3: Force context separation with explicit tokens
+            # This is more aggressive - we'll generate a clearing prompt
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self.model(
+                    "<|system|>Clear context<|end|>\n<|user|>Reset<|end|>\n<|assistant|>",
+                    max_tokens=1,
+                    temperature=0.1,
+                    stop=["<|end|>"],
+                    echo=False
+                )
+            )
+            
+        except Exception as e:
+            # If all reset methods fail, we'll rely on explicit context isolation in prompts
+            print(f"⚠️ Could not reset utility model context: {e}")
 
     async def extract_topic(self, text: str, max_length: int = 50) -> str:
         """Extract main topic from text."""
@@ -334,30 +475,75 @@ Response: engine, motor, mechanism; work, function, operate"""
         return topic if topic else "general_topic"
 
     def _fallback_expand_concepts(self, query: str, language: str) -> list[str]:
-        """Rule-based concept expansion fallback."""
-        query_lower = query.lower()
+        """Fallback concept expansion using simple keyword matching."""
+        # Basic concept expansion based on keywords
         concepts = []
         
-        if language == "ru":
-            concept_map = {
-                'двигатель': ['мотор', 'механизм', 'устройство'],
-                'тепловой': ['температура', 'нагрев', 'термический'],
-                'квантов': ['квант', 'физика', 'частица'],
-                'энергия': ['мощность', 'сила', 'работа']
-            }
-        else:
-            concept_map = {
-                'engine': ['motor', 'mechanism', 'device'],
-                'thermal': ['temperature', 'heat', 'thermodynamic'],
-                'quantum': ['physics', 'particle', 'mechanics'],
-                'energy': ['power', 'force', 'work']
+        query_lower = query.lower()
+        
+        # Technical concepts
+        if any(word in query_lower for word in ['система', 'механизм', 'принцип', 'процесс']):
+            concepts.extend(['технология', 'инженерия', 'принцип работы'])
+        
+        if any(word in query_lower for word in ['system', 'mechanism', 'principle', 'process']):
+            concepts.extend(['technology', 'engineering', 'working principle'])
+        
+        # Scientific concepts
+        if any(word in query_lower for word in ['квантовый', 'физика', 'химия']):
+            concepts.extend(['наука', 'исследование', 'теория'])
+            
+        if any(word in query_lower for word in ['quantum', 'physics', 'chemistry']):
+            concepts.extend(['science', 'research', 'theory'])
+        
+        return concepts[:3]  # Limit to avoid noise
+
+    def _fallback_routing_decision(self, query: str) -> dict[str, Any]:
+        """Fallback routing decision using rule-based logic."""
+        query_lower = query.lower()
+        
+        # Scientific/technical keywords that should go to external
+        external_keywords = [
+            # Russian scientific terms
+            'квантов', 'физик', 'химия', 'биология', 'математика', 'инженер',
+            'механизм', 'принцип', 'теория', 'формула', 'уравнение',
+            'двигатель', 'энергия', 'мощность', 'система', 'процесс',
+            # English scientific terms  
+            'quantum', 'physics', 'chemistry', 'biology', 'mathematics', 'engineering',
+            'mechanism', 'principle', 'theory', 'formula', 'equation',
+            'engine', 'energy', 'power', 'system', 'process'
+        ]
+        
+        # Simple conversational keywords that stay local
+        local_keywords = [
+            'привет', 'hello', 'hi', 'как дела', 'how are you', 'кто ты', 'who are you',
+            'спасибо', 'thank', 'пока', 'bye', 'хорошо', 'good', 'да', 'yes', 'нет', 'no'
+        ]
+        
+        # Check for external routing triggers
+        if any(keyword in query_lower for keyword in external_keywords):
+            return {
+                "route": "EXTERNAL",
+                "confidence": "high", 
+                "reasoning": "Scientific/technical topic detected",
+                "complexity": "scientific"
             }
         
-        for term, synonyms in concept_map.items():
-            if term in query_lower:
-                concepts.extend([term] + synonyms)
+        # Check for simple local conversations
+        if any(keyword in query_lower for keyword in local_keywords):
+            return {
+                "route": "LOCAL",
+                "confidence": "high",
+                "reasoning": "Simple conversation",
+                "complexity": "simple"
+            }
         
-        return concepts[:5]  # Limit to 5 concepts
+        # Default to local for moderate complexity
+        return {
+            "route": "LOCAL", 
+            "confidence": "medium",
+            "reasoning": "General query, trying local first",
+            "complexity": "moderate"
+        }
 
     async def is_available(self) -> bool:
         """Check if utility model is available."""
