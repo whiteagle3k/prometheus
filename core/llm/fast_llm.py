@@ -496,44 +496,29 @@ Query type:"""
         }
 
     def _fallback_classify_query(self, query: str) -> str:
-        """Enhanced rule-based query classification."""
-        query_lower = query.lower()
-
-        # Technical indicators (expanded for better detection)
-        technical_keywords = [
-            "двигатель", "тепловой", "физик", "квантов", "механизм", "принцип", "энергия", "система",
-            "engine", "thermal", "physics", "quantum", "mechanism", "principle", "energy", "system",
-            "научн", "science", "химия", "chemistry", "биология", "biology", "математика", "mathematics",
-            "реактор", "reactor", "орбит", "orbital", "ракет", "rocket"
-        ]
-
-        # Conversational indicators
-        conversational_keywords = [
-            "привет", "как дела", "кто", "меня зовут", "спасибо", "пока", "утро",
-            "hello", "how are", "who are", "my name", "thank", "bye", "hi", "morning"
-        ]
-
-        # Personal data indicators
-        personal_keywords = [
-            "данные", "рост", "вес", "возраст", "измерения", "см", "кг",
-            "data", "height", "weight", "age", "measurements", "cm", "kg"
-        ]
-
-        # Explanation indicators
-        explanation_keywords = [
-            "как", "что такое", "расскажи", "объясни", "устроен", "работает",
-            "how", "what is", "explain", "tell me", "works", "describe"
-        ]
-
-        if any(word in query_lower for word in technical_keywords):
-            return "technical"
-        elif any(word in query_lower for word in explanation_keywords):
-            return "explanation"
-        elif any(word in query_lower for word in conversational_keywords):
-            return "conversational"
-        elif any(word in query_lower for word in personal_keywords):
-            return "personal_data"
-        else:
+        """Enhanced rule-based query classification using processing config."""
+        try:
+            routing_config = get_processor_config("external_routing")
+            params = routing_config.parameters
+            query_lower = query.lower()
+            
+            # Check each category using config patterns
+            if any(keyword in query_lower for keyword in params.get("medical_and_health_keywords", [])):
+                return "technical"
+            elif any(keyword in query_lower for keyword in params.get("scientific_keywords", [])):
+                return "technical"
+            elif any(keyword in query_lower for keyword in params.get("detailed_explanation_keywords", [])):
+                return "explanation"
+            elif any(keyword in query_lower for keyword in params.get("conversational_keywords", [])):
+                return "conversational"
+            elif any(keyword in query_lower for keyword in params.get("news_and_events_keywords", [])):
+                return "explanation"
+            else:
+                return "general"
+                
+        except Exception as e:
+            print(f"⚠️ Failed to load classification config: {e}")
+            # Simple fallback if config fails
             return "general"
 
     def _fallback_classify_memory(self, content: str) -> str:
@@ -560,74 +545,85 @@ Query type:"""
         return topic if topic else "general_topic"
 
     def _fallback_expand_concepts(self, query: str, language: str) -> list[str]:
-        """Fallback concept expansion using simple keyword matching."""
+        """Fallback concept expansion using processing config patterns."""
         concepts = []
         query_lower = query.lower()
 
-        # Technical concepts
-        if any(word in query_lower for word in ["система", "механизм", "принцип", "процесс"]):
-            concepts.extend(["технология", "инженерия", "принцип работы"])
-
-        if any(word in query_lower for word in ["system", "mechanism", "principle", "process"]):
-            concepts.extend(["technology", "engineering", "working principle"])
-
-        # Scientific concepts
-        if any(word in query_lower for word in ["квантовый", "физика", "химия"]):
-            concepts.extend(["наука", "исследование", "теория"])
-
-        if any(word in query_lower for word in ["quantum", "physics", "chemistry"]):
-            concepts.extend(["science", "research", "theory"])
+        try:
+            routing_config = get_processor_config("external_routing")
+            params = routing_config.parameters
+            
+            # Check each category and add related concepts
+            if any(keyword in query_lower for keyword in params.get("scientific_keywords", [])):
+                if language == "ru":
+                    concepts.extend(["наука", "исследование", "теория"])
+                else:
+                    concepts.extend(["science", "research", "theory"])
+                    
+            if any(keyword in query_lower for keyword in params.get("medical_and_health_keywords", [])):
+                if language == "ru":
+                    concepts.extend(["медицина", "здоровье", "лечение"])
+                else:
+                    concepts.extend(["medicine", "health", "treatment"])
+                    
+            if any(keyword in query_lower for keyword in params.get("detailed_explanation_keywords", [])):
+                if language == "ru":
+                    concepts.extend(["объяснение", "анализ", "подробности"])
+                else:
+                    concepts.extend(["explanation", "analysis", "details"])
+                    
+        except Exception as e:
+            print(f"⚠️ Failed to load concept expansion config: {e}")
+            # Simple fallback if config fails
+            pass
 
         return concepts[:3]  # Limit to avoid noise
 
     def _fallback_routing_decision(self, query: str) -> dict[str, Any]:
-        """Intelligent fallback routing using content understanding."""
+        """Intelligent fallback routing using processing config patterns."""
+        from core.processing.config import get_processor_config
+        
         query_lower = query.lower()
         
-        # Check for current events and news (need fresh data)
-        if any(word in query_lower for word in [
-            "новости", "сегодня", "последние", "произошло", "события", "актуальн",
-            "news", "today", "latest", "current", "happened", "events"
-        ]):
-            return {
-                "route": "EXTERNAL",
-                "confidence": "high",
-                "reasoning": "Current events require fresh data",
-                "complexity": "time_sensitive"
-            }
-        
-        # Check for scientific content (astronomy, physics, etc.)
-        scientific_indicators = [
-            "черн", "дыр", "звезд", "планет", "космос", "вселенн", "галактик",
-            "квантов", "физик", "генетик", "медицин", "биология", "химия",
-            "black hole", "space", "astronomy", "physics", "genetics", "medicine"
-        ]
-        if any(word in query_lower for word in scientific_indicators):
-            return {
-                "route": "EXTERNAL", 
-                "confidence": "high",
-                "reasoning": "Scientific content needs specialized knowledge",
-                "complexity": "technical"
-            }
-        
-        # Check for detailed explanations
-        if any(word in query_lower for word in [
-            "расскажи", "объясни", "детально", "подробно", "как работает",
-            "explain", "tell me", "how does", "detailed", "describe"
-        ]):
-            return {
-                "route": "EXTERNAL",
-                "confidence": "medium", 
-                "reasoning": "Detailed explanation requested",
-                "complexity": "explanatory"
-            }
-        
-        # Default to local for simple conversation
+        try:
+            routing_config = get_processor_config("external_routing")
+            params = routing_config.parameters
+            
+            # Check external routing keywords in priority order
+            external_categories = params.get("external_routing_priority", [])
+            
+            for category in external_categories:
+                keywords = params.get(category, [])
+                if any(keyword in query_lower for keyword in keywords):
+                    category_name = category.replace("_keywords", "").replace("_", " ")
+                    return {
+                        "route": "EXTERNAL",
+                        "confidence": "high",
+                        "reasoning": f"{category_name.title()} content detected",
+                        "complexity": "complex"
+                    }
+            
+            # Check conversational keywords for local routing
+            conversational_keywords = params.get("conversational_keywords", [])
+            if any(keyword in query_lower for keyword in conversational_keywords):
+                return {
+                    "route": "LOCAL",
+                    "confidence": "high", 
+                    "reasoning": "Simple conversation detected",
+                    "complexity": "simple"
+                }
+                
+        except Exception as e:
+            print(f"⚠️ Failed to load routing config: {e}")
+            # Simple fallback if config fails
+            pass
+
+        # Default to local for moderate complexity
         return {
             "route": "LOCAL",
             "confidence": "medium",
-            "reasoning": "Simple conversation or general query",
-            "complexity": "conversational"
+            "reasoning": "General query, using local model",
+            "complexity": "moderate"
         }
 
     async def is_available(self) -> bool:
