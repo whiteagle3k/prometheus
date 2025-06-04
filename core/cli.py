@@ -2,23 +2,26 @@
 Core CLI Module
 
 Provides command-line interface functionality including the shell subcommand.
-Uses singleton service to share Aletheia instance across interfaces.
+Uses universal registry system to share entity instances across interfaces.
 """
 
 import asyncio
 import signal
 
-from .service.singleton import get_agent, shutdown_service
+from .runtime.registry import get_agent
 
 
-async def run_shell() -> int:
+async def run_shell(default_entity: str = "aletheia") -> int:
     """
-    Run interactive shell mode using singleton service.
+    Run interactive shell mode using universal registry.
+
+    Args:
+        default_entity: Name of the entity to use (default: aletheia)
 
     Returns:
         Exit code (0 for success)
     """
-    print("🐚 Aletheia Interactive Shell")
+    print(f"🐚 {default_entity.title()} Interactive Shell")
     print("=" * 40)
     print("Commands:")
     print("  - Type your message and press Enter")
@@ -39,7 +42,7 @@ async def run_shell() -> int:
             except Exception as e:
                 print(f"⚠️ Error saving state: {e}")
 
-        await shutdown_service()
+        # Note: Registry shutdown is handled by the lifecycle system
         print("👋 Goodbye!")
 
     # Setup signal handlers for graceful shutdown
@@ -52,14 +55,14 @@ async def run_shell() -> int:
         signal.signal(signal.SIGINT, lambda s, f: signal_handler())
 
     try:
-        # Get agent instance once
-        agent = await get_agent()
+        # Get agent instance for the specified entity
+        agent = await get_agent(default_entity)
 
         # Interactive shell loop
         while True:
             try:
                 # Get user input
-                user_input = input("\n🐚 Shell: ").strip()
+                user_input = input(f"\n🐚 {default_entity.title()}: ").strip()
 
                 # Handle exit commands
                 if user_input.lower() in ["quit", "exit", "q"]:
@@ -70,7 +73,7 @@ async def run_shell() -> int:
                 if not user_input:
                     continue
 
-                # Get agent and process message
+                # Process message with the entity
                 print("🤔 Thinking...")
                 response = await agent.think(user_input, user_id="terminal")
 
@@ -79,7 +82,7 @@ async def run_shell() -> int:
                 if isinstance(response, dict) and "result" in response:
                     answer = response["result"]
 
-                print(f"\n🤖 Aletheia: {answer}")
+                print(f"\n🤖 {default_entity.title()}: {answer}")
 
             except KeyboardInterrupt:
                 await graceful_shutdown()
@@ -107,6 +110,11 @@ def add_shell_subcommand(subparsers):
     """
     shell_parser = subparsers.add_parser(
         "shell",
-        help="Start interactive shell with Aletheia"
+        help="Start interactive shell with specified entity"
     )
-    shell_parser.set_defaults(func=lambda args: asyncio.run(run_shell()))
+    shell_parser.add_argument(
+        "--entity",
+        default="aletheia",
+        help="Entity to use in shell (default: aletheia)"
+    )
+    shell_parser.set_defaults(func=lambda args: asyncio.run(run_shell(args.entity)))

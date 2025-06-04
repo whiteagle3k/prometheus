@@ -217,7 +217,7 @@ export COMPOSE_PROFILES="telegram"  # Enable Telegram service
 ### Uvicorn Production Settings
 ```python
 uvicorn.run(
-    "core.service.api_server:app",
+    "core.frontends.api_server:app",
     host="0.0.0.0",
     port=8000,
     workers=1,           # Singleton compatibility enforced
