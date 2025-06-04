@@ -15,34 +15,6 @@
 - **Cost-effective**: Local "brain" handles 85% of conversations → cheap and private
 - **Production Ready**: Thread-safe, concurrent access, health monitoring, graceful lifecycle management
 
-## 🚀 **Universal Multi-Entity System (v0.6.0)**
-
-Transform from single-entity service to unlimited specialized entities:
-
-```bash
-# Single entity deployment
-python prometheus.py api --entity aletheia
-
-# Multi-entity service (one process, multiple entities)
-python prometheus.py api --entities aletheia,prometheus,teslabot
-
-# Entity switching via API
-curl 'localhost:8000/v1/chat?entity=aletheia' -d '{"message":"Hello"}'
-curl 'localhost:8000/v1/chat?entity=prometheus' -d '{"message":"System status"}'
-
-# Telegram bot with entity switching
-/use aletheia     # Switch to Aletheia
-/use prometheus   # Switch to Prometheus entity
-/entities         # List available entities
-```
-
-**Architecture Benefits:**
-- ✅ **Unlimited Entities**: Add new entities without code changes
-- ✅ **Shared Infrastructure**: Memory, models, monitoring shared across entities  
-- ✅ **Zero Downtime**: Switch entities via Telegram `/use` command
-- ✅ **Dynamic Loading**: Automatic entity discovery and initialization
-- ✅ **Thread Safety**: Concurrent access with proper locking
-
 ## Meet Aletheia 👩
 
 Aletheia is our first autonomous AI entity - a thoughtful research assistant with:
@@ -55,6 +27,7 @@ Aletheia is our first autonomous AI entity - a thoughtful research assistant wit
 - **Learning**: Improves through reflection and experience
 - **Personal**: Remembers user data and provides personalized responses
 - **Clean responses**: Professional output without technical contamination
+
 
 ## Enhanced Architecture with Ultra-Fast LLM Routing
 
@@ -85,6 +58,35 @@ Aletheia is our first autonomous AI entity - a thoughtful research assistant wit
 ```
 
 ## 🚀 Latest Achievements ✨
+
+### 🚀 **Universal Multi-Entity System (v0.6.0)**
+
+Transform from single-entity service to unlimited specialized entities:
+
+```bash
+# Single entity deployment
+python prometheus.py api --entity aletheia
+
+# Multi-entity service (one process, multiple entities)
+python prometheus.py api --entities aletheia,prometheus,teslabot
+
+# Entity switching via API
+curl 'localhost:8000/v1/chat?entity=aletheia' -d '{"message":"Hello"}'
+curl 'localhost:8000/v1/chat?entity=prometheus' -d '{"message":"System status"}'
+
+# Telegram bot with entity switching
+/use aletheia     # Switch to Aletheia
+/use prometheus   # Switch to Prometheus entity
+/entities         # List available entities
+```
+
+**Architecture Benefits:**
+- ✅ **Unlimited Entities**: Add new entities without code changes
+- ✅ **Shared Infrastructure**: Memory, models, monitoring shared across entities  
+- ✅ **Zero Downtime**: Switch entities via Telegram `/use` command
+- ✅ **Dynamic Loading**: Automatic entity discovery and initialization
+- ✅ **Thread Safety**: Concurrent access with proper locking
+
 
 ### **Self-RAG Implementation (v0.5.0)**
 - **🧠 Enhanced Reflection Engine**: Multi-dimensional response quality assessment with improvement suggestions
