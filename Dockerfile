@@ -16,9 +16,9 @@ RUN apt-get update && apt-get install -y \
 COPY pyproject.toml poetry.lock ./
 
 # Install Poetry and dependencies
-RUN pip install poetry && \
+RUN pip install poetry==1.8.3 && \
     poetry config virtualenvs.create false && \
-    poetry install --no-dev
+    poetry install --only=main
 
 # Copy application code
 COPY . .

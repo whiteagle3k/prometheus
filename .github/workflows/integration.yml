@@ -1,0 +1,139 @@
+name: Integration Tests
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  # Allow manual triggering for testing
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: 3.11
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Docker image
+      run: |
+        docker build -t prometheus:test .
+    
+    - name: Test Docker container - API mode
+      run: |
+        # Start container in background
+        docker run -d --name prometheus-test \
+          --health-interval=5s \
+          --health-timeout=3s \
+          --health-retries=3 \
+          -p 8000:8000 \
+          prometheus:test api
+        
+        # Wait for health check
+        timeout 60 bash -c 'until docker exec prometheus-test curl -f http://localhost:8000/health; do sleep 2; done'
+        
+        # Test basic endpoints
+        sleep 5
+        curl -f http://localhost:8000/ || exit 1
+        curl -f http://localhost:8000/health || exit 1
+        curl -f http://localhost:8000/metrics || exit 1
+        
+        # Cleanup
+        docker stop prometheus-test
+        docker rm prometheus-test
+    
+    - name: Test Docker container - Tests inside container
+      run: |
+        # Run tests inside the container
+        docker run --rm \
+          -v $(pwd)/tests:/app/tests:ro \
+          prometheus:test \
+          sh -c "poetry run pytest tests/test_registry.py tests/test_api.py -v"
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: docker-build
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build Docker image for scanning
+      run: |
+        docker build -t prometheus:scan .
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'prometheus:scan'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  stress-test:
+    runs-on: ubuntu-latest
+    needs: docker-build
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build and start service
+      run: |
+        docker build -t prometheus:stress .
+        docker run -d --name prometheus-stress -p 8000:8000 prometheus:stress api --entity aletheia
+        
+        # Wait for startup
+        timeout 60 bash -c 'until curl -f http://localhost:8000/health; do sleep 2; done'
+    
+    - name: Install hey (load testing tool)
+      run: |
+        wget https://hey-release.s3.us-east-2.amazonaws.com/hey_linux_amd64
+        chmod +x hey_linux_amd64
+        sudo mv hey_linux_amd64 /usr/local/bin/hey
+    
+    - name: Run load test
+      run: |
+        echo "Running 25 RPS load test for 20 seconds..."
+        hey -z 20s -q 25 -c 3 \
+          -H "Content-Type: application/json" \
+          -d '{"user_id":"stress_test","message":"Hello","entity":"aletheia"}' \
+          -m POST \
+          http://localhost:8000/v1/chat > stress_results.txt
+        
+        cat stress_results.txt
+        
+        # Extract average latency (should be under 2s for basic responses)
+        avg_latency=$(grep "Average:" stress_results.txt | awk '{print $2}' | sed 's/s//')
+        echo "Average latency: ${avg_latency}s"
+        
+        # Check if latency is reasonable (under 2 seconds for PR tests)
+        if (( $(echo "$avg_latency > 2.0" | bc -l) )); then
+          echo "❌ Average latency too high: ${avg_latency}s"
+          exit 1
+        else
+          echo "✅ Load test passed: ${avg_latency}s average latency"
+        fi
+    
+    - name: Cleanup stress test
+      if: always()
+      run: |
+        docker stop prometheus-stress || true
+        docker rm prometheus-stress || true
+    
+    - name: Upload stress test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: stress-test-results
+        path: stress_results.txt 
