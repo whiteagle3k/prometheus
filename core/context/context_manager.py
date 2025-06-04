@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime
 from typing import Any
+import asyncio
 
 from core.processing.cleaners import ChainOfThoughtExtractor
 from core.processing.config import get_processor_config
@@ -120,74 +121,61 @@ class ConversationContext:
     async def update_summary_from_exchange(
         self,
         user_input: str,
-        assistant_response: str,
-        local_llm=None
+        assistant_response: str
     ) -> None:
-        """Update running summary based on new exchange using LLM compression."""
+        """Update running summary based on new exchange using rule-based summarization for efficiency."""
 
         summary = self.get_or_create_summary()
         summary.exchange_count += 1
 
-        if not local_llm:
-            # Fallback to simple append if no LLM available
-            if summary.is_empty():
-                summary.set_summary(f"User asked: {user_input[:100]}...")
-            return
-
-        # Build summary update prompt
-        previous_summary = summary.get_summary()
-
-        update_prompt = f"""Update the running conversation summary based on this new exchange.
-Keep it concise (≤8 lines) but capture important context, facts, and the current topic.
-
-PREVIOUS SUMMARY:
-{previous_summary}
-
-NEW EXCHANGE:
-User: {user_input}
-Assistant: {assistant_response}
-
-UPDATED SUMMARY:
-(Write a concise summary that captures the essence of the conversation so far)"""
-
+        # Use simple rule-based summarization to avoid any model calls during LOCAL routing
         try:
-            # Use local LLM to compress and update summary
-            new_summary = await local_llm.generate(
-                prompt=update_prompt,
-                max_tokens=200,  # Keep summary concise
-                temperature=0.3,  # Lower temperature for consistent summarization
-                system_prompt="You are a conversation summarizer. Create concise summaries that preserve important context and facts."
-            )
-
-            # Estimate tokens and compress if too long
-            estimated_tokens = len(new_summary.split()) * 1.3
-            if estimated_tokens > summary.max_tokens:
-                logger.info(f"📏 Summary too long ({estimated_tokens:.0f} tokens), compressing...")
-
-                compression_prompt = f"""The summary is too long. Compress it to ≤150 words while keeping the most important information:
-
-{new_summary}
-
-COMPRESSED SUMMARY:"""
-
-                compressed_summary = await local_llm.generate(
-                    prompt=compression_prompt,
-                    max_tokens=120,
-                    temperature=0.2,
-                    system_prompt="You are a text compressor. Preserve the most important information in fewer words."
-                )
-
-                summary.set_summary(compressed_summary)
-                logger.info(f"✅ Summary compressed and updated for user {summary.user_id}")
+            # Build simple summary using rule-based approach
+            previous_summary = summary.get_summary()
+            
+            # Extract key topic from user input
+            user_topic = self._extract_simple_topic(user_input)
+            assistant_topic = self._extract_simple_topic(assistant_response)
+            
+            # Create concise summary
+            if summary.is_empty():
+                # First exchange
+                new_summary = f"User asked about {user_topic}. Discussion on {assistant_topic}."
             else:
-                summary.set_summary(new_summary)
-                logger.info(f"✅ Summary updated for user {summary.user_id}")
+                # Update existing summary
+                new_summary = f"{previous_summary[:150]}... Latest: {user_topic} -> {assistant_topic}."
+            
+            # Keep summary concise
+            if len(new_summary) > 300:
+                # Simple truncation with ellipsis
+                new_summary = new_summary[:280] + "..."
+            
+            summary.set_summary(new_summary)
+            logger.info(f"✅ Summary updated for user {summary.user_id} (rule-based)")
 
         except Exception as e:
-            logger.error(f"❌ Failed to update summary with LLM: {e}")
+            logger.error(f"❌ Failed to update summary: {e}")
             # Fallback to simple update
             if summary.is_empty():
                 summary.set_summary(f"Conversation about: {user_input[:50]}...")
+
+    def _extract_simple_topic(self, text: str) -> str:
+        """Extract simple topic using rule-based approach (no model calls)."""
+        # Simple topic extraction - first meaningful words
+        words = text.split()
+        topic_words = []
+
+        stop_words = {"the", "and", "or", "but", "что", "как", "это", "is", "are", "was", "were", "in", "on", "at", "to", "for", "of", "with", "by"}
+
+        for word in words[:10]:  # Look at first 10 words
+            clean_word = word.strip('.,!?:;()[]{}"\'-').lower()
+            if len(clean_word) > 2 and clean_word not in stop_words:
+                topic_words.append(clean_word)
+                if len(" ".join(topic_words)) >= 30:
+                    break
+
+        topic = " ".join(topic_words[:5])  # Max 5 words
+        return topic if topic else "general topic"
 
     def add_episode(self, user_input: str, assistant_response: str, metadata: dict[str, Any] | None = None) -> None:
         """Add full exchange to episode storage for RAG retrieval."""

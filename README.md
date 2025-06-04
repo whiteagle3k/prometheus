@@ -59,34 +59,46 @@ Aletheia is our first autonomous AI entity - a thoughtful research assistant wit
 
 ## 🚀 Latest Achievements ✨
 
-### 🚀 **Universal Multi-Entity System (v0.6.0)**
+### 🚀 **Universal Multi-Entity System (v0.6.0) - COMPLETED** ✅
 
-Transform from single-entity service to unlimited specialized entities:
+Successfully transformed from single-entity service to unlimited specialized entities with major architecture refactoring:
 
+**Architecture Transformation:**
+- ✅ **Entity-Agnostic Core**: Complete separation of framework core from entity implementations
+- ✅ **Dynamic Entity Loading**: Automatic discovery and initialization of entities from `entities/{name}/`
+- ✅ **Universal Registry**: Thread-safe singleton pattern per entity with concurrent access
+- ✅ **Flexible Deployment**: Single or multi-entity deployments in one process
+
+**Deployment Options:**
 ```bash
 # Single entity deployment
 python prometheus.py api --entity aletheia
 
-# Multi-entity service (one process, multiple entities)
+# Multi-entity service (shared infrastructure)
 python prometheus.py api --entities aletheia,prometheus,teslabot
 
 # Entity switching via API
 curl 'localhost:8000/v1/chat?entity=aletheia' -d '{"message":"Hello"}'
 curl 'localhost:8000/v1/chat?entity=prometheus' -d '{"message":"System status"}'
 
-# Telegram bot with entity switching
+# Telegram bot with dynamic entity switching
 /use aletheia     # Switch to Aletheia
 /use prometheus   # Switch to Prometheus entity
 /entities         # List available entities
 ```
 
-**Architecture Benefits:**
-- ✅ **Unlimited Entities**: Add new entities without code changes
+**Key Benefits Achieved:**
+- ✅ **Unlimited Entities**: Add new entities without framework changes
 - ✅ **Shared Infrastructure**: Memory, models, monitoring shared across entities  
-- ✅ **Zero Downtime**: Switch entities via Telegram `/use` command
-- ✅ **Dynamic Loading**: Automatic entity discovery and initialization
-- ✅ **Thread Safety**: Concurrent access with proper locking
+- ✅ **Zero Downtime**: Dynamic entity switching via Telegram `/use` command
+- ✅ **Thread Safety**: Concurrent access with proper asyncio locking
+- ✅ **Production Ready**: Graceful lifecycle management and error handling
 
+**Technical Fixes Included:**
+- ✅ **OpenAI API Leak Fixed**: Eliminated unwanted health check calls during LOCAL routing
+- ✅ **Empty Response Bug Fixed**: Added bilingual parsing support for Russian/English field names
+- ✅ **Singleton Pattern**: Prevents multiple model loads with FastLLM utility model sharing
+- ✅ **Performance Optimized**: Rule-based summarization eliminates model calls during LOCAL routing
 
 ### **Self-RAG Implementation (v0.5.0)**
 - **🧠 Enhanced Reflection Engine**: Multi-dimensional response quality assessment with improvement suggestions

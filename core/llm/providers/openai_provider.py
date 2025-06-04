@@ -2,6 +2,8 @@
 
 import warnings
 from collections.abc import AsyncGenerator
+import asyncio
+import time
 
 try:
     import openai
@@ -61,6 +63,7 @@ class OpenAIProvider(ExternalLLMProvider):
 
     async def _generate_text(self, request: GenerationRequest) -> GenerationResponse:
         """Generate text using OpenAI API."""
+        
         if not self._client:
             await self._setup_client()
 

@@ -8,6 +8,7 @@ Optimized based on performance testing:
 - Rule-based routing (100% accurate, instant)
 - SmolLM2-135M for classification (~0.25s vs 1.08s)
 - Intelligent fallbacks for reliability
+- Singleton pattern to prevent multiple model loads
 """
 
 import asyncio
@@ -30,9 +31,23 @@ from core.processing.config import get_processor_config
 
 class FastLLM:
     """Small, fast LLM for utility tasks like classification, extraction, preprocessing."""
+    
+    # Singleton pattern to prevent multiple instances
+    _instance = None
+    _instance_lock = asyncio.Lock()
+
+    def __new__(cls, identity_config: dict | None = None):
+        """Singleton pattern to reuse model across components."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
 
     def __init__(self, identity_config: dict | None = None) -> None:
-        """Initialize the utility LLM."""
+        """Initialize the utility LLM (singleton pattern)."""
+        if hasattr(self, '_initialized') and self._initialized:
+            return  # Already initialized
+            
         self.model: Llama | None = None
         self.model_loaded = False
         self._init_lock = asyncio.Lock()
@@ -56,8 +71,11 @@ class FastLLM:
         }
 
         # Performance optimization flags
-        self._use_rule_based_routing = False  # Use intelligent LLM routing instead of keywords
+        self._use_rule_based_routing = False  # Use intelligent model-based routing with rule-based fallback
         self._classification_threshold = 1.0  # Switch to fallback if model is too slow
+        
+        self._initialized = True
+        print("🎯 FastLLM: Using singleton instance (prevents multiple model loads)")
 
     def _find_best_utility_model(self) -> Path | None:
         """Find the best available utility model using identity configuration."""
@@ -364,8 +382,9 @@ Query type:"""
                     echo=False,
                 )
             )
-            time.time() - inference_start
+            inference_time = time.time() - inference_start
 
+            # Fix: llama-cpp-python response format, not OpenAI format
             response = result["choices"][0]["text"].strip().upper()
 
             route = "LOCAL"

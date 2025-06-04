@@ -163,7 +163,7 @@ class BaseEntity(ABC):
 
             # Update running summary
             await self.context.update_summary_from_exchange(
-                user_text, response, self.router.local_llm
+                user_text, response
             )
 
             # Store experience in memory with user_id
@@ -498,7 +498,7 @@ class BaseEntity(ABC):
 
             # Update running summary with the exchange
             await self.context.update_summary_from_exchange(
-                user_input, response_text, self.router.local_llm
+                user_input, response_text
             )
 
             execution_time = time.time() - start_time

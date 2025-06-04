@@ -348,7 +348,9 @@ class LocalLLM:
         raw_response = result["choices"][0]["text"].strip()
 
         # Parse structured response
-        return self._parse_structured_response(raw_response, prompt)
+        parsed_result = self._parse_structured_response(raw_response, prompt)
+        
+        return parsed_result
 
     def _format_structured_prompt(self, prompt: str, context: str | None = None) -> str:
         """Format prompt to request structured response from local LLM."""
@@ -467,24 +469,24 @@ Respond naturally in the user's language.<|end|>
         """Parse inline format where all fields are on one line."""
         import re
 
-        # Extract answer (from start to first field marker)
-        answer_match = re.search(r"ANSWER:\s*(.+?)(?=\s+(?:CONFIDENCE|REASONING):|$)", response, re.IGNORECASE)
+        # Extract answer (from start to first field marker) - English and Russian
+        answer_match = re.search(r"(?:ANSWER|Ответ):\s*(.+?)(?=\s+(?:CONFIDENCE|REASONING|Доверие|Причина):|$)", response, re.IGNORECASE)
         if answer_match:
             parsed["answer"] = answer_match.group(1).strip()
 
-        # Extract confidence
-        conf_match = re.search(r"CONFIDENCE:\s*(\w+)", response, re.IGNORECASE)
+        # Extract confidence - English and Russian
+        conf_match = re.search(r"(?:CONFIDENCE|Доверие):\s*(\w+)", response, re.IGNORECASE)
         if conf_match:
             conf_text = conf_match.group(1).lower()
-            if "high" in conf_text:
+            if "high" in conf_text or "высокое" in conf_text or "высокая" in conf_text:
                 parsed["confidence"] = "high"
-            elif "low" in conf_text:
+            elif "low" in conf_text or "низкое" in conf_text or "низкая" in conf_text:
                 parsed["confidence"] = "low"
             else:
                 parsed["confidence"] = "medium"
 
-        # Extract reasoning
-        reason_match = re.search(r"REASONING:\s*(.+?)$", response, re.IGNORECASE)
+        # Extract reasoning - English and Russian
+        reason_match = re.search(r"(?:REASONING|Причина|Разумение):\s*(.+?)$", response, re.IGNORECASE)
         if reason_match:
             parsed["reasoning"] = reason_match.group(1).strip()
 
@@ -496,20 +498,20 @@ Respond naturally in the user's language.<|end|>
             if not line:
                 continue
 
-            # Parse different fields
-            if line.startswith("ANSWER:"):
+            # Parse different fields (English and Russian)
+            if line.startswith("ANSWER:") or line.startswith("Ответ:"):
                 answer_text = line.split(":", 1)[1].strip()
                 if answer_text and not parsed["answer"]:
                     parsed["answer"] = answer_text
-            elif line.startswith("CONFIDENCE:"):
+            elif line.startswith("CONFIDENCE:") or line.startswith("Доверие:"):
                 conf_text = line.split(":", 1)[1].strip().lower()
-                if "high" in conf_text:
+                if "high" in conf_text or "высокое" in conf_text or "высокая" in conf_text:
                     parsed["confidence"] = "high"
-                elif "low" in conf_text:
+                elif "low" in conf_text or "низкое" in conf_text or "низкая" in conf_text:
                     parsed["confidence"] = "low"
                 else:
                     parsed["confidence"] = "medium"
-            elif line.startswith("REASONING:"):
+            elif line.startswith("REASONING:") or line.startswith("Причина:") or line.startswith("Разумение:"):
                 reasoning_text = line.split(":", 1)[1].strip()
                 if reasoning_text and not parsed["reasoning"]:
                     parsed["reasoning"] = reasoning_text

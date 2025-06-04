@@ -126,7 +126,16 @@ class LLMRouter:
         try:
             # Check if local model is available
             local_available = await self.local_llm.is_available()
-            external_available = await self.external_manager.get_best_available() is not None
+            
+            # Only check external availability if we might actually need it
+            # This avoids unnecessary health check API calls during LOCAL routing
+            external_available = False
+            if not local_available:
+                # Only do expensive health checks if local is not available
+                external_available = await self.external_manager.get_best_available() is not None
+            else:
+                # Quick check without health calls - just see if any providers are configured
+                external_available = len(self.external_manager.list_available_providers()) > 0
 
             # If only one option available, use it
             if not external_available:
