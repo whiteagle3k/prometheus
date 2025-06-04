@@ -214,77 +214,152 @@ Respond with ONLY the category name."""
             return self._fallback_classify_memory(content)
 
     async def make_routing_decision(self, query: str, context: Optional[str] = None) -> dict[str, Any]:
-        """Make LLM routing decision: LOCAL vs EXTERNAL with reasoning."""
+        """
+        Make a routing decision for the query using fast LLM as neutral arbiter.
+        
+        This is the core Fast LLM routing oracle that makes unbiased routing decisions
+        independent of the main LLM that would handle the query.
+        """
         await self.ensure_loaded()
         
         if not self.model:
+            print("⚠️ Fast LLM not available for routing, using fallback")
             return self._fallback_routing_decision(query)
 
-        # CRITICAL: Reset model context to prevent contamination between routing decisions
+        # Reset context to avoid contamination between routing decisions
         await self._reset_model_context()
 
-        # Build context-aware prompt with explicit isolation
-        context_info = f"\n\nContext: {context}" if context else ""
-        
-        # Enhanced system prompt with explicit instruction for independence
-        system_prompt = f"""You are a routing oracle. Decide if a query should be handled by LOCAL or EXTERNAL LLM.
+        # Build clean routing context - limit to prevent contamination
+        context_info = ""
+        if context and len(context.strip()) > 0:
+            # Clean and limit context to prevent overwhelming Fast LLM
+            clean_context = context.strip()[:200]  # Max 200 chars
+            context_info = f"\nRecent context: {clean_context}"
 
-IMPORTANT: Judge this query independently. Ignore any previous queries or context.
+        # Routing oracle prompt - designed to be neutral and unbiased
+        system_prompt = f"""You are a routing oracle. Decide which LLM should handle this query:
 
-LOCAL: Simple conversations, greetings, basic questions our local model handles well
-EXTERNAL: Scientific topics, complex explanations, detailed technical questions, physics, chemistry, engineering
+LOCAL: Use for general conversation, simple explanations, basic tasks
+EXTERNAL: Use for complex analysis, current events, specialized knowledge
 
-Respond ONLY in this JSON format:
-{{"route": "LOCAL", "confidence": "high", "reasoning": "Simple greeting", "complexity": "simple"}}
+Consider:
+- Query complexity and depth required
+- Whether latest knowledge is needed
+- Computational requirements
 
-Valid values:
-- route: "LOCAL" or "EXTERNAL" 
-- confidence: "high", "medium", "low"
-- reasoning: brief explanation (max 10 words)
-- complexity: "simple", "moderate", "complex", "scientific"
+Format: ROUTE: [LOCAL/EXTERNAL]
+CONFIDENCE: [high/medium/low]
+COMPLEXITY: [simple/moderate/complex]
+REASONING: [brief explanation]"""
 
-Query{context_info}: {query}"""
-
-        # Use explicit separators to isolate this decision
-        formatted_prompt = f"<|system|>{system_prompt}<|end|>\n<|user|>Route this query independently<|end|>\n<|assistant|>"
+        formatted_prompt = f"<|system|>{system_prompt}<|end|>\n<|user|>Query: {query}{context_info}\n\nRouting decision:<|end|>\n<|assistant|>"
 
         try:
             result = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: self.model(
                     formatted_prompt,
-                    max_tokens=80,  # Enough for JSON response
-                    temperature=0.2,  # Low for consistent routing
+                    max_tokens=100,
+                    temperature=0.2,  # Low temperature for consistent routing
                     stop=["<|end|>", "<|user|>"],
                     echo=False
                 )
             )
             
-            response_text = result["choices"][0]["text"].strip()
+            response = result["choices"][0]["text"].strip()
             
-            # Parse JSON response
-            try:
-                import json
-                routing_decision = json.loads(response_text)
-                
-                # Validate required fields
-                required_fields = ['route', 'confidence', 'reasoning', 'complexity']
-                if all(field in routing_decision for field in required_fields):
-                    # Validate values
-                    if routing_decision['route'] in ['LOCAL', 'EXTERNAL'] and \
-                       routing_decision['confidence'] in ['high', 'medium', 'low'] and \
-                       routing_decision['complexity'] in ['simple', 'moderate', 'complex', 'scientific']:
-                        return routing_decision
-                
-            except json.JSONDecodeError:
-                pass
-                
-            # Fallback if parsing failed
-            print(f"⚠️ Failed to parse routing response: {response_text}")
-            return self._fallback_routing_decision(query)
-                
+            # Parse structured response
+            route = "LOCAL"
+            confidence = "medium"
+            complexity = "moderate"
+            reasoning = "Fast LLM routing decision"
+            
+            lines = response.split('\n')
+            for line in lines:
+                line = line.strip()
+                if line.startswith("ROUTE:"):
+                    route_text = line.split(":", 1)[1].strip().upper()
+                    if route_text in ["LOCAL", "EXTERNAL"]:
+                        route = route_text
+                elif line.startswith("CONFIDENCE:"):
+                    conf_text = line.split(":", 1)[1].strip().lower()
+                    if conf_text in ["high", "medium", "low"]:
+                        confidence = conf_text
+                elif line.startswith("COMPLEXITY:"):
+                    comp_text = line.split(":", 1)[1].strip().lower()
+                    if comp_text in ["simple", "moderate", "complex"]:
+                        complexity = comp_text
+                elif line.startswith("REASONING:"):
+                    reasoning = line.split(":", 1)[1].strip()
+                    
+            return {
+                'route': route,
+                'confidence': confidence,
+                'complexity': complexity,
+                'reasoning': reasoning
+            }
+            
         except Exception as e:
-            print(f"⚠️ Utility model routing failed: {e}")
+            print(f"⚠️ Fast LLM routing failed: {e}")
             return self._fallback_routing_decision(query)
+
+    async def classify_prompt(self, prompt: str, classification_type: str) -> dict[str, Any]:
+        """
+        General-purpose classification method for Self-RAG components.
+        
+        Args:
+            prompt: The prompt to classify/analyze
+            classification_type: Type of classification needed
+            
+        Returns:
+            Dictionary with classification result
+        """
+        await self.ensure_loaded()
+        
+        if not self.model:
+            print(f"⚠️ Fast LLM not available for {classification_type}, using fallback")
+            return {"classification": "Unable to classify - model not available"}
+
+        # Reset context for independent classification
+        await self._reset_model_context()
+
+        # Create system prompt based on classification type
+        if classification_type in ["memory_quality_evaluation", "memory_enhancement"]:
+            system_prompt = """You are a memory quality evaluator. Analyze the given prompt and provide a structured response following the exact format requested."""
+        elif classification_type in ["response_quality_assessment", "comprehensive_reflection"]:
+            system_prompt = """You are a response quality assessor. Analyze the given content and provide detailed evaluation following the exact format requested."""
+        elif classification_type in ["context_relevance_assessment", "retrieval_quality_assessment", "context_quality_evaluation"]:
+            system_prompt = """You are a context quality evaluator. Assess the relevance and quality of context for given tasks following the exact format requested."""
+        else:
+            system_prompt = """You are a general classifier. Analyze the given content and provide a structured response following the format requested."""
+
+        formatted_prompt = f"<|system|>{system_prompt}<|end|>\n<|user|>{prompt}<|end|>\n<|assistant|>"
+
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self.model(
+                    formatted_prompt,
+                    max_tokens=300,  # Allow more tokens for detailed analysis
+                    temperature=0.3,  # Balanced temperature for analysis
+                    stop=["<|end|>", "<|user|>"],
+                    echo=False
+                )
+            )
+            
+            classification = result["choices"][0]["text"].strip()
+            
+            return {
+                "classification": classification,
+                "classification_type": classification_type,
+                "model_used": "fast_llm"
+            }
+            
+        except Exception as e:
+            print(f"⚠️ Fast LLM classification failed for {classification_type}: {e}")
+            return {
+                "classification": f"Classification failed: {str(e)}",
+                "classification_type": classification_type,
+                "model_used": "fallback"
+            }
 
     async def _reset_model_context(self) -> None:
         """Reset model context to prevent contamination between independent tasks."""
