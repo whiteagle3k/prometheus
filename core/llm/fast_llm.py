@@ -56,7 +56,7 @@ class FastLLM:
         }
 
         # Performance optimization flags
-        self._use_rule_based_routing = True  # Rule-based routing is 100% accurate and instant
+        self._use_rule_based_routing = False  # Use intelligent LLM routing instead of keywords
         self._classification_threshold = 1.0  # Switch to fallback if model is too slow
 
     def _find_best_utility_model(self) -> Path | None:
@@ -332,13 +332,24 @@ Query:"""
             print(f"⚡ FastLLM routing (heuristic): {routing_time:.3f}s -> {result['route']}")
             return result
 
-        # Model-based routing (rarely used now)
-        system_prompt = """Route as: LOCAL or EXTERNAL
+        # Model-based routing (intelligent content understanding)
+        system_prompt = """Analyze the query and route to LOCAL or EXTERNAL:
 
-LOCAL: simple chat, basic questions
-EXTERNAL: complex analysis, scientific topics
+EXTERNAL for:
+- Current events, news, today's information
+- Scientific topics (astronomy, physics, medicine, biology)
+- Complex technical explanations
+- Recent research or developments
+- Specialized knowledge requiring up-to-date data
 
-Decision:"""
+LOCAL for:
+- Simple greetings and conversation
+- Basic personal questions
+- General chat without specific expertise needs
+
+Think about what knowledge is required, not just keywords.
+
+Query type:"""
 
         formatted_prompt = f"<|system|>{system_prompt}<|end|>\n<|user|>Query: {query[:100]}<|end|>\n<|assistant|>"
 
@@ -570,8 +581,54 @@ Decision:"""
         return concepts[:3]  # Limit to avoid noise
 
     def _fallback_routing_decision(self, query: str) -> dict[str, Any]:
-        """Fallback routing using the optimized rule-based logic."""
-        return self._optimized_rule_based_routing(query)
+        """Intelligent fallback routing using content understanding."""
+        query_lower = query.lower()
+        
+        # Check for current events and news (need fresh data)
+        if any(word in query_lower for word in [
+            "новости", "сегодня", "последние", "произошло", "события", "актуальн",
+            "news", "today", "latest", "current", "happened", "events"
+        ]):
+            return {
+                "route": "EXTERNAL",
+                "confidence": "high",
+                "reasoning": "Current events require fresh data",
+                "complexity": "time_sensitive"
+            }
+        
+        # Check for scientific content (astronomy, physics, etc.)
+        scientific_indicators = [
+            "черн", "дыр", "звезд", "планет", "космос", "вселенн", "галактик",
+            "квантов", "физик", "генетик", "медицин", "биология", "химия",
+            "black hole", "space", "astronomy", "physics", "genetics", "medicine"
+        ]
+        if any(word in query_lower for word in scientific_indicators):
+            return {
+                "route": "EXTERNAL", 
+                "confidence": "high",
+                "reasoning": "Scientific content needs specialized knowledge",
+                "complexity": "technical"
+            }
+        
+        # Check for detailed explanations
+        if any(word in query_lower for word in [
+            "расскажи", "объясни", "детально", "подробно", "как работает",
+            "explain", "tell me", "how does", "detailed", "describe"
+        ]):
+            return {
+                "route": "EXTERNAL",
+                "confidence": "medium", 
+                "reasoning": "Detailed explanation requested",
+                "complexity": "explanatory"
+            }
+        
+        # Default to local for simple conversation
+        return {
+            "route": "LOCAL",
+            "confidence": "medium",
+            "reasoning": "Simple conversation or general query",
+            "complexity": "conversational"
+        }
 
     async def is_available(self) -> bool:
         """Check if utility model is available."""
