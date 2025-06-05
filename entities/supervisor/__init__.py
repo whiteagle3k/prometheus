@@ -339,4 +339,30 @@ Make tasks atomic and independently testable. Ensure proper ordering and depende
                 "tasks_failed": queue_length(DEVTASKS_FAILED)
             },
             "entity_status": "active" if self._running else "stopped"
-        } 
+        }
+
+
+def register() -> Dict[str, Any]:
+    """Register Petrovich (Supervisor) entity with the framework."""
+    return {
+        "name": "petrovich",
+        "class": SupervisorEntity,
+        "description": "Senior development supervisor with 30 years experience - analytical, methodical, validation-focused",
+        "version": "2.0.0",
+        "capabilities": [
+            "task_decomposition",
+            "strategic_planning",
+            "team_coordination",
+            "validation_and_review",
+            "workflow_management",
+            "quality_oversight",
+            "project_leadership",
+            "experience_based_guidance",
+            "senior_supervision"
+        ],
+        "role": "senior_supervisor",
+        "team_position": "team_lead",
+        "experience_years": 30,
+        "personality": "phlegmatic_wise_validator",
+        "direct_reports": ["vasya", "marina"]
+    } 
