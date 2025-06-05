@@ -95,6 +95,42 @@ class ChatResponse(BaseModel):
     request_id: str
 
 
+class TaskBrief(BaseModel):
+    """Request model for task submission to supervisor."""
+    brief: str = Field(..., max_length=2000, description="High-level task description")
+    context: str = Field(default="", max_length=1000, description="Additional context")
+    priority: str = Field(default="normal", pattern="^(low|normal|high|urgent)$", description="Task priority")
+    user_id: str = Field(..., max_length=100, description="User identifier")
+
+
+class TaskResponse(BaseModel):
+    """Response model for task submission."""
+    task_id: str
+    status: str
+    brief: str
+    priority: str
+    queued_at: str
+    request_id: str
+
+
+class TaskDiff(BaseModel):
+    """Response model for task diff."""
+    task_id: str
+    branch: str
+    diff: str
+    timestamp: str
+    available: bool
+
+
+class PublishResponse(BaseModel):
+    """Response model for task publication."""
+    status: str
+    message: str
+    task_id: str
+    branch: str | None = None
+    git_output: str | None = None
+
+
 # Create FastAPI application
 app = FastAPI(
     title="Prometheus Universal AI Service",
@@ -243,6 +279,11 @@ async def root():
         "agent_count": len(get_running_agents()),
         "endpoints": {
             "chat": "/v1/chat?entity=<entity_name>",
+            "task_submission": "/v1/task",
+            "task_diff": "/v1/task/{task_id}/diff",
+            "task_publish": "/v1/task/{task_id}/publish",
+            "supervisor_status": "/v1/supervisor/status",
+            "supervisor_start": "/v1/supervisor/start",
             "registry": "/v1/registry",
             "docs": "/docs",
             "health": "/health",
@@ -427,6 +468,254 @@ async def chat(
                 "latency": latency,
                 "user_id": request.user_id,
                 "request_id": request_id
+            }
+        )
+
+
+@app.post("/v1/task", response_model=TaskResponse)
+async def submit_task(
+    request: TaskBrief,
+    http_request: Request
+) -> TaskResponse:
+    """
+    Submit a high-level development task to the supervisor queue.
+    
+    Args:
+        request: Task brief with description, context, and priority
+        http_request: FastAPI request object for accessing request_id
+        
+    Returns:
+        Task response with task_id, status, and metadata
+    """
+    import uuid
+    from datetime import datetime
+    from core.task_queue.queue import push, HIGHLEVEL_IN
+    
+    request_id = getattr(http_request.state, "request_id", str(uuid.uuid4()))
+    task_id = str(uuid.uuid4())[:8]
+    
+    try:
+        # Create task object
+        task_data = {
+            "id": task_id,
+            "brief": request.brief,
+            "context": request.context,
+            "priority": request.priority,
+            "user_id": request.user_id,
+            "created_at": datetime.now().isoformat(),
+            "status": "queued",
+            "request_id": request_id
+        }
+        
+        # Push to supervisor queue
+        push(HIGHLEVEL_IN, task_data)
+        
+        # Log task submission
+        structured_logger.log_request(
+            request_id=request_id,
+            method="POST",
+            path="/v1/task",
+            entity="supervisor"
+        )
+        
+        return TaskResponse(
+            task_id=task_id,
+            status="queued",
+            brief=request.brief,
+            priority=request.priority,
+            queued_at=task_data["created_at"],
+            request_id=request_id
+        )
+        
+    except Exception as e:
+        structured_logger.log_error(
+            request_id=request_id,
+            error=f"Task submission failed: {str(e)}",
+            entity="supervisor",
+            user_id=request.user_id
+        )
+        
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": f"Failed to submit task: {str(e)}",
+                "task_id": task_id,
+                "request_id": request_id
+            }
+        )
+
+
+@app.get("/v1/supervisor/status")
+async def supervisor_status():
+    """
+    Get supervisor status and queue information.
+    
+    Returns:
+        Supervisor status including queue lengths and running state
+    """
+    try:
+        from core.task_queue.queue import queue_length, HIGHLEVEL_IN, DEVTASKS_WAITING, DEVTASKS_PROCESSING, DEVTASKS_DONE, DEVTASKS_DONE_LOCAL, DEVTASKS_FAILED
+        
+        # Try to get supervisor instance
+        supervisor_running = False
+        supervisor_status = "unknown"
+        
+        try:
+            supervisor = await get_agent("supervisor")
+            if hasattr(supervisor, "get_status"):
+                supervisor_info = await supervisor.get_status()
+                supervisor_running = supervisor_info.get("supervisor_running", False)
+                supervisor_status = supervisor_info.get("entity_status", "unknown")
+        except Exception as e:
+            supervisor_status = f"error: {str(e)}"
+        
+        return {
+            "supervisor": {
+                "running": supervisor_running,
+                "status": supervisor_status,
+                "entity": "supervisor"
+            },
+            "queues": {
+                "highlevel_pending": queue_length(HIGHLEVEL_IN),
+                "tasks_waiting": queue_length(DEVTASKS_WAITING),
+                "tasks_processing": queue_length(DEVTASKS_PROCESSING),
+                "tasks_done": queue_length(DEVTASKS_DONE),
+                "tasks_done_local": queue_length(DEVTASKS_DONE_LOCAL),
+                "tasks_failed": queue_length(DEVTASKS_FAILED)
+            },
+            "system": {
+                "timestamp": time.time(),
+                "status": "active"
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": f"Failed to get supervisor status: {str(e)}",
+                "timestamp": time.time()
+            }
+        )
+
+
+@app.post("/v1/supervisor/start")
+async def start_supervisor():
+    """
+    Start the supervisor autonomous loop.
+    
+    Returns:
+        Status of the start operation
+    """
+    try:
+        supervisor = await get_agent("supervisor")
+        if hasattr(supervisor, "start_autonomous_loop"):
+            result = await supervisor.start_autonomous_loop()
+            return result
+        else:
+            return {
+                "status": "error",
+                "message": "Supervisor does not support autonomous loop"
+            }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": f"Failed to start supervisor: {str(e)}",
+                "timestamp": time.time()
+            }
+        )
+
+
+@app.get("/v1/task/{task_id}/diff", response_model=TaskDiff)
+async def get_task_diff(task_id: str):
+    """
+    Get diff for a completed task.
+    
+    Args:
+        task_id: Task ID to get diff for
+        
+    Returns:
+        Task diff information including branch and code changes
+    """
+    try:
+        from core.task_queue.queue import get_redis_client
+        r = get_redis_client()
+        
+        # Get diff data from Redis
+        diff_data = r.hget("task:diffs", task_id)
+        
+        if not diff_data:
+            return TaskDiff(
+                task_id=task_id,
+                branch="",
+                diff="",
+                timestamp="",
+                available=False
+            )
+        
+        # Parse stored diff data
+        diff_info = json.loads(diff_data.decode())
+        
+        return TaskDiff(
+            task_id=task_id,
+            branch=diff_info.get("branch", ""),
+            diff=diff_info.get("diff", ""),
+            timestamp=diff_info.get("timestamp", ""),
+            available=True
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": f"Failed to get task diff: {str(e)}",
+                "task_id": task_id
+            }
+        )
+
+
+@app.post("/v1/task/{task_id}/publish", response_model=PublishResponse)
+async def publish_task(task_id: str):
+    """
+    Publish a completed task.
+    
+    Args:
+        task_id: Task ID to publish
+        
+    Returns:
+        Publish response with status, message, task_id, branch, and git_output
+    """
+    try:
+        # Get supervisor instance
+        supervisor = await get_agent("supervisor")
+        
+        if not hasattr(supervisor, "publish_task"):
+            return PublishResponse(
+                status="error",
+                message="Supervisor does not support task publishing",
+                task_id=task_id,
+                branch=None,
+                git_output=None
+            )
+        
+        # Call supervisor publish method
+        result = await supervisor.publish_task(task_id)
+        
+        return PublishResponse(
+            status=result.get("status", "unknown"),
+            message=result.get("message", ""),
+            task_id=task_id,
+            branch=result.get("branch"),
+            git_output=result.get("git_output")
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": f"Failed to publish task: {str(e)}",
+                "task_id": task_id
             }
         )
 

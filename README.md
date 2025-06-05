@@ -29,7 +29,7 @@ Aletheia is our first autonomous AI entity - a thoughtful research assistant wit
 - **Clean responses**: Professional output without technical contamination
 
 
-## Enhanced Architecture with Ultra-Fast LLM Routing
+## Enhanced Architecture with Ultra-Fast LLM Routing & MCP Integration
 
 ```
     User Query
@@ -53,11 +53,84 @@ Aletheia is our first autonomous AI entity - a thoughtful research assistant wit
             └──────────────┘ └──────────────┘ └──────────────┘
                                   │
                                   ▼
+                         ┌──────────────────┐
+                         │ MCP Integration  │
+                         │  (External Tool  │
+                         │    Protocol)     │
+                         └─────────┬────────┘
+                    ┌──────────────┼──────────────┐
+                    ▼              ▼              ▼
+            ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+            │ Filesystem  │ │ Git Server  │ │ Terminal    │
+            │   Server    │ │ (8 tools)   │ │  Server     │
+            │ (3 tools)   │ │             │ │ (7 tools)   │
+            └─────────────┘ └─────────────┘ └─────────────┘
+                                  │
+                                  ▼
+                         ┌──────────────────┐
+                         │   Web Server     │
+                         │   (6 tools)      │
+                         │ • Search • HTTP  │
+                         │ • Scraping       │
+                         └──────────────────┘
+                                  │
+                                  ▼
                             Clean Response
                          (No Contamination)
 ```
 
 ## 🚀 Latest Achievements ✨
+
+### 🔌 **Model Context Protocol (MCP) Integration (v0.7.0) - COMPLETED** ✅
+
+Successfully integrated standardized external tool access via Model Context Protocol, transforming Prometheus into a comprehensive AI framework with universal external capabilities:
+
+**MCP Architecture Implementation:**
+- ✅ **DirectMCPClient**: Custom implementation bypassing official SDK limitations
+- ✅ **Universal External Tools**: Standardized access to filesystem, git, terminal, and web operations
+- ✅ **BaseEntity Integration**: All agents inherit MCP capabilities automatically
+- ✅ **Protocol Compliance**: Full MCP 2024-11-05 specification support with proper initialization sequence
+
+**Implemented MCP Servers:**
+```bash
+# 4 Fully Functional MCP Servers
+✅ Filesystem Server (3 capabilities): read_file, write_file, list_directory
+✅ Git Server (8 capabilities): status, diff, add, commit, branch, push, pull, log
+✅ Terminal Server (7 capabilities): execute, run_script, env management, processes
+✅ Web Server (6 capabilities): search, HTTP requests, scraping, URL validation
+```
+
+**Technical Achievement:**
+- ✅ **24 Total Capabilities**: Comprehensive external tool ecosystem
+- ✅ **Custom Protocol Implementation**: Solved official SDK stdio_client bugs
+- ✅ **Direct Subprocess Communication**: Reliable JSON-RPC messaging with proper MCP sequence
+- ✅ **Production Ready**: Error handling, timeouts, graceful cleanup, concurrent server management
+
+**Agent Enhancement:**
+```python
+# Every Prometheus agent now has standardized external access
+agent = AletheiaEntity()
+
+# File operations
+content = await agent.read_file("README.md")
+await agent.write_file("report.md", content)
+
+# Git operations  
+status = await agent.git_status()
+await agent.git_commit("Updated documentation")
+
+# Terminal operations
+result = await agent.execute_command("poetry install")
+
+# Web operations
+search_results = await agent.web_search("AI research 2024")
+```
+
+**Universal Benefits:**
+- ✅ **Standardized Interface**: All external tools use consistent MCP protocol
+- ✅ **Agent Independence**: Any Prometheus agent inherits full external capabilities
+- ✅ **Extensible Architecture**: Easy addition of new MCP servers (databases, APIs, etc.)
+- ✅ **Production Reliability**: Robust error handling and subprocess management
 
 ### 🚀 **Universal Multi-Entity System (v0.6.0) - COMPLETED** ✅
 
@@ -331,6 +404,14 @@ prometheus/
 │   │   ├── utility_llm.py     # Fast utility model
 │   │   ├── router.py          # Intelligent routing
 │   │   └── external_llm.py    # External API clients
+│   ├── mcp/                   # Model Context Protocol integration
+│   │   ├── client/            # MCP client implementation
+│   │   │   └── direct_mcp_client.py  # Custom MCP client (bypasses SDK bugs)
+│   │   └── servers/           # MCP server implementations
+│   │       ├── filesystem_server.py  # File I/O operations (3 tools)
+│   │       ├── git_server.py         # Git operations (8 tools)
+│   │       ├── terminal_server.py    # Command execution (7 tools)
+│   │       └── web_server.py         # Web access (6 tools)
 │   ├── memory/                # Memory systems
 │   ├── context/               # Context management
 │   └── processing/            # Text processing modules
