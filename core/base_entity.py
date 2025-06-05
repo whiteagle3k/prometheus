@@ -3,6 +3,7 @@ Base Entity Class
 
 Provides the core framework functionality that all entities inherit.
 Defines clear contracts for identity, planning, and reflection overrides.
+Enhanced with MCP (Model Context Protocol) capabilities for external integrations.
 """
 
 import asyncio
@@ -11,7 +12,7 @@ import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, List, Dict, Optional
 
 from .config import config
 from .context.context_manager import ConversationContext
@@ -21,6 +22,9 @@ from .memory.controller import MemoryController
 from .memory.summariser import MemorySummariser
 from .memory.user_profile_store import UserProfileStore
 from .memory.vector_store import VectorStore
+
+# MCP Integration
+from .mcp.client.direct_mcp_client import DirectMCPClient
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +64,12 @@ class BaseEntity(ABC):
     - IDENTITY_PATH: Path to identity configuration
     - PlannerClass: Custom planning behavior
     - ReflectionClass: Custom reflection behavior
+    
+    Enhanced with MCP capabilities for external integrations:
+    - Filesystem operations
+    - Git repository management
+    - Terminal command execution
+    - Web access and search
     """
 
     # Entity contracts - must be defined by subclasses
@@ -98,6 +108,11 @@ class BaseEntity(ABC):
         # Initialize entity-specific components
         self.planner = self._create_planner()
         self.reflection_engine = self._create_reflection_engine()
+        
+        # Initialize MCP client for external capabilities
+        self.mcp_client = None
+        self.mcp_capabilities = {}
+        self._mcp_initialized = False
 
         print(f"✅ {self.__class__.__name__} entity initialized")
 
@@ -126,6 +141,7 @@ class BaseEntity(ABC):
     async def think(self, user_text: str, user_id: str | None = None) -> str:
         """
         Main thinking interface - processes user input and returns response.
+        Enhanced with MCP capabilities for external tool access.
 
         Args:
             user_text: User input text
@@ -140,10 +156,18 @@ class BaseEntity(ABC):
 
         start_time = datetime.now()
 
+        # Ensure MCP is ready
+        await self._ensure_mcp()
+
         # Update conversation context with user_id
         self.context.update_from_input(user_text, user_id=user_id)
 
         try:
+            # Check for MCP capability requests first
+            mcp_result = await self._handle_mcp_request(user_text)
+            if mcp_result:
+                return mcp_result
+
             # Process through the entity's thinking pipeline
             result = await self._process_input(user_text, user_id=user_id)
 
@@ -195,6 +219,229 @@ class BaseEntity(ABC):
             print(f"❌ Error processing input: {e}")
             return error_response
 
+    async def _handle_mcp_request(self, user_text: str) -> str | None:
+        """Check if the request involves MCP capabilities and handle directly."""
+        if not self.mcp_client:
+            return None
+
+        # Simple keyword detection for MCP capabilities
+        mcp_keywords = {
+            "file": ["read", "write", "create", "delete", "list", "directory"],
+            "git": ["commit", "push", "pull", "branch", "status", "diff"],
+            "terminal": ["run", "execute", "command", "script"],
+            "web": ["search", "url", "website", "http", "download"]
+        }
+
+        user_lower = user_text.lower()
+        
+        # Check for direct capability requests
+        for category, keywords in mcp_keywords.items():
+            if any(keyword in user_lower for keyword in keywords):
+                # Enhanced capability detection with simple parsing
+                if "read file" in user_lower or "show file" in user_lower:
+                    # Try to extract file path
+                    import re
+                    path_match = re.search(r'(?:file|path)\s+["\']?([^"\']+)["\']?', user_text)
+                    if path_match:
+                        path = path_match.group(1)
+                        result = await self.mcp_client.read_file(path)
+                        if result["success"]:
+                            return f"📄 File content:\n\n{result['result'][0].text}"
+                        else:
+                            return f"❌ Error reading file: {result['error']}"
+                
+                elif "git status" in user_lower:
+                    result = await self.mcp_client.git_status()
+                    if result["success"]:
+                        return f"📋 Git status:\n\n{result['result'][0].text}"
+                    else:
+                        return f"❌ Git error: {result['error']}"
+                
+                elif "search" in user_lower and ("web" in user_lower or "internet" in user_lower):
+                    # Extract search query
+                    import re
+                    query_match = re.search(r'search\s+(?:for\s+)?["\']?([^"\']+)["\']?', user_text, re.IGNORECASE)
+                    if query_match:
+                        query = query_match.group(1)
+                        result = await self.mcp_client.web_search(query)
+                        if result["success"]:
+                            return f"🔍 Search results:\n\n{result['result'][0].text}"
+                        else:
+                            return f"❌ Search error: {result['error']}"
+
+        return None
+
+    # MCP Integration Methods
+
+    async def get_mcp_capabilities(self) -> List[Dict[str, str]]:
+        """Get available MCP capabilities."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            return []
+        return await self.mcp_client.get_available_capabilities()
+
+    async def execute_mcp_capability(self, capability_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute an MCP capability."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        return await self.mcp_client.execute_capability(capability_name, arguments)
+
+    # Convenience methods for common MCP operations
+
+    async def read_file(self, path: str) -> str:
+        """Read file contents through MCP filesystem server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.read_file(path)
+        return result.get("result", [{}])[0].get("text", "")
+
+    async def write_file(self, path: str, content: str) -> str:
+        """Write file through MCP filesystem server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.write_file(path, content)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+
+    async def list_directory(self, path: str) -> str:
+        """List directory through MCP filesystem server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.list_directory(path)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+
+    # Git operations
+    
+    async def git_status(self, cwd: str = ".") -> str:
+        """Get git status through MCP git server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.git_status(cwd)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+    
+    async def git_diff(self, cwd: str = ".", cached: bool = False, file: str = None) -> str:
+        """Get git diff through MCP git server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.git_diff(cwd, cached, file)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+    
+    async def git_add(self, files: List[str], cwd: str = ".") -> str:
+        """Add files to git through MCP git server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.git_add(files, cwd)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+    
+    async def git_commit(self, message: str, cwd: str = ".", amend: bool = False) -> str:
+        """Create git commit through MCP git server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.git_commit(message, cwd, amend)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+    
+    async def git_log(self, limit: int = 10, oneline: bool = True, cwd: str = ".") -> str:
+        """Get git log through MCP git server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.git_log(limit, oneline, cwd)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+
+    async def execute_command(self, command: str, cwd: str = ".", timeout: int = 30) -> str:
+        """Execute command through MCP terminal server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.execute_command(command, cwd, timeout)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+
+    async def run_script(self, script_path: str, args: List[str] = None, cwd: str = ".", timeout: int = 60) -> str:
+        """Run script through MCP terminal server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.run_script(script_path, args, cwd, timeout)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+
+    async def get_env(self, name: str, default: str = None) -> str:
+        """Get environment variable through MCP terminal server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.get_env(name, default)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+
+    async def web_search(self, query: str, max_results: int = 5) -> str:
+        """Search the web through MCP web server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.web_search(query, max_results)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+
+    async def http_get(self, url: str, headers: Dict[str, str] = None, timeout: int = 10) -> str:
+        """Make HTTP GET request through MCP web server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.http_get(url, headers, timeout)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+
+    async def scrape_text(self, url: str, selector: str = None, timeout: int = 10) -> str:
+        """Scrape text from web page through MCP web server."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        result = await self.mcp_client.scrape_text(url, selector, timeout)
+        if result["success"]:
+            return result["result"][0]["text"]
+        else:
+            return f"Error: {result['error']}"
+
     def _display_debug_summary(self, user_input: str, result: dict[str, Any], total_time: float) -> None:
         """Display comprehensive debug information about the thinking process."""
         execution_details = result.get("execution_details", {})
@@ -214,6 +461,8 @@ class BaseEntity(ABC):
                 print(f"📡 External: {provider} ({model})")
         elif route_used == "user_profile":
             print("📊 Route: User Profile Store | Instant Response")
+        elif route_used == "mcp":
+            print("🔌 Route: MCP External Tool | Direct Execution")
         else:
             print(f"🔀 Route: {route_used} | Approach: {approach}")
 
@@ -229,6 +478,8 @@ class BaseEntity(ABC):
             context_info.append("Profile: ✓")
         if execution_details.get("memories_used"):
             context_info.append(f"Memories: {execution_details['memories_used']}")
+        if execution_details.get("mcp_capabilities_used"):
+            context_info.append(f"MCP: {execution_details['mcp_capabilities_used']}")
 
         context_str = " | ".join(context_info) if context_info else "No additional context"
 
@@ -704,3 +955,84 @@ class BaseEntity(ABC):
 
         time.sleep(0.5)  # Ensure database operations complete
         print("✅ Memory reset complete")
+
+    async def _ensure_mcp(self):
+        """Ensure MCP client is initialized."""
+        if not self._mcp_initialized:
+            try:
+                from core.mcp.client.direct_mcp_client import DirectMCPClient
+                self.mcp_client = DirectMCPClient()
+                await self.mcp_client.initialize()
+                
+                # Get available capabilities
+                capabilities = await self.mcp_client.get_available_capabilities()
+                self.mcp_capabilities = {cap['name']: cap for cap in capabilities}
+                
+                logger.info(f"🔌 MCP initialized with {len(capabilities)} capabilities")
+                for cap in capabilities:
+                    logger.info(f"  • {cap['name']}: {cap['description']}")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ MCP initialization failed: {e}")
+                self.mcp_client = None
+                self.mcp_capabilities = {}
+            
+            self._mcp_initialized = True
+
+    # MCP methods with full responses for detailed control
+    
+    async def mcp_read_file(self, path: str) -> Dict[str, Any]:
+        """Read file through MCP with full response."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        return await self.mcp_client.read_file(path)
+
+    async def mcp_write_file(self, path: str, content: str) -> Dict[str, Any]:
+        """Write file through MCP with full response."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        return await self.mcp_client.write_file(path, content)
+
+    async def mcp_list_directory(self, path: str) -> Dict[str, Any]:
+        """List directory through MCP with full response."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        return await self.mcp_client.list_directory(path)
+
+    async def mcp_git_status(self, cwd: str = ".") -> Dict[str, Any]:
+        """Get git status through MCP with full response."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        return await self.mcp_client.git_status(cwd)
+
+    async def mcp_git_diff(self, cwd: str = ".", cached: bool = False, file: str = None) -> Dict[str, Any]:
+        """Get git diff through MCP with full response."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        return await self.mcp_client.git_diff(cwd, cached, file)
+
+    async def mcp_execute_command(self, command: str, cwd: str = ".", timeout: int = 30) -> Dict[str, Any]:
+        """Execute command through MCP with full response."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        return await self.mcp_client.execute_command(command, cwd, timeout)
+
+    async def mcp_web_search(self, query: str, max_results: int = 5) -> Dict[str, Any]:
+        """Perform web search through MCP with full response."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        return await self.mcp_client.web_search(query, max_results)
+
+    async def mcp_http_get(self, url: str, headers: Dict[str, str] = None, timeout: int = 10) -> Dict[str, Any]:
+        """Make HTTP GET request through MCP with full response."""
+        await self._ensure_mcp()
+        if not self.mcp_client:
+            raise RuntimeError("MCP client not available")
+        return await self.mcp_client.http_get(url, headers, timeout)
