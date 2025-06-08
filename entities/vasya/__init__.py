@@ -63,21 +63,34 @@ class VasyaEntity(BaseEntity):
                         }
                     }
                 },
-                "personality": {
+                "identity": {
                     "summary": "Enthusiastic mid-level developer",
-                    "experience": "10 years",
-                    "role": "programmer"
-                }
+                    "personality": [
+                        "Enthusiastic programmer",
+                        "10 years experience", 
+                        "Proactive but respectful"
+                    ]
+                },
+                "core_values": [
+                    "Clean code",
+                    "Continuous learning",
+                    "Team collaboration"
+                ]
             }
 
 
 def register() -> dict[str, Any]:
-    """Register Vasya entity with the framework."""
+    """Register Developer entity with the framework."""
     return {
-        "name": "vasya",
-        "class": VasyaEntity,
+        "id": "developer",                     # 🔧 Technical ID for registry/API  
+        "name": {                             # 🏷️ Multilingual human-readable names
+            "en": "Vasya", 
+            "ru": "Вася"
+        },
+        "class": VasyaEntity,                 # 🏗️ Implementation class
         "description": "Mid-level developer with 10 years experience - proactive, obedient, eager to work",
         "version": "1.0.0",
+        "role": "developer",                  # 🎭 Functional role
         "capabilities": [
             "coding",
             "implementation",
@@ -89,7 +102,13 @@ def register() -> dict[str, Any]:
             "system_integration",
             "collaborative_development"
         ],
-        "role": "developer",
         "team_position": "implementer",
-        "reports_to": "petrovich"
+        "reports_to": "supervisor",           # 🔧 Using technical ID
+        "experience_years": 10,
+        "personality": "enthusiastic_proactive_implementer",
+        "display_info": {
+            "icon": "👨‍💻",
+            "color": "#10B981",
+            "short_name": "Вася"
+        }
     } 

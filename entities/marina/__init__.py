@@ -63,21 +63,34 @@ class MarinaEntity(BaseEntity):
                         }
                     }
                 },
-                "personality": {
+                "identity": {
                     "summary": "Detail-oriented QA specialist",
-                    "experience": "6 years",
-                    "role": "quality_assurance"
-                }
+                    "personality": [
+                        "Detail-oriented and thorough",
+                        "6 years QA experience",
+                        "Friendly and collaborative"
+                    ]
+                },
+                "core_values": [
+                    "Quality first",
+                    "User experience",
+                    "Thorough testing"
+                ]
             }
 
 
 def register() -> dict[str, Any]:
-    """Register Marina entity with the framework."""
+    """Register QA entity with the framework."""
     return {
-        "name": "marina",
-        "class": MarinaEntity,
+        "id": "qa",                           # 🔧 Technical ID for registry/API
+        "name": {                             # 🏷️ Multilingual human-readable names
+            "en": "Marina",
+            "ru": "Марина"
+        },
+        "class": MarinaEntity,                # 🏗️ Implementation class
         "description": "Quality Assurance specialist - detail-oriented, thorough, friendly team player",
         "version": "1.0.0",
+        "role": "qa_engineer",                # 🎭 Functional role
         "capabilities": [
             "quality_assurance",
             "testing",
@@ -89,8 +102,14 @@ def register() -> dict[str, Any]:
             "integration_testing",
             "collaborative_qa"
         ],
-        "role": "qa_engineer",
         "team_position": "quality_guardian",
-        "reports_to": "petrovich",
-        "collaborates_with": "vasya"
+        "reports_to": "supervisor",           # 🔧 Using technical ID
+        "collaborates_with": "developer",    # 🔧 Using technical ID
+        "experience_years": 6,
+        "personality": "detail_oriented_collaborative_tester",
+        "display_info": {
+            "icon": "👩‍🔬",
+            "color": "#8B5CF6",
+            "short_name": "Марина"
+        }
     } 

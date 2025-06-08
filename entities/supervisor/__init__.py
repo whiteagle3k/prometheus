@@ -34,12 +34,12 @@ class SupervisorEntity(BaseEntity):
         
         # Fallback identity configuration
         fallback_identity = {
-            "name": "Supervisor",
+            "name": "Петрович",
             "version": "0.1.0",
             "description": "Development task supervisor and coordinator agent",
-            "personality": {
+            "identity": {
                 "summary": "Analytical development manager focused on task decomposition and workflow coordination",
-                "traits": ["systematic", "clear", "efficient", "quality-focused", "organized"]
+                "personality": ["systematic", "clear", "efficient", "quality-focused", "organized"]
             },
             "core_values": ["clarity", "atomicity", "efficiency", "quality", "progress"],
             "llm_instructions": "You are a development supervisor agent focused on breaking down complex tasks into atomic, implementable units with clear acceptance criteria.",
@@ -343,12 +343,17 @@ Make tasks atomic and independently testable. Ensure proper ordering and depende
 
 
 def register() -> Dict[str, Any]:
-    """Register Petrovich (Supervisor) entity with the framework."""
+    """Register Supervisor entity with the framework."""
     return {
-        "name": "petrovich",
-        "class": SupervisorEntity,
+        "id": "supervisor",                    # 🔧 Technical ID for registry/API
+        "name": {                             # 🏷️ Multilingual human-readable names
+            "en": "Petrovich",
+            "ru": "Петрович"
+        },
+        "class": SupervisorEntity,            # 🏗️ Implementation class
         "description": "Senior development supervisor with 30 years experience - analytical, methodical, validation-focused",
         "version": "2.0.0",
+        "role": "supervisor",                 # 🎭 Functional role
         "capabilities": [
             "task_decomposition",
             "strategic_planning",
@@ -360,9 +365,13 @@ def register() -> Dict[str, Any]:
             "experience_based_guidance",
             "senior_supervision"
         ],
-        "role": "senior_supervisor",
         "team_position": "team_lead",
         "experience_years": 30,
         "personality": "phlegmatic_wise_validator",
-        "direct_reports": ["vasya", "marina"]
+        "direct_reports": ["developer", "qa"],   # 🔧 Using technical IDs
+        "display_info": {
+            "icon": "👨‍💼",
+            "color": "#2563EB",
+            "short_name": "Петрович"
+        }
     } 

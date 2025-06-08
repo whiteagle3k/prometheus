@@ -442,10 +442,15 @@ class AletheiaEntity(BaseEntity):
 def register() -> dict[str, Any]:
     """Register Aletheia entity with the framework."""
     return {
-        "name": "aletheia",
-        "class": AletheiaEntity,
+        "id": "aletheia",                     # 🔧 Technical ID for registry/API
+        "name": {                             # 🏷️ Multilingual human-readable names
+            "en": "Aletheia",
+            "ru": "Алетейя"
+        },
+        "class": AletheiaEntity,             # 🏗️ Implementation class
         "description": "Truth-seeking AI entity with Self-RAG capabilities for enhanced memory, reflection, and context optimization",
         "version": "2.0.0",
+        "role": "truth_seeker",              # 🎭 Functional role
         "capabilities": [
             "scientific_analysis",
             "fact_checking",
@@ -455,5 +460,12 @@ def register() -> dict[str, Any]:
             "enhanced_reflection",
             "context_optimization",
             "quality_assessment"
-        ]
+        ],
+        "team_position": "analyst",
+        "personality": "scientific_truth_seeker",
+        "display_info": {
+            "icon": "🔍",
+            "color": "#0EA5E9",
+            "short_name": "Алетейя"
+        }
     }

@@ -138,7 +138,7 @@ class BaseEntity(ABC):
         from .reflection.default_reflection import DefaultReflection
         return DefaultReflection(self.router, self.vector_store)
 
-    async def think(self, user_text: str, user_id: str | None = None) -> str:
+    async def think(self, user_text: str, user_id: str | None = None) -> dict[str, Any]:
         """
         Main thinking interface - processes user input and returns response.
         Enhanced with MCP capabilities for external tool access.
@@ -212,12 +212,29 @@ class BaseEntity(ABC):
             }
             self.task_history.append(task_record)
 
-            return response
+            return {
+                "result": response,
+                "execution_details": execution_details,
+                "type": result.get("type", "unknown"),
+                "approach": result.get("approach", "unknown")
+            }
 
         except Exception as e:
             error_response = f"I'm experiencing technical difficulties: {e}"
             print(f"❌ Error processing input: {e}")
-            return error_response
+            # Также возвращаем структуру для ошибок
+            return {
+                "result": error_response,
+                "execution_details": {
+                    "route_used": "error",
+                    "execution_time": 0,
+                    "estimated_cost": 0,
+                    "approach": "error_fallback",
+                    "error": str(e)
+                },
+                "type": "error",
+                "approach": "error_fallback"
+            }
 
     async def _handle_mcp_request(self, user_text: str) -> str | None:
         """Check if the request involves MCP capabilities and handle directly."""
@@ -447,12 +464,16 @@ class BaseEntity(ABC):
         execution_details = result.get("execution_details", {})
         route_used = execution_details.get("route_used", "unknown")
         approach = execution_details.get("approach", "unknown")
+        fast_track = execution_details.get("fast_track", False)
 
         # Route-specific debug info
         if route_used == "local":
             print(f"🎯 Route: Local LLM | Approach: {approach}")
         elif route_used == "external":
-            print(f"🌐 Route: External LLM | Approach: {approach}")
+            if fast_track:
+                print(f"🚀 Route: External LLM (Fast-track) | Approach: {approach}")
+            else:
+                print(f"🌐 Route: External LLM | Approach: {approach}")
             # Show consultation metadata if available
             consultation_metadata = execution_details.get("consultation_metadata")
             if consultation_metadata:
@@ -476,10 +497,16 @@ class BaseEntity(ABC):
             context_info.append(f"Episodes: {execution_details['episodes_used']}")
         if execution_details.get("user_profile_used"):
             context_info.append("Profile: ✓")
-        if execution_details.get("memories_used"):
-            context_info.append(f"Memories: {execution_details['memories_used']}")
+        if execution_details.get("memories_used") is not None:
+            memories_count = execution_details["memories_used"]
+            if fast_track:
+                context_info.append(f"Memories: {memories_count} (fast-track bypass)")
+            else:
+                context_info.append(f"Memories: {memories_count}")
         if execution_details.get("mcp_capabilities_used"):
             context_info.append(f"MCP: {execution_details['mcp_capabilities_used']}")
+        if fast_track:
+            context_info.append("⚡ Fast-track enabled")
 
         context_str = " | ".join(context_info) if context_info else "No additional context"
 
@@ -531,6 +558,12 @@ class BaseEntity(ABC):
     async def _process_input(self, user_input: str, user_id: str | None = None) -> dict[str, Any]:
         """Core input processing logic - can be extended by entities."""
 
+        # Fast-track check for external-only agents
+        should_fast_track = self._should_use_external_fast_track(user_input)
+        if should_fast_track:
+            print("🚀 Fast-track: External-only agent, skipping memory processing...")
+            return await self._handle_external_fast_track(user_input, user_id)
+
         # User data handling
         user_name = self.context.user_name
         if user_name:
@@ -568,6 +601,170 @@ class BaseEntity(ABC):
             return await self._handle_complex_task(user_input, relevant_memories)
         else:
             return await self._handle_simple_task(user_input, relevant_memories)
+
+    def _should_use_external_fast_track(self, user_input: str) -> bool:
+        """
+        Check if this agent should use external fast-track routing.
+        
+        Returns True if:
+        1. Agent has prefer_external: true in config
+        2. Not a user data query 
+        3. Not an MCP request
+        """
+        # Check for MCP requests (should not fast-track)
+        if self._is_mcp_request(user_input):
+            return False
+            
+        # Check for user data queries (should not fast-track)
+        user_name = self.context.user_name
+        if user_name and user_name != "default":
+            # Quick heuristic check for user data queries
+            user_data_keywords = ["my", "me", "mine", "I", "personal", "profile", "data", "information about me"]
+            if any(keyword in user_input.lower() for keyword in user_data_keywords):
+                return False
+
+        # Check if agent prefers external LLM
+        operational_guidelines = self.identity_config.get("operational_guidelines", {})
+        routing_policy = operational_guidelines.get("routing_policy", {})
+        prefer_external = routing_policy.get("prefer_external", False)
+        
+        # Check thresholds substructure (Vasya's config structure)
+        if not prefer_external:
+            thresholds = routing_policy.get("thresholds", {})
+            prefer_external = thresholds.get("prefer_external", False)
+        
+        # Check external_llms.routing_preferences (alternative location)
+        if not prefer_external:
+            external_prefs = self.identity_config.get("external_llms", {}).get("routing_preferences", {})
+            prefer_external = external_prefs.get("prefer_external", False)
+
+        return prefer_external
+
+    def _is_mcp_request(self, user_input: str) -> bool:
+        """Quick check if this is an MCP capability request."""
+        mcp_keywords = [
+            "read file", "write file", "create file", "delete file", "list directory",
+            "git status", "git commit", "git push", "git pull", "git diff",
+            "run command", "execute", "terminal", "bash", "shell",
+            "web search", "search web", "download", "http", "url"
+        ]
+        user_lower = user_input.lower()
+        return any(keyword in user_lower for keyword in mcp_keywords)
+
+    async def _handle_external_fast_track(self, user_input: str, user_id: str | None = None) -> dict[str, Any]:
+        """
+        Fast-track processing for external-only agents.
+        Skips memory processing and goes directly to external LLM.
+        """
+        import time
+        start_time = time.time()
+
+        try:
+            # Build minimal context - just running summary and recent exchanges
+            user_name = self.context.user_name
+            
+            # Get basic context without expensive memory operations
+            context_prompt = self._build_minimal_context(user_input)
+            
+            print("🚀 Fast-track: Direct external LLM call...")
+
+            # Get best available external LLM
+            external_llm = await self.router.external_manager.get_best_available()
+            if not external_llm:
+                raise RuntimeError("No external LLM available")
+
+            # Simple system prompt from identity
+            system_prompt = self.identity_config.get("llm_instructions", "You are a helpful AI assistant.")
+            
+            # Enhanced prompt with minimal context
+            if context_prompt:
+                full_prompt = f"{context_prompt}\n\nUser: {user_input}\nAssistant:"
+            else:
+                full_prompt = user_input
+
+            # Direct external LLM call (simplified, no consultation overhead)
+            response_text = await external_llm.generate(
+                prompt=full_prompt,
+                system_prompt=system_prompt,
+                max_tokens=1024,
+                temperature=0.2
+            )
+
+            # Get provider info for metadata
+            model_info = external_llm.get_model_info()
+            provider_info = {
+                "provider": external_llm.provider_type.value,
+                "model": model_info.get("model", "unknown_model"),
+            }
+
+            # Add to episodes storage
+            self.context.add_episode(user_input, response_text, {"route": "external_fast_track"})
+
+            # Update running summary
+            await self.context.update_summary_from_exchange(user_input, response_text)
+
+            execution_time = time.time() - start_time
+
+            return {
+                "type": "fast_track",
+                "response": response_text,
+                "execution_details": {
+                    "route_used": "external",
+                    "execution_time": execution_time,
+                    "estimated_cost": 0,  # Could estimate if needed
+                    "approach": "external_fast_track",
+                    "consultation_metadata": provider_info,
+                    "episodes_used": 0,
+                    "user_profile_used": False,
+                    "memories_used": 0,
+                    "fast_track": True
+                },
+                "approach": "external_fast_track",
+            }
+
+        except Exception as e:
+            print(f"❌ Fast-track failed: {e}")
+            execution_time = time.time() - start_time
+            return {
+                "type": "fast_track_error",
+                "response": f"I'm having technical difficulties: {e}",
+                "execution_details": {
+                    "route_used": "error",
+                    "execution_time": execution_time,
+                    "estimated_cost": 0,
+                    "approach": "error_fallback",
+                    "error": str(e),
+                    "fast_track": True
+                },
+                "approach": "error_fallback",
+            }
+
+    def _build_minimal_context(self, user_input: str) -> str:
+        """Build minimal context for fast-track external calls."""
+        context_parts = []
+
+        # User identification
+        if self.context.user_name and self.context.user_name != "default":
+            context_parts.append(f"User: {self.context.user_name}")
+
+        # Running summary (already computed, no expensive operations)
+        summary = self.context.get_or_create_summary()
+        if not summary.is_empty():
+            current_summary = summary.get_summary()
+            if current_summary and len(current_summary.strip()) > 10:
+                context_parts.append(f"Context: {current_summary[:200]}...")
+
+        # Last few exchanges only (avoid expensive episode search)
+        recent_exchanges = min(3, len(self.task_history))
+        if recent_exchanges > 0:
+            context_parts.append("\nRecent conversation:")
+            for task_record in self.task_history[-recent_exchanges:]:
+                user_input_prev = task_record["user_input"][:100]
+                response_prev = task_record["result"].get("response", "")[:100]
+                context_parts.append(f"User: {user_input_prev}...")
+                context_parts.append(f"Assistant: {response_prev}...")
+
+        return "\n".join(context_parts) if context_parts else ""
 
     async def _retrieve_relevant_memories(self, user_input: str) -> list[dict[str, Any]]:
         """Retrieve relevant memories for context."""

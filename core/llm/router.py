@@ -172,12 +172,43 @@ class LLMRouter:
     async def _apply_routing_heuristics(self, task: TaskContext) -> RouteDecision:
         """Apply routing heuristics to make decision using fast LLM routing oracle."""
 
+        # Rule 0: Check if external LLM is preferred in identity config
+        # Try multiple possible config locations for routing preferences
+        
+        # Location 1: operational_guidelines.routing_policy (current agent configs)
+        operational_guidelines = self.identity_config.get("operational_guidelines", {})
+        routing_policy = operational_guidelines.get("routing_policy", {})
+        prefer_external = routing_policy.get("prefer_external", False)
+        use_for_coding = routing_policy.get("use_for_coding", False) or routing_policy.get("use_for_analysis", False)
+        
+        # Location 1b: also check thresholds substructure (Vasya's config structure)
+        if not prefer_external:
+            thresholds = routing_policy.get("thresholds", {})
+            prefer_external = thresholds.get("prefer_external", False)
+            use_for_coding = thresholds.get("use_for_coding", False) or thresholds.get("use_for_implementation", False)
+        
+        # Location 2: external_llms.routing_preferences (alternative location) 
+        if not prefer_external:
+            external_prefs = self.identity_config.get("external_llms", {}).get("routing_preferences", {})
+            prefer_external = external_prefs.get("prefer_external", False)
+            use_for_coding = external_prefs.get("use_for_coding", False)
+        
+        # If external is preferred and available, use it
+        if prefer_external:
+            print(f"🎯 External LLM preferred in config (prefer_external: {prefer_external})")
+            return RouteDecision.EXTERNAL
+            
+        # Check for coding tasks if configured
+        if use_for_coding and self._is_coding_task(task.prompt):
+            print("🎯 Coding task detected, using external LLM as configured")
+            return RouteDecision.EXTERNAL
+
         # Rule 1: Basic sanity checks first
         estimated_tokens = await self.local_llm.count_tokens(task.prompt)
         total_estimated_tokens = estimated_tokens + task.max_tokens
 
-        # Rule 1a: Token threshold check - use identity configuration
-        routing_threshold = self.identity_config["routing_threshold"]
+        # Rule 1a: Token threshold check - use from identity config or default
+        routing_threshold = self.identity_config.get("routing_threshold", 1000)
         if estimated_tokens > routing_threshold:
             print(f"🎯 Token threshold exceeded ({estimated_tokens} > {routing_threshold})")
             return RouteDecision.EXTERNAL
@@ -262,6 +293,16 @@ class LLMRouter:
             # Default: use local for efficiency
             print("🔧 Fallback: Defaulting to local")
             return RouteDecision.LOCAL
+
+    def _is_coding_task(self, prompt: str) -> bool:
+        """Check if the task involves coding or implementation."""
+        coding_keywords = [
+            "создай файл", "create file", "функция", "function", "код", "code",
+            "программа", "program", "скрипт", "script", "реализуй", "implement",
+            "напиши", "write", "debug", "отладка", "тест", "test"
+        ]
+        prompt_lower = prompt.lower()
+        return any(keyword in prompt_lower for keyword in coding_keywords)
 
     async def execute_task(self, task: TaskContext) -> dict[str, Any]:
         """Execute a task using the appropriate LLM."""
@@ -440,10 +481,24 @@ class LLMRouter:
         """Prepare a consultation request for external LLM."""
 
         # Build entity's self-description for the consultation using identity config
-        entity_intro = f"I am {self.identity_config['name']}, {self.identity_config['personality']['summary']}."
-
-        # Get key personality traits
-        personality_traits = ", ".join(self.identity_config["personality"]["personality"][:3]) if self.identity_config["personality"]["personality"] else "technically precise, analytical"
+        try:
+            name = self.identity_config.get('name', 'AI Assistant')
+            identity = self.identity_config.get('identity', {})
+            summary = identity.get('summary', 'helpful AI assistant')
+            personality_traits = identity.get('personality', [])
+            
+            entity_intro = f"I am {name}, {summary}."
+            
+            # Get key personality traits with fallback
+            if personality_traits:
+                traits_text = ", ".join(personality_traits[:3])
+            else:
+                traits_text = "technically precise, analytical"
+                
+        except Exception as e:
+            print(f"⚠️ Error accessing personality config: {e}")
+            entity_intro = f"I am {self.identity_config.get('name', 'AI Assistant')}, a helpful AI assistant."
+            traits_text = "technically precise, analytical"
 
         # Detect language for response format
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in task.prompt.lower())
@@ -459,7 +514,7 @@ class LLMRouter:
         # Build the consultation prompt with comprehensive context
         consultation_prompt = f"""{entity_intro}
 
-My key traits: {personality_traits}
+My key traits: {traits_text}
 
 """
 
@@ -630,8 +685,23 @@ Your role is to be a knowledgeable consultant, not to impersonate the requesting
             ))
 
         # Create a personality filter prompt using English core identity for better model understanding
-        core_traits = ", ".join(self.identity_config["personality"]["personality"][:3])
-        core_values = ", ".join(self.identity_config["core_values"][:2])
+        try:
+            name = self.identity_config.get('name', 'AI Assistant')
+            identity = self.identity_config.get('identity', {})
+            summary = identity.get('summary', 'helpful AI assistant')
+            personality_traits = identity.get('personality', [])
+            
+            core_traits = ", ".join(personality_traits[:3]) if personality_traits else "helpful, analytical, precise"
+            
+            core_values = self.identity_config.get('core_values', [])
+            core_values_text = ", ".join(core_values[:2]) if core_values else "accuracy, helpfulness"
+            
+        except Exception as e:
+            print(f"⚠️ Error accessing config in filter: {e}")
+            core_traits = "helpful, analytical, precise"
+            core_values_text = "accuracy, helpfulness"
+            name = "AI Assistant"
+            summary = "helpful AI assistant"
 
         # Add conversation flow instruction
         flow_instruction = ""
@@ -645,13 +715,13 @@ Your role is to be a knowledgeable consultant, not to impersonate the requesting
 
 External system response: {external_response}
 
-Reframe this response as {self.identity_config['name']} - {self.identity_config['personality']['summary']}. Important personality traits: {core_traits}. Core principles: {core_values}.
+Reframe this response as {name} - {summary}. Important personality traits: {core_traits}. Core principles: {core_values_text}.
 
 Requirements:
 1. Maintain my personality and traits listed above
 2. Keep all useful information from the response
 3. Make the response natural according to my character
-4. Don't mention ChatGPT or other systems - you are {self.identity_config['name']}
+4. Don't mention ChatGPT or other systems - you are {name}
 5. Respond in Russian with natural grammar and cultural context
 6. Follow my core principles
 {flow_instruction}
@@ -662,13 +732,13 @@ Response in Russian:"""
 
 External system response: {external_response}
 
-Reframe this response as {self.identity_config['name']} - {self.identity_config['personality']['summary']}. Important personality traits: {core_traits}. Core principles: {core_values}.
+Reframe this response as {name} - {summary}. Important personality traits: {core_traits}. Core principles: {core_values_text}.
 
 Requirements:
 1. Maintain my personality and traits listed above
 2. Keep all useful information from the response
 3. Make the response natural according to my character
-4. Don't mention ChatGPT or other systems - you are {self.identity_config['name']}
+4. Don't mention ChatGPT or other systems - you are {name}
 5. Respond in English
 6. Follow my core principles
 {flow_instruction}
@@ -690,9 +760,17 @@ Response:"""
             print(f"Error filtering response: {e}")
             # Fallback: return external response with identity disclaimer
             if is_russian:
-                return f"[От {self.identity_config['name']}] {external_response}", {}
+                return f"[От {name}] {external_response}", {}
             else:
-                return f"[From {self.identity_config['name']}] {external_response}", {}
+                return f"[From {name}] {external_response}", {}
+
+        except Exception as e:
+            print(f"Error filtering response: {e}")
+            # Fallback: return external response with identity disclaimer
+            if is_russian:
+                return f"[От {name}] {external_response}", {}
+            else:
+                return f"[From {name}] {external_response}", {}
 
     def get_routing_stats(self) -> dict[str, Any]:
         """Get routing statistics including calibrator metrics."""
