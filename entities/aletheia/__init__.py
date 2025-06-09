@@ -416,7 +416,7 @@ class AletheiaEntity(BaseEntity):
         return report
 
 
-def register() -> dict[str, Any]:
+def register():
     """Register Aletheia entity with the framework."""
     return {
         "id": "aletheia",                     # 🔧 Technical ID for registry/API

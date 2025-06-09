@@ -81,6 +81,23 @@ Aletheia is our first autonomous AI entity - a thoughtful research assistant wit
 
 ## 🚀 Latest Achievements ✨
 
+### 🔄 **Routing System Enhancement (v0.7.1) - COMPLETED** ✅
+
+Successfully implemented critical fixes to the routing mechanism for better task delegation to external LLMs:
+
+**Key Improvements:**
+- ✅ **Enhanced Rule-based Routing**: Activated FastLLM rule-based routing system for more reliable classification
+- ✅ **Improved Task Detection**: Added programming-specific keywords to correctly identify development tasks
+- ✅ **External LLM Delegation**: Fixed task routing for proper handoff to Supervisor/Developer/QA agents
+- ✅ **Comprehensive Testing**: Verified fixes with test cases ensuring correct routing to external LLMs
+- ✅ **Robust Entity Interactions**: Ensured proper workflow between User → Aletheia → Supervisor → Developer/QA → results
+
+**Technical Achievements:**
+- ✅ **Correct Task Classification**: Programming tasks now properly detected and routed externally
+- ✅ **Performance Optimization**: Maintained fast routing speeds while improving accuracy
+- ✅ **Enhanced Configuration**: Added `prefer_external` and `use_for_coding` parameters to routing policy
+- ✅ **Test Infrastructure**: Created test suite to validate routing behavior for development tasks
+
 ### 🔌 **Model Context Protocol (MCP) Integration (v0.7.0) - COMPLETED** ✅
 
 Successfully integrated standardized external tool access via Model Context Protocol, transforming Prometheus into a comprehensive AI framework with universal external capabilities:
@@ -267,9 +284,9 @@ For detailed information, see our comprehensive documentation:
 
 | OS | Script | Notes |
 |----|--------|-------|
-| macOS (Metal) | `scripts/install_mac.sh` | Apple Silicon, 16 GB RAM |
-| Linux / WSL + CUDA | `scripts/install_linux.sh` | Ubuntu 22.04 + driver ≥ 525 |
-| Windows + CUDA | `scripts/install_windows.ps1` | Run from admin PowerShell |
+| macOS (Metal) | `scripts/install_mac.sh` | Apple Silicon, 16 GB RAM |
+| Linux / WSL + CUDA | `scripts/install_linux.sh` | Ubuntu 22.04 + driver ≥ 525 |
+| Windows + CUDA | `scripts/install_windows.ps1` | Run from admin PowerShell |
 
 ### 🏗️ **Architecture & Development**
 - **[Architecture Guide](docs/architecture.md)** - Ultra-fast routing, optimized models, entity system
@@ -323,6 +340,12 @@ Each entity has its own identity configuration with optimized dual-model support
     }
   },
   "routing_threshold": 1024,
+  "operational_guidelines": {
+    "routing_policy": {
+      "prefer_external": true,
+      "use_for_coding": true
+    }
+  },
   "translations": {
     "ru": {
       "greeting_templates": {

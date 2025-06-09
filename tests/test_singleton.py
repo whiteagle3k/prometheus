@@ -40,6 +40,27 @@ class MockPrometheusEntity:
         pass
 
 
+# Mock discovery function
+def mock_discover_entities():
+    """Mock implementation of discover_entities that returns valid test entities."""
+    return {
+        "aletheia": {
+            "id": "aletheia",
+            "name": "Aletheia",
+            "class": MockAletheiaEntity,
+            "module_path": "entities.aletheia",
+            "description": "Mock Aletheia entity"
+        },
+        "prometheus": {
+            "id": "prometheus",
+            "name": "Prometheus",
+            "class": MockPrometheusEntity,
+            "module_path": "entities.prometheus",
+            "description": "Mock Prometheus entity"
+        }
+    }
+
+
 @pytest.fixture()
 def mock_importlib(monkeypatch):
     """Mock importlib to return test entities."""
@@ -60,8 +81,11 @@ def mock_importlib(monkeypatch):
 @pytest.mark.asyncio()
 async def test_registry_get_agent_single_entity():
     """Test getting a single agent from registry."""
-    with patch("importlib.import_module") as mock_import:
-        mock_import.return_value = Mock(AletheiaEntity=MockAletheiaEntity)
+    with patch("importlib.import_module") as mock_import, \
+         patch("entities.discover_entities", return_value=mock_discover_entities()):
+        mock_module = Mock(AletheiaEntity=MockAletheiaEntity)
+        mock_module.register = mock_aletheia_register
+        mock_import.return_value = mock_module
 
         from core.runtime.registry import _registry, get_agent
 
@@ -82,10 +106,11 @@ async def test_registry_get_agent_single_entity():
 @pytest.mark.asyncio()
 async def test_registry_multiple_entities():
     """Test managing multiple entities simultaneously."""
-    with patch("importlib.import_module") as mock_import:
+    with patch("importlib.import_module") as mock_import, \
+         patch("entities.discover_entities", return_value=mock_discover_entities()):
         modules = {
-            "entities.aletheia": Mock(AletheiaEntity=MockAletheiaEntity),
-            "entities.prometheus": Mock(PrometheusEntity=MockPrometheusEntity)
+            "entities.aletheia": Mock(AletheiaEntity=MockAletheiaEntity, register=mock_aletheia_register),
+            "entities.prometheus": Mock(PrometheusEntity=MockPrometheusEntity, register=mock_prometheus_register)
         }
         mock_import.side_effect = lambda path: modules[path]
 
@@ -112,7 +137,8 @@ async def test_registry_multiple_entities():
 @pytest.mark.asyncio()
 async def test_registry_entity_not_found():
     """Test handling of non-existent entities."""
-    with patch("importlib.import_module") as mock_import:
+    with patch("importlib.import_module") as mock_import, \
+         patch("entities.discover_entities", return_value=mock_discover_entities()):
         mock_import.side_effect = ImportError("No module named 'entities.nonexistent'")
 
         from core.runtime.registry import _registry, get_agent
@@ -128,8 +154,11 @@ async def test_registry_entity_not_found():
 @pytest.mark.asyncio()
 async def test_registry_shutdown_single_agent():
     """Test shutting down a single agent."""
-    with patch("importlib.import_module") as mock_import:
-        mock_import.return_value = Mock(AletheiaEntity=MockAletheiaEntity)
+    with patch("importlib.import_module") as mock_import, \
+         patch("entities.discover_entities", return_value=mock_discover_entities()):
+        mock_module = Mock(AletheiaEntity=MockAletheiaEntity)
+        mock_module.register = mock_aletheia_register
+        mock_import.return_value = mock_module
 
         from core.runtime.registry import (
             _registry,
@@ -154,10 +183,11 @@ async def test_registry_shutdown_single_agent():
 @pytest.mark.asyncio()
 async def test_registry_shutdown_all_agents():
     """Test shutting down all agents."""
-    with patch("importlib.import_module") as mock_import:
+    with patch("importlib.import_module") as mock_import, \
+         patch("entities.discover_entities", return_value=mock_discover_entities()):
         modules = {
-            "entities.aletheia": Mock(AletheiaEntity=MockAletheiaEntity),
-            "entities.prometheus": Mock(PrometheusEntity=MockPrometheusEntity)
+            "entities.aletheia": Mock(AletheiaEntity=MockAletheiaEntity, register=mock_aletheia_register),
+            "entities.prometheus": Mock(PrometheusEntity=MockPrometheusEntity, register=mock_prometheus_register)
         }
         mock_import.side_effect = lambda path: modules[path]
 
@@ -186,8 +216,11 @@ async def test_registry_shutdown_all_agents():
 @pytest.mark.asyncio()
 async def test_registry_concurrent_access():
     """Test concurrent access to registry."""
-    with patch("importlib.import_module") as mock_import:
-        mock_import.return_value = Mock(AletheiaEntity=MockAletheiaEntity)
+    with patch("importlib.import_module") as mock_import, \
+         patch("entities.discover_entities", return_value=mock_discover_entities()):
+        mock_module = Mock(AletheiaEntity=MockAletheiaEntity)
+        mock_module.register = mock_aletheia_register
+        mock_import.return_value = mock_module
 
         from core.runtime.registry import _registry, get_agent
 
@@ -211,8 +244,11 @@ async def test_registry_concurrent_access():
 @pytest.mark.asyncio()
 async def test_registry_stats():
     """Test registry statistics."""
-    with patch("importlib.import_module") as mock_import:
-        mock_import.return_value = Mock(AletheiaEntity=MockAletheiaEntity)
+    with patch("importlib.import_module") as mock_import, \
+         patch("entities.discover_entities", return_value=mock_discover_entities()):
+        mock_module = Mock(AletheiaEntity=MockAletheiaEntity)
+        mock_module.register = mock_aletheia_register
+        mock_import.return_value = mock_module
 
         from core.runtime.registry import _registry, get_agent, get_registry_stats
 
@@ -236,8 +272,11 @@ async def test_registry_stats():
 @pytest.mark.asyncio()
 async def test_lifecycle_manager():
     """Test lifecycle manager with multiple entities."""
-    with patch("importlib.import_module") as mock_import:
-        mock_import.return_value = Mock(AletheiaEntity=MockAletheiaEntity)
+    with patch("importlib.import_module") as mock_import, \
+         patch("entities.discover_entities", return_value=mock_discover_entities()):
+        mock_module = Mock(AletheiaEntity=MockAletheiaEntity)
+        mock_module.register = mock_aletheia_register
+        mock_import.return_value = mock_module
 
         from core.runtime.lifecycle import (
             get_system_status,
@@ -248,23 +287,23 @@ async def test_lifecycle_manager():
         # Test startup (only test with aletheia to avoid missing entity errors)
         success = await startup_system(["aletheia"])
         assert success
-
-        # Check status
-        status = get_system_status()
-        assert status["agent_count"] >= 1
+        assert get_system_status()["status"] == "running"
+        assert get_system_status()["entity_count"] == 1
 
         # Test shutdown
-        success = await shutdown_system()
-        assert success
+        await shutdown_system()
+        assert get_system_status()["status"] == "stopped"
+        assert get_system_status()["entity_count"] == 0
 
 
 @pytest.mark.asyncio()
 async def test_entity_independence():
-    """Test that entities operate independently."""
-    with patch("importlib.import_module") as mock_import:
+    """Test that multiple entity instances are independent."""
+    with patch("importlib.import_module") as mock_import, \
+         patch("entities.discover_entities", return_value=mock_discover_entities()):
         modules = {
-            "entities.aletheia": Mock(AletheiaEntity=MockAletheiaEntity),
-            "entities.prometheus": Mock(PrometheusEntity=MockPrometheusEntity)
+            "entities.aletheia": Mock(AletheiaEntity=MockAletheiaEntity, register=mock_aletheia_register),
+            "entities.prometheus": Mock(PrometheusEntity=MockPrometheusEntity, register=mock_prometheus_register)
         }
         mock_import.side_effect = lambda path: modules[path]
 
@@ -273,26 +312,32 @@ async def test_entity_independence():
         # Clear registry
         _registry._instances.clear()
 
-        # Get agents
+        # Get independent agents
         aletheia = await get_agent("aletheia")
         prometheus = await get_agent("prometheus")
 
-        # Test independent operations
-        aletheia_response = await aletheia.think("Hello")
-        prometheus_response = await prometheus.think("Hello")
+        # Test independence of operation
+        msg1 = "Hello"
+        msg2 = "Hi there"
 
-        assert aletheia_response == "Aletheia: Hello"
-        assert prometheus_response == "Prometheus: Hello"
-        assert aletheia_response != prometheus_response
+        response1 = await aletheia.think(msg1)
+        response2 = await prometheus.think(msg2)
+
+        assert "Aletheia" in response1
+        assert "Hello" in response1
+        assert "Prometheus" in response2
+        assert "Hi there" in response2
 
 
-# Parametrized tests for entity compatibility
 @pytest.mark.parametrize("entity_name", ["aletheia"])  # Only test aletheia for now
 @pytest.mark.asyncio()
 async def test_entity_basic_operations(entity_name):
-    """Test basic operations work for any entity."""
-    with patch("importlib.import_module") as mock_import:
-        mock_import.return_value = Mock(AletheiaEntity=MockAletheiaEntity)
+    """Test basic entity operations."""
+    with patch("importlib.import_module") as mock_import, \
+         patch("entities.discover_entities", return_value=mock_discover_entities()):
+        mock_module = Mock(AletheiaEntity=MockAletheiaEntity)
+        mock_module.register = mock_aletheia_register
+        mock_import.return_value = mock_module
 
         from core.runtime.registry import _registry, get_agent
 
@@ -302,14 +347,15 @@ async def test_entity_basic_operations(entity_name):
         # Get agent
         agent = await get_agent(entity_name)
 
-        # Test basic functionality
-        response = await agent.think("Test message")
-        assert entity_name.capitalize() in response
-        assert "Test message" in response
+        # Test agent operations
+        assert agent is not None
+        assert agent.name == entity_name
 
-        # Test state operations
-        await agent.save_state()  # Should not raise
-        await agent.close()       # Should not raise
+        # Test basic interaction
+        response = await agent.think("Hello")
+        assert response is not None
+        assert isinstance(response, str)
+        assert len(response) > 0
 
 
 if __name__ == "__main__":

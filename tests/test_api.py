@@ -6,6 +6,7 @@ instead of being hardcoded to Aletheia.
 """
 
 from unittest.mock import Mock, patch
+import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,25 +14,27 @@ from fastapi.testclient import TestClient
 
 # Mock entities for testing
 class MockEntity:
+    """Mock entity for testing API."""
+
     def __init__(self, name):
         self.name = name
 
     async def think(self, message, user_id=None):
+        """Mock think method."""
+        # Add some delay to simulate processing
+        await asyncio.sleep(0.1)
         return {
-            "result": f"{self.name.capitalize()}: {message}",
-            "execution_details": {
-                "route_used": "test_route",
-                "approach": "test_approach",
-                "execution_time": 0.1,
-                "memories_used": 2,
-                "user_profile_used": True
-            }
+            "answer": f"{self.name.capitalize()}: {message}",
+            "confidence": "high",
+            "reasoning": "Mock reasoning"
         }
 
     async def save_state(self):
+        """Mock save state."""
         pass
 
     async def close(self):
+        """Mock close."""
         pass
 
 
@@ -304,6 +307,34 @@ def test_cors_headers(client, mock_registry):
     assert response.status_code in [200, 405]  # OPTIONS may not be explicitly handled
 
 
+# Mock discovery function
+def mock_discover_entities():
+    """Mock implementation of discover_entities that returns valid test entities."""
+    return {
+        "aletheia": {
+            "id": "aletheia",
+            "name": "Aletheia",
+            "class": lambda: MockEntity("aletheia"),
+            "module_path": "entities.aletheia",
+            "description": "Mock Aletheia entity"
+        },
+        "prometheus": {
+            "id": "prometheus",
+            "name": "Prometheus",
+            "class": lambda: MockEntity("prometheus"),
+            "module_path": "entities.prometheus",
+            "description": "Mock Prometheus entity"
+        },
+        "teslabot": {
+            "id": "teslabot",
+            "name": "TeslaBot",
+            "class": lambda: MockEntity("teslabot"),
+            "module_path": "entities.teslabot",
+            "description": "Mock TeslaBot entity"
+        }
+    }
+
+
 @pytest.mark.asyncio()
 async def test_multiple_entity_instances():
     """Test that different entities get different instances."""
@@ -312,21 +343,8 @@ async def test_multiple_entity_instances():
     # Clear registry for clean test
     _registry._instances.clear()
 
-    # Mock importlib for this test
-    with patch("importlib.import_module") as mock_import:
-        mock_modules = {
-            "entities.aletheia": Mock(AletheiaEntity=lambda: MockEntity("aletheia")),
-            "entities.prometheus": Mock(PrometheusEntity=lambda: MockEntity("prometheus"))
-        }
-
-        def mock_import_func(module_path):
-            if module_path in mock_modules:
-                return mock_modules[module_path]
-            msg = f"No module named '{module_path}'"
-            raise ImportError(msg)
-
-        mock_import.side_effect = mock_import_func
-
+    # Mock entity discovery
+    with patch("entities.discover_entities", return_value=mock_discover_entities()):
         # Get different entities
         aletheia = await get_agent("aletheia")
         prometheus = await get_agent("prometheus")
