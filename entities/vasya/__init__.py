@@ -27,56 +27,39 @@ class VasyaEntity(BaseEntity):
     IDENTITY_PATH = Path(__file__).parent / "identity"
     
     def _load_identity(self) -> Dict[str, Any]:
-        """Load Vasya's identity configuration."""
+        """Load Vasya's identity, merging register info and config file."""
         try:
-            identity_file = self.IDENTITY_PATH / "identity.json"
+            # 1. Get base registration info (ID, multilingual names)
+            reg_info = register()
             
+            # 2. Load detailed config from JSON
+            identity_file = self.IDENTITY_PATH / "identity.json"
             if not identity_file.exists():
                 raise FileNotFoundError(f"Identity file not found: {identity_file}")
             
             with open(identity_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
+
+            # 3. Merge them: config file overrides everything except id and name
+            final_config = {**config, **reg_info}
             
-            # Ensure required fields
-            required_fields = ['name', 'llm_instructions', 'external_llms']
-            for field in required_fields:
-                if field not in config:
-                    raise ValueError(f"Missing required field in identity config: {field}")
+            # 4. Ensure ID from register() matches ID in file for consistency
+            if 'id' in config and config['id'] != reg_info['id']:
+                logger.warning(
+                    f"ID mismatch between register() ('{reg_info['id']}') and "
+                    f"identity.json ('{config['id']}'). Using ID from register()."
+                )
             
-            logger.info(f"✅ Loaded identity for {config['name']} (Vasya Developer)")
-            return config
+            # Use the simple name for logging, but keep the dict for the app
+            log_name = reg_info.get('name', {}).get('ru', reg_info.get('id'))
+            logger.info(f"✅ Loaded identity for {log_name}")
+            
+            return final_config
             
         except Exception as e:
             logger.error(f"❌ Failed to load Vasya identity: {e}")
-            # Fallback configuration
-            return {
-                "name": "Вася",
-                "llm_instructions": "You are Вася - an enthusiastic mid-level programmer with 10 years experience. You love coding and follow senior guidance.",
-                "external_llms": {
-                    "primary_provider": "anthropic",
-                    "providers": {
-                        "anthropic": {
-                            "enabled": True,
-                            "model": "claude-3-5-sonnet-20241022",
-                            "temperature": 0.1,
-                            "max_tokens": 4000
-                        }
-                    }
-                },
-                "identity": {
-                    "summary": "Enthusiastic mid-level developer",
-                    "personality": [
-                        "Enthusiastic programmer",
-                        "10 years experience", 
-                        "Proactive but respectful"
-                    ]
-                },
-                "core_values": [
-                    "Clean code",
-                    "Continuous learning",
-                    "Team collaboration"
-                ]
-            }
+            # Fallback to a minimal, safe configuration
+            return register() # Return base registration info on failure
 
 
 def register() -> dict[str, Any]:

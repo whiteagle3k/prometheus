@@ -14,10 +14,12 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Any
 from datetime import datetime
+import logging
 
 from core.base_entity import BaseEntity
 from core.task_queue.queue import push, pop, HIGHLEVEL_IN, DEVTASKS_WAITING
 
+logger = logging.getLogger(__name__)
 
 class SupervisorEntity(BaseEntity):
     """Development supervisor agent that manages task decomposition and coordination."""
@@ -29,54 +31,40 @@ class SupervisorEntity(BaseEntity):
         self._running = False
     
     def _load_identity(self) -> Dict[str, Any]:
-        """Load supervisor identity configuration."""
-        identity_file = self.IDENTITY_PATH / "identity.json"
-        
-        # Fallback identity configuration
-        fallback_identity = {
-            "name": "Петрович",
-            "version": "0.1.0",
-            "description": "Development task supervisor and coordinator agent",
-            "identity": {
-                "summary": "Analytical development manager focused on task decomposition and workflow coordination",
-                "personality": ["systematic", "clear", "efficient", "quality-focused", "organized"]
-            },
-            "core_values": ["clarity", "atomicity", "efficiency", "quality", "progress"],
-            "llm_instructions": "You are a development supervisor agent focused on breaking down complex tasks into atomic, implementable units with clear acceptance criteria.",
-            "external_llms": {
-                "primary_provider": "openai",
-                "providers": {
-                    "openai": {
-                        "enabled": True,
-                        "model": "gpt-4o-mini",
-                        "temperature": 0.3,
-                        "max_tokens": 3000
-                    }
-                },
-                "routing_preferences": {
-                    "prefer_external": True
-                }
-            }
-        }
-        
-        if not identity_file.exists():
-            print(f"⚠️ Supervisor identity file not found: {identity_file}")
-            print("   Using fallback configuration")
-            return fallback_identity
-        
+        """Load supervisor identity, merging register info and config file."""
         try:
-            with open(identity_file, encoding="utf-8") as f:
-                loaded_config = json.load(f)
+            # 1. Get base registration info (ID, multilingual names)
+            reg_info = register()
             
-            print(f"✅ Loaded supervisor identity from: {identity_file}")
+            # 2. Load detailed config from JSON
+            identity_file = self.IDENTITY_PATH / "identity.json"
+            if not identity_file.exists():
+                logger.warning(f"Identity file not found: {identity_file}. Using registration info only.")
+                return reg_info # Return base info if no config file
             
-            # Merge with fallback defaults
-            merged_config = {**fallback_identity, **loaded_config}
-            return merged_config
+            with open(identity_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+
+            # 3. Merge them: config file overrides everything except id and name
+            final_config = {**config, **reg_info}
+            
+            # 4. Ensure ID from register() matches ID in file for consistency
+            if 'id' in config and config['id'] != reg_info['id']:
+                logger.warning(
+                    f"ID mismatch between register() ('{reg_info['id']}') and "
+                    f"identity.json ('{config['id']}'). Using ID from register()."
+                )
+            
+            # Use the simple name for logging, but keep the dict for the app
+            log_name = reg_info.get('name', {}).get('ru', reg_info.get('id'))
+            logger.info(f"✅ Loaded identity for {log_name}")
+            
+            return final_config
             
         except Exception as e:
-            print(f"⚠️ Error loading supervisor identity: {e}")
-            return fallback_identity
+            logger.error(f"❌ Failed to load Supervisor identity: {e}")
+            # Fallback to a minimal, safe configuration
+            return register() # Return base registration info on failure
     
     async def autonomous_loop(self):
         """Main autonomous processing loop."""

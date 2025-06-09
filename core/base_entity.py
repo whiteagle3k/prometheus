@@ -170,6 +170,36 @@ class BaseEntity(ABC):
 
             # Process through the entity's thinking pipeline
             result = await self._process_input(user_text, user_id=user_id)
+            print(f"[BaseEntity] _process_input result: {result}")
+            tool_calls = result.get("tool_calls", [])
+            print(f"[BaseEntity] Initial tool_calls: {tool_calls}")
+
+            # --- PATCH: обработка tool_calls ---
+            print(f"[BaseEntity] Initial tool_calls: {result.get('tool_calls', [])}")
+            tool_call_results = []
+            max_tool_iters = 5
+            while tool_calls and max_tool_iters > 0:
+                print(f"[BaseEntity] Entering tool_calls loop: {tool_calls}")
+                for tool_call in tool_calls:
+                    print(f"[BaseEntity] Executing tool call: {tool_call}")
+                    print(f"[BaseEntity] Available MCP capabilities: {list(self.mcp_capabilities.keys())}")
+                    method = tool_call["method"]
+                    if method.count('_') > 2:
+                        parts = method.split('_')
+                        method = '_'.join([parts[0]] + parts[-2:])
+                        print(f"[BaseEntity] Fixed method name: {method}")
+                    print(f"[BaseEntity] CALLING execute_capability: {method} {tool_call['params']}")
+                    mcp_result = await self.mcp_client.execute_capability(
+                        method,
+                        tool_call["params"]
+                    )
+                    print(f"[BaseEntity] MCP result: {mcp_result}")
+                    tool_call_results.append(mcp_result)
+                result = await self._process_input(user_text, user_id=user_id)
+                tool_calls = result.get("tool_calls", [])
+                print(f"[BaseEntity] tool_calls after iteration: {tool_calls}")
+                max_tool_iters -= 1
+            # --- END PATCH ---
 
             # Extract response and execution details
             response = result.get("response", "")
@@ -212,29 +242,15 @@ class BaseEntity(ABC):
             }
             self.task_history.append(task_record)
 
-            return {
-                "result": response,
-                "execution_details": execution_details,
-                "type": result.get("type", "unknown"),
-                "approach": result.get("approach", "unknown")
-            }
+            # Проброс tool_calls на верхний уровень
+            out = dict(result)
+            if "tool_calls" in result and result["tool_calls"]:
+                out["tool_calls"] = result["tool_calls"]
+            return out
 
         except Exception as e:
-            error_response = f"I'm experiencing technical difficulties: {e}"
-            print(f"❌ Error processing input: {e}")
-            # Также возвращаем структуру для ошибок
-            return {
-                "result": error_response,
-                "execution_details": {
-                    "route_used": "error",
-                    "execution_time": 0,
-                    "estimated_cost": 0,
-                    "approach": "error_fallback",
-                    "error": str(e)
-                },
-                "type": "error",
-                "approach": "error_fallback"
-            }
+            print(f"❌ Error in think: {e}")
+            return {"error": str(e)}
 
     async def _handle_mcp_request(self, user_text: str) -> str | None:
         """Check if the request involves MCP capabilities and handle directly."""
@@ -559,8 +575,9 @@ class BaseEntity(ABC):
         """Core input processing logic - can be extended by entities."""
 
         # Fast-track check for external-only agents
+        has_tools = getattr(self, '_tools', None)
         should_fast_track = self._should_use_external_fast_track(user_input)
-        if should_fast_track:
+        if should_fast_track and not has_tools:
             print("🚀 Fast-track: External-only agent, skipping memory processing...")
             return await self._handle_external_fast_track(user_input, user_id)
 
@@ -598,9 +615,14 @@ class BaseEntity(ABC):
         needs_planning = self.context.should_plan_task(user_input)
 
         if needs_planning:
-            return await self._handle_complex_task(user_input, relevant_memories)
+            result = await self._handle_complex_task(user_input, relevant_memories)
         else:
-            return await self._handle_simple_task(user_input, relevant_memories)
+            result = await self._handle_simple_task(user_input, relevant_memories)
+        # Проброс tool_calls на верхний уровень
+        out = dict(result)
+        if "tool_calls" in result and result["tool_calls"]:
+            out["tool_calls"] = result["tool_calls"]
+        return out
 
     def _should_use_external_fast_track(self, user_input: str) -> bool:
         """
@@ -923,9 +945,13 @@ class BaseEntity(ABC):
             # Import TaskContext for router
             from .llm.router import TaskContext
 
+            # Получаем инструменты, если они есть (например, из self._tools, установленной тестом)
+            tools = getattr(self, '_tools', None)
+
             task_context = TaskContext(
                 prompt=user_input,
                 max_tokens=1024,
+                tools=tools,
                 requires_deep_reasoning=False,  # Let router decide based on content
                 conversation_context=enhanced_context,
                 user_name=user_name,
@@ -935,6 +961,7 @@ class BaseEntity(ABC):
                     "language": getattr(self.context, "last_user_language", "en")
                 }
             )
+            print(f'[BaseEntity DEBUG] TaskContext.tools = {tools}')
 
             # Router makes intelligent local vs external decision
             result = await self.router.execute_task(task_context)
@@ -951,8 +978,8 @@ class BaseEntity(ABC):
 
             execution_time = time.time() - start_time
 
-            return {
-                "type": "simple_task",
+            out = {
+                "type": "complex_task",
                 "response": response_text,
                 "execution_details": {
                     "route_used": route_used,
@@ -966,12 +993,15 @@ class BaseEntity(ABC):
                 },
                 "approach": "llm_managed_context",
             }
+            if "tool_calls" in result and result["tool_calls"]:
+                out["tool_calls"] = result["tool_calls"]
+            return out
 
         except Exception as e:
             print(f"❌ LLM-managed context failed: {e}")
             # Return error response
             return {
-                "type": "simple_task",
+                "type": "complex_task",
                 "response": f"I'm having technical difficulties: {e}",
                 "execution_details": {
                     "route_used": "error",

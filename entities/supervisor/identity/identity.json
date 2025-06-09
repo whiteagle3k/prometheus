@@ -1,5 +1,5 @@
 {
-  "name": "Петрович",
+  "id": "supervisor",
   "version": "0.1.0",
   "description": "Senior development supervisor with 30 years experience - analytical, methodical, validation-focused",
   "identity": {
@@ -60,7 +60,8 @@
       "prefer_external": true,
       "use_for_analysis": true,
       "use_for_validation": true
-    }
+    },
+    "enable_local_llm": false
   },
   "module_paths": {
     "task_queue": "core/task_queue"

@@ -1,5 +1,5 @@
 {
-  "name": "Марина",
+  "id": "qa",
   "version": "0.1.0",
   "description": "Quality Assurance specialist - detail-oriented, thorough, friendly team player",
   "identity": {
@@ -63,7 +63,8 @@
       "prefer_external": true,
       "use_for_analysis": true,
       "use_for_testing": true
-    }
+    },
+    "enable_local_llm": false
   },
   "module_paths": {
     "task_queue": "core/task_queue"
@@ -80,7 +81,7 @@
       },
       "anthropic": {
         "enabled": true,
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-3-5-sonnet-20240620",
         "temperature": 0.1,
         "max_tokens": 3000,
         "use_for": ["complex_analysis", "test_automation", "edge_case_identification"]
@@ -104,8 +105,8 @@
     "collaboration_level": "high"
   },
   "team_coordination": {
-    "reports_to": "petrovich",
-    "primary_collaboration": "vasya",
+    "reports_to": "supervisor",
+    "primary_collaboration": "developer",
     "collaboration_style": "supportive_quality_partner",
     "feedback_approach": "constructive_detailed",
     "quality_gatekeeper": true

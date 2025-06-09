@@ -27,56 +27,39 @@ class MarinaEntity(BaseEntity):
     IDENTITY_PATH = Path(__file__).parent / "identity"
     
     def _load_identity(self) -> Dict[str, Any]:
-        """Load Marina's identity configuration."""
+        """Load Marina's identity, merging register info and config file."""
         try:
-            identity_file = self.IDENTITY_PATH / "identity.json"
+            # 1. Get base registration info (ID, multilingual names)
+            reg_info = register()
             
+            # 2. Load detailed config from JSON
+            identity_file = self.IDENTITY_PATH / "identity.json"
             if not identity_file.exists():
                 raise FileNotFoundError(f"Identity file not found: {identity_file}")
             
             with open(identity_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
+
+            # 3. Merge them: config file overrides everything except id and name
+            final_config = {**config, **reg_info}
             
-            # Ensure required fields
-            required_fields = ['name', 'llm_instructions', 'external_llms']
-            for field in required_fields:
-                if field not in config:
-                    raise ValueError(f"Missing required field in identity config: {field}")
+            # 4. Ensure ID from register() matches ID in file for consistency
+            if 'id' in config and config['id'] != reg_info['id']:
+                logger.warning(
+                    f"ID mismatch between register() ('{reg_info['id']}') and "
+                    f"identity.json ('{config['id']}'). Using ID from register()."
+                )
             
-            logger.info(f"✅ Loaded identity for {config['name']} (Marina QA)")
-            return config
+            # Use the simple name for logging, but keep the dict for the app
+            log_name = reg_info.get('name', {}).get('ru', reg_info.get('id'))
+            logger.info(f"✅ Loaded identity for {log_name}")
+            
+            return final_config
             
         except Exception as e:
             logger.error(f"❌ Failed to load Marina identity: {e}")
-            # Fallback configuration
-            return {
-                "name": "Марина",
-                "llm_instructions": "You are Марина - a thorough QA specialist with 6 years experience. Detail-oriented, friendly, collaborative. You ensure quality through comprehensive testing.",
-                "external_llms": {
-                    "primary_provider": "openai",
-                    "providers": {
-                        "openai": {
-                            "enabled": True,
-                            "model": "gpt-4o",
-                            "temperature": 0.2,
-                            "max_tokens": 3000
-                        }
-                    }
-                },
-                "identity": {
-                    "summary": "Detail-oriented QA specialist",
-                    "personality": [
-                        "Detail-oriented and thorough",
-                        "6 years QA experience",
-                        "Friendly and collaborative"
-                    ]
-                },
-                "core_values": [
-                    "Quality first",
-                    "User experience",
-                    "Thorough testing"
-                ]
-            }
+            # Fallback to a minimal, safe configuration
+            return register() # Return base registration info on failure
 
 
 def register() -> dict[str, Any]:

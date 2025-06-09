@@ -7,12 +7,14 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
+import time
 
 from core.config import config
 
 # TODO: Remove direct identity import - should be passed from entity
 # from ..identity import identity
 from core.llm.providers import ExternalLLMManager
+from core.llm.providers.base import GenerationRequest
 
 from .confidence_calibrator import calibrator
 from .fast_llm import FastLLM
@@ -36,6 +38,7 @@ class TaskContext:
     prompt: str
     max_tokens: int = 512
     temperature: float = 0.7
+    tools: list[dict[str, Any]] | None = None  # Add tools here
     requires_deep_reasoning: bool = False
     is_creative: bool = False
     needs_latest_knowledge: bool = False
@@ -69,7 +72,12 @@ class LLMRouter:
             "llm_instructions": "You are a helpful AI assistant."
         }
 
-        self.local_llm = LocalLLM(identity_config=self.identity_config)
+        self.local_llm = None
+        # Only initialize local LLM if it's not explicitly disabled
+        operational_guidelines = self.identity_config.get("operational_guidelines", {})
+        if operational_guidelines.get("enable_local_llm", True):
+            self.local_llm = LocalLLM(identity_config=self.identity_config)
+
         self.utility_llm = FastLLM(identity_config=self.identity_config)  # Pass identity config
         self.external_manager = ExternalLLMManager(providers_config=self.identity_config.get("external_llms"))
         self.use_calibrator = True  # Enable calibrated routing
@@ -125,7 +133,7 @@ class LLMRouter:
         """Make routing decision for a task."""
         try:
             # Check if local model is available
-            local_available = await self.local_llm.is_available()
+            local_available = self.local_llm and await self.local_llm.is_available()
             
             # Only check external availability if we might actually need it
             # This avoids unnecessary health check API calls during LOCAL routing
@@ -204,24 +212,29 @@ class LLMRouter:
             return RouteDecision.EXTERNAL
 
         # Rule 1: Basic sanity checks first
-        estimated_tokens = await self.local_llm.count_tokens(task.prompt)
-        total_estimated_tokens = estimated_tokens + task.max_tokens
+        if self.local_llm:
+            estimated_tokens = await self.local_llm.count_tokens(task.prompt)
+            total_estimated_tokens = estimated_tokens + task.max_tokens
 
-        # Rule 1a: Token threshold check - use from identity config or default
-        routing_threshold = self.identity_config.get("routing_threshold", 1000)
-        if estimated_tokens > routing_threshold:
-            print(f"🎯 Token threshold exceeded ({estimated_tokens} > {routing_threshold})")
-            return RouteDecision.EXTERNAL
+            # Rule 1a: Token threshold check - use from identity config or default
+            routing_threshold = self.identity_config.get("routing_threshold", 1000)
+            if estimated_tokens > routing_threshold:
+                print(f"🎯 Token threshold exceeded ({estimated_tokens} > {routing_threshold})")
+                return RouteDecision.EXTERNAL
 
-        # Rule 1b: Very long outputs
-        if task.max_tokens > 1500:
-            print(f"🎯 Large output requested ({task.max_tokens} tokens)")
-            return RouteDecision.EXTERNAL
+            # Rule 1b: Very long outputs
+            if task.max_tokens > 1500:
+                print(f"🎯 Large output requested ({task.max_tokens} tokens)")
+                return RouteDecision.EXTERNAL
 
-        # Rule 1c: Context size check
-        local_context = self.local_llm.get_context_size()
-        if total_estimated_tokens > local_context * 0.8:  # 80% threshold
-            print(f"🎯 Context limit approaching ({total_estimated_tokens} / {local_context})")
+            # Rule 1c: Context size check
+            local_context = self.local_llm.get_context_size()
+            if total_estimated_tokens > local_context * 0.8:  # 80% threshold
+                print(f"🎯 Context limit approaching ({total_estimated_tokens} / {local_context})")
+                return RouteDecision.EXTERNAL
+        else:
+            # If no local llm, all checks that would route to external are effectively true
+            print("➡️ No local LLM, routing to external.")
             return RouteDecision.EXTERNAL
 
         # Rule 1d: Explicit requirements
@@ -299,13 +312,16 @@ class LLMRouter:
         coding_keywords = [
             "создай файл", "create file", "функция", "function", "код", "code",
             "программа", "program", "скрипт", "script", "реализуй", "implement",
-            "напиши", "write", "debug", "отладка", "тест", "test"
+            "напиши", "write", "debug", "отладка", "тест", "test", "обертка",
+            "wrapper", "timestamp", "добавить", "создать обертку", "написать обертку",
+            "расширить функциональность", "автоматизировать", "automate"
         ]
         prompt_lower = prompt.lower()
         return any(keyword in prompt_lower for keyword in coding_keywords)
 
     async def execute_task(self, task: TaskContext) -> dict[str, Any]:
         """Execute a task using the appropriate LLM."""
+        print(f'[LLMRouter DEBUG] execute_task: task.tools = {getattr(task, "tools", None)}')
         start_time = asyncio.get_event_loop().time()
         route_used = None
         local_confidence = None
@@ -326,6 +342,9 @@ class LLMRouter:
                 print(f"🔀 Router: {route.value} selected")
 
             if route == RouteDecision.LOCAL:
+                if not self.local_llm:
+                    msg = "Routing decision is LOCAL but no local LLM is available."
+                    raise RuntimeError(msg)
                 # Execute locally
                 print("🔧 LocalLLM: Using English system instructions")
                 structured_result = await self.local_llm.generate_structured(
@@ -350,10 +369,20 @@ class LLMRouter:
                 consultation_metadata = None
 
             else:
-                # Execute externally
-                external_llm = await self.external_manager.get_best_available()
+                # Determine preferred provider
+                preferred_provider = self._get_preferred_provider(task)
+                print(f"▶️ Preferred provider: {preferred_provider or 'any'}")
+                
+                # Get the best available provider, respecting preference
+                external_llm = await self.external_manager.get_best_available(
+                    prefer_provider=preferred_provider
+                )
+                
                 if not external_llm:
                     print("⚠️ External LLM unavailable, falling back to local")
+                    if not self.local_llm:
+                        msg = "External LLM is unavailable and no local LLM for fallback."
+                        raise RuntimeError(msg)
                     # Fallback to local
                     structured_result = await self.local_llm.generate_structured(
                         prompt=task.prompt,
@@ -375,12 +404,32 @@ class LLMRouter:
                     enhanced_prompt = await self._prepare_external_prompt(task)
 
                     # Use external LLM with enhanced context
-                    raw_response = await external_llm.generate(
+                    print(f"[LLMRouter DEBUG] task.tools = {task.tools}")
+                    request = GenerationRequest(
                         prompt=enhanced_prompt,
                         max_tokens=task.max_tokens,
                         temperature=task.temperature,
-                        system_prompt=self._get_external_system_prompt(task)
+                        model=external_llm.get_model_info().get("model"),
+                        system_prompt=self._get_external_system_prompt(task),
+                        tools=task.tools,
+                        extra_params=external_llm.get_model_info().get("extra_params", {})
                     )
+                    response_obj = await external_llm._generate_text(request)
+                    print(f"[LLMRouter] response_obj: text={getattr(response_obj, 'text', None)[:200]}, tool_calls={getattr(response_obj, 'tool_calls', None)}")
+
+                    # IMPORTANT: Check for tool calls here as well
+                    if response_obj.tool_calls:
+                        print(f"🛠️ Detected tool calls: {response_obj.tool_calls}")
+                        return {
+                            "result": "", # No text response when tools are called
+                            "tool_calls": response_obj.tool_calls,
+                            "route_used": "external_tools",
+                            "execution_time": time.time() - start_time,
+                            "estimated_cost": response_obj.cost_estimate,
+                            "consultation_metadata": response_obj.provider_metadata
+                        }
+
+                    raw_response = response_obj.text
 
                     print(f"📋 Consultation received: {len(raw_response)} chars analysis, 5 memory points")
 
@@ -476,6 +525,25 @@ class LLMRouter:
             )
 
             raise
+
+    def _get_preferred_provider(self, task: TaskContext) -> str | None:
+        """Get preferred external provider based on config and task type."""
+        
+        external_prefs = self.identity_config.get("external_llms", {}).get("routing_preferences", {})
+        
+        # Check for task-specific provider
+        if self._is_coding_task(task.prompt):
+            coding_provider = external_prefs.get("primary_for_implementation") or external_prefs.get("primary_for_coding")
+            if coding_provider:
+                print(f"✅ Preferred provider for coding: {coding_provider}")
+                return coding_provider
+        
+        # Fallback to primary provider
+        primary_provider = self.identity_config.get("external_llms", {}).get("primary_provider")
+        if primary_provider:
+            return primary_provider
+            
+        return None
 
     async def _prepare_external_prompt(self, task: TaskContext) -> str:
         """Prepare a consultation request for external LLM."""
@@ -790,7 +858,7 @@ Response:"""
 
     async def health_check(self) -> dict[str, Any]:
         """Check health of local and external LLMs."""
-        local_available = await self.local_llm.is_available()
+        local_available = self.local_llm and await self.local_llm.is_available()
         external_available = await self.external_manager.get_best_available() is not None
 
         # Get available providers without triggering async calls
