@@ -254,13 +254,17 @@ async def test_lifecycle_manager():
         # Test startup (only test with aletheia to avoid missing entity errors)
         success = await startup_system(["aletheia"])
         assert success
-        assert get_system_status()["status"] == "running"
-        assert get_system_status()["entity_count"] == 1
+        status = get_system_status()
+        assert len(status["running_agents"]) > 0
+        assert status["agent_count"] == 1
+        assert status["shutdown_initiated"] is False
 
         # Test shutdown
         await shutdown_system()
-        assert get_system_status()["status"] == "stopped"
-        assert get_system_status()["entity_count"] == 0
+        status = get_system_status()
+        assert len(status["running_agents"]) == 0
+        assert status["agent_count"] == 0
+        assert status["shutdown_initiated"] is True
 
 
 @pytest.mark.asyncio()
