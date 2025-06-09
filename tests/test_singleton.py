@@ -37,6 +37,9 @@ class MockPrometheusEntity:
         pass
 
     async def close(self):
+        pass
+
+
 # Mock register functions
 def mock_aletheia_register():
     return {"name": "Aletheia", "id": "aletheia", "class": MockAletheiaEntity}
@@ -44,14 +47,6 @@ def mock_aletheia_register():
 
 def mock_prometheus_register():
     return {"name": "Prometheus", "id": "prometheus", "class": MockPrometheusEntity}
-
-
-
-
-
-
-
-        pass
 
 
 # Mock discovery function
