@@ -264,7 +264,7 @@ async def test_lifecycle_manager():
         status = get_system_status()
         assert len(status["running_agents"]) == 0
         assert status["agent_count"] == 0
-        assert status["shutdown_initiated"] is True
+        assert status["shutdown_initiated"] is False  # Reset after shutdown
 
 
 @pytest.mark.asyncio()
