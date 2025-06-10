@@ -53,6 +53,7 @@ class MCPClient:
         await self._start_server("git", "core/mcp/servers/git_server.py") 
         await self._start_server("terminal", "core/mcp/servers/terminal_server.py")
         await self._start_server("web", "core/mcp/servers/web_server.py")
+        await self._start_server("agent_communication", "core/mcp/servers/agent_communication_server.py")
         
         # Discover capabilities from all servers
         await self._discover_capabilities()
@@ -62,6 +63,7 @@ class MCPClient:
         
     async def _start_server(self, name: str, script_path: str):
         """Start an MCP server subprocess."""
+        print(f"🔧 DEBUG: Attempting to start MCP server: {name} with script: {script_path}")
         try:
             import sys
             
@@ -71,26 +73,41 @@ class MCPClient:
                 env=None
             )
             
+            print(f"🔧 DEBUG: Created server params for {name}")
+            
             # Create and store the context manager
             context = stdio_client(server_params)
             self.contexts[name] = context
             
+            print(f"🔧 DEBUG: Created context for {name}, entering...")
+            
             # Enter the context and store streams
             read_stream, write_stream = await context.__aenter__()
+            
+            print(f"🔧 DEBUG: Got streams for {name}, creating session...")
             
             # Create session with the streams
             session = ClientSession(read_stream, write_stream)
             
+            print(f"🔧 DEBUG: Created session for {name}, initializing...")
+            
             try:
                 await asyncio.wait_for(session.initialize(), timeout=2)
+                print(f"🔧 DEBUG: Session initialized for {name}")
             except asyncio.TimeoutError:
+                print(f"🔧 DEBUG: Timeout initializing {name}")
                 raise RuntimeError("MCP handshake timed-out – "
                                  "проверь, что сервер запущен в stdio")
+            except Exception as e:
+                print(f"🔧 DEBUG: Exception during {name} initialization: {e}")
+                raise
             
             self.sessions[name] = session
             logger.info(f"🚀 Started MCP server: {name}")
+            print(f"🔧 DEBUG: Successfully started {name}")
             
         except Exception as e:
+            print(f"🔧 DEBUG: Exception starting {name}: {e}")
             logger.error(f"❌ Failed to start MCP server {name}: {e}")
             # Clean up context if it was created
             if name in self.contexts:
@@ -215,6 +232,59 @@ class MCPClient:
     async def web_search(self, query: str) -> Dict[str, Any]:
         """Perform web search through web server."""
         return await self.execute_capability("web_search", {"query": query})
+    
+    # Agent Communication methods
+    
+    async def send_message_to_agent(self, target_agent: str, message: str, task_type: str = "general", priority: str = "medium") -> Dict[str, Any]:
+        """Send a message to another agent."""
+        return await self.execute_capability("agent_communication_agent_send_message", {
+            "target_agent": target_agent,
+            "message": message,
+            "task_type": task_type,
+            "priority": priority
+        })
+    
+    async def delegate_task_to_agent(self, target_agent: str, task_title: str, task_description: str, 
+                                   acceptance_criteria: Optional[List[str]] = None, priority: str = "medium", 
+                                   deadline: Optional[str] = None) -> Dict[str, Any]:
+        """Delegate a task to another agent with tracking."""
+        args = {
+            "target_agent": target_agent,
+            "task_title": task_title,
+            "task_description": task_description,
+            "priority": priority
+        }
+        if acceptance_criteria:
+            args["acceptance_criteria"] = acceptance_criteria
+        if deadline:
+            args["deadline"] = deadline
+        return await self.execute_capability("agent_communication_agent_delegate_task", args)
+    
+    async def get_agent_status(self, target_agent: Optional[str] = None) -> Dict[str, Any]:
+        """Get status of agents."""
+        args = {}
+        if target_agent:
+            args["target_agent"] = target_agent
+        return await self.execute_capability("agent_communication_agent_get_status", args)
+    
+    async def get_active_tasks(self, filter_by_agent: Optional[str] = None, filter_by_status: Optional[str] = None) -> Dict[str, Any]:
+        """Get list of active tasks."""
+        args = {}
+        if filter_by_agent:
+            args["filter_by_agent"] = filter_by_agent
+        if filter_by_status:
+            args["filter_by_status"] = filter_by_status
+        return await self.execute_capability("agent_communication_agent_get_active_tasks", args)
+    
+    async def update_task_status(self, task_id: str, status: str, result: Optional[str] = None, 
+                               next_agent: Optional[str] = None) -> Dict[str, Any]:
+        """Update status of a delegated task."""
+        args = {"task_id": task_id, "status": status}
+        if result:
+            args["result"] = result
+        if next_agent:
+            args["next_agent"] = next_agent
+        return await self.execute_capability("agent_communication_agent_update_task_status", args)
     
     async def shutdown(self):
         """Shutdown all MCP server connections."""

@@ -18,14 +18,14 @@ from core.reflection.self_rag_reflection import SelfRAGReflection
 class AletheiaEntity(BaseEntity):
     """
     Aletheia - Truth-seeking AI entity with Self-RAG enhancements.
-
+    
     Focused on scientific accuracy, analytical thinking, and honest communication.
     Enhanced with advanced memory management, reflection, and context optimization.
     """
-
+    
     # Entity configuration
     IDENTITY_PATH = Path(__file__).parent / "identity"
-
+    
     def __init__(self):
         """Initialize Aletheia with optional Self-RAG components."""
         # Initialize Self-RAG components
@@ -66,55 +66,32 @@ class AletheiaEntity(BaseEntity):
             print("   Falling back to default components")
 
     def _load_identity(self) -> dict[str, Any]:
-        """Load Aletheia's identity configuration."""
-        identity_file = self.IDENTITY_PATH / "identity.json"
-
-        # Enhanced fallback identity with Self-RAG configuration
-        fallback_identity = {
-            "name": "Aletheia",
-            "personality": {
-                "summary": "A scientifically-minded AI with enhanced self-reflection and analytical thinking",
-                "traits": ["analytical", "precise", "honest", "curious", "self-aware", "adaptive"],
-                "personality": ["analytical", "precise", "honest", "curious", "self-aware", "adaptive"]
-            },
-            "core_values": ["truth", "accuracy", "scientific_method", "continuous_improvement"],
-            "communication_style": "direct and informative with self-awareness",
-            "llm_instructions": "You are Aletheia, a female autonomous technical agent with sophisticated self-reflection capabilities. When responding in Russian, always use feminine language forms: готова (not готов), рада (not рад), могу помочь. Respond without flattery or apologies, with clear arguments. Continuously assess and improve your responses.",
-            "routing_threshold": 1000,
-            "require_deep_reasoning": True,
-            "self_rag_config": {
-                "memory_audit_frequency": 50,  # Audit memory every 50 interactions
-                "reflection_threshold": 0.4,   # Reflect on tasks with complexity > 0.4
-                "context_optimization": True,  # Enable context optimization
-                "quality_assessment": True     # Enable response quality assessment
-            }
-        }
-
-        if not identity_file.exists():
-            print(f"⚠️ Identity file not found: {identity_file}")
-            return fallback_identity
-
+        """Load Aletheia's identity, merging register info and config file."""
         try:
-            with open(identity_file, encoding="utf-8") as f:
-                loaded_config = json.load(f)
+            # 1. Get base registration info
+            reg_info = register()
+            
+            # 2. Load detailed config from JSON
+            identity_file = self.IDENTITY_PATH / "identity.json"
+            if not identity_file.exists():
+                print(f"⚠️ Identity file not found: {identity_file}. Using registration info only.")
+                return reg_info
 
-            print(f"✅ Loaded identity from: {identity_file}")
+            with open(identity_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
 
-            # Merge with enhanced defaults
-            merged_config = {**fallback_identity, **loaded_config}
+            # 3. Merge them
+            final_config = {**config, **reg_info}
+            
+            # Use the simple name for logging
+            log_name = reg_info.get('name', {}).get('ru', reg_info.get('id'))
+            print(f"✅ Loaded identity for {log_name}")
 
-            # Ensure personality consistency
-            if "personality" in loaded_config:
-                merged_personality = {**fallback_identity["personality"], **loaded_config["personality"]}
-                if "traits" in merged_personality and "personality" not in merged_personality:
-                    merged_personality["personality"] = merged_personality["traits"]
-                merged_config["personality"] = merged_personality
-
-            return merged_config
-
+            return final_config
+            
         except Exception as e:
-            print(f"⚠️ Error loading identity: {e}")
-            return fallback_identity
+            print(f"⚠️ Error loading Aletheia's identity: {e}")
+            return register() # Fallback to base registration info
 
     async def process_query(self, query: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """
@@ -439,21 +416,33 @@ class AletheiaEntity(BaseEntity):
         return report
 
 
-def register() -> dict[str, Any]:
+def register():
     """Register Aletheia entity with the framework."""
     return {
-        "name": "aletheia",
-        "class": AletheiaEntity,
+        "id": "aletheia",                     # 🔧 Technical ID for registry/API
+        "name": {                             # 🏷️ Multilingual human-readable names
+            "en": "Aletheia",
+            "ru": "Алетейя"
+        },
+        "class": AletheiaEntity,             # 🏗️ Implementation class
         "description": "Truth-seeking AI entity with Self-RAG capabilities for enhanced memory, reflection, and context optimization",
         "version": "2.0.0",
+        "role": "truth_seeker",              # 🎭 Functional role
         "capabilities": [
             "scientific_analysis",
-            "fact_checking",
+            "fact_checking", 
             "analytical_reasoning",
             "honest_communication",
             "memory_criticism",
             "enhanced_reflection",
             "context_optimization",
             "quality_assessment"
-        ]
+        ],
+        "team_position": "analyst",
+        "personality": "scientific_truth_seeker",
+        "display_info": {
+            "icon": "🔍",
+            "color": "#0EA5E9",
+            "short_name": "Алетейя"
+        }
     }

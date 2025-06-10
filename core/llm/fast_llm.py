@@ -71,7 +71,7 @@ class FastLLM:
         }
 
         # Performance optimization flags
-        self._use_rule_based_routing = False  # Use intelligent model-based routing with rule-based fallback
+        self._use_rule_based_routing = True  # Use intelligent model-based routing with rule-based fallback
         self._classification_threshold = 1.0  # Switch to fallback if model is too slow
         
         self._initialized = True
@@ -472,6 +472,21 @@ Query type:"""
         """
         query_lower = query.lower()
         
+        # Check for development/programming tasks - always route externally
+        programming_keywords = ["программирование", "код", "разработка", "implement", 
+                               "coding", "development", "написать программу", "создать файл",
+                               "write code", "develop", "программу", "функцию", "module",
+                               "class", "create file", "modify code", "script", "скрипт",
+                               "автоматизировать", "automate"]
+                               
+        if any(keyword in query_lower for keyword in programming_keywords):
+            return {
+                "route": "EXTERNAL",
+                "confidence": "high",
+                "reasoning": "Development/programming task detected",
+                "complexity": "complex"
+            }
+        
         # Load routing patterns from processing config
         try:
             routing_config = get_processor_config("external_routing")
@@ -603,6 +618,21 @@ Query type:"""
         from core.processing.config import get_processor_config
         
         query_lower = query.lower()
+        
+        # Check for development/programming tasks - always route externally
+        programming_keywords = ["программирование", "код", "разработка", "implement", 
+                               "coding", "development", "написать программу", "создать файл",
+                               "write code", "develop", "программу", "функцию", "module",
+                               "class", "create file", "modify code", "script", "скрипт",
+                               "автоматизировать", "automate"]
+                               
+        if any(keyword in query_lower for keyword in programming_keywords):
+            return {
+                "route": "EXTERNAL",
+                "confidence": "high",
+                "reasoning": "Development/programming task detected",
+                "complexity": "complex"
+            }
         
         try:
             routing_config = get_processor_config("external_routing")

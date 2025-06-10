@@ -175,11 +175,15 @@ class LocalLLM:
     def _get_fallback_response(self, is_russian: bool) -> str:
         """Get fallback response based on identity configuration."""
 
-        if is_russian:
-            # Use explicit feminine forms for Russian fallback
-            return f"Привет! Я {self.identity_config['name']}, женский автономный агент. Готова помочь! Чем могу быть полезна?"
-        else:
-            return f"Hello! I'm {self.identity_config['name']}, {self.identity_config['personality']['summary'].lower()}. How can I help you?"
+        # Fallback greeting if no specific greeting available
+        try:
+            name = self.identity_config.get('name', 'AI Assistant')
+            personality = self.identity_config.get('personality', {})
+            summary = personality.get('summary', 'helpful AI assistant')
+            return f"Hello! I'm {name}, {summary.lower()}. How can I help you?"
+        except Exception as e:
+            print(f"⚠️ Error accessing identity config in greeting: {e}")
+            return "Hello! I'm an AI assistant. How can I help you?"
 
     def _format_chat_prompt(self, prompt: str, system_prompt: str | None = None) -> str:
         """Format prompt for Phi-3 chat format using identity configuration."""

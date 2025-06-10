@@ -2,6 +2,7 @@
 
 import warnings
 from collections.abc import AsyncGenerator
+import json
 
 try:
     import anthropic
@@ -33,7 +34,7 @@ class AnthropicProvider(ExternalLLMProvider):
             max_context_size=self.config.get("context_size", 200_000),
             supports_streaming=True,
             supports_system_prompt=True,
-            supports_function_calling=False,  # Claude doesn't support function calling (as of 2024)
+            supports_function_calling=True,  # Claude 3 models support tool use (June 2024)
             cost_per_1k_input_tokens=self.config.get("cost_per_1k_input", 0.003),
             cost_per_1k_output_tokens=self.config.get("cost_per_1k_output", 0.015),
             rate_limit_rpm=self.config.get("rate_limit_rpm"),
@@ -64,7 +65,7 @@ class AnthropicProvider(ExternalLLMProvider):
         if not self._client:
             await self._setup_client()
 
-        model = request.model or self.config.get("model", "claude-3-5-sonnet-20241022")
+        model = request.model or self.config.get("model", "claude-3-5-sonnet-20240620")
 
         messages = [{"role": "user", "content": request.prompt}]
 
@@ -79,25 +80,57 @@ class AnthropicProvider(ExternalLLMProvider):
         if request.system_prompt:
             request_kwargs["system"] = request.system_prompt
 
+        # Add tools if available (for function calling)
+        if request.tools:
+            formatted_tools = []
+            for tool in request.tools:
+                formatted_tools.append({
+                    "name": tool.get("name"),
+                    "description": tool.get("description"),
+                    "input_schema": tool.get("parameters", {"type": "object", "properties": {}})
+                })
+            request_kwargs["tools"] = formatted_tools
+
         # Add any extra parameters from the request
         if request.extra_params:
             request_kwargs.update(request.extra_params)
 
+        # DEBUG: print outgoing request
+        print(f"[ANTHROPIC REQUEST] model={model}, tools={request_kwargs.get('tools')}, prompt={request.prompt[:200]}")
+
         try:
             response = await self._client.messages.create(**request_kwargs)
+            print(f"[ANTHROPIC RAW RESPONSE] {response}")
 
-            content = response.content[0].text if response.content else ""
+            text_content = ""
+            tool_calls = []
 
-            # Anthropic doesn't return token usage in all responses, estimate it
-            input_tokens = await self._estimate_tokens(request.prompt + (request.system_prompt or ""))
-            output_tokens = await self._estimate_tokens(content)
+            if response.stop_reason == "tool_use":
+                for content_block in response.content:
+                    if content_block.type == "tool_use":
+                        tool_calls.append({
+                            "jsonrpc": "2.0",
+                            "method": f"filesystem_{content_block.name}",
+                            "params": content_block.input,
+                            "id": content_block.id
+                        })
+            else:
+                # Handle standard text response
+                text_content = response.content[0].text if response.content and response.content[0].type == "text" else ""
+
+            # Estimate tokens
+            # We estimate based on text content for now, tool use token cost is complex
+            prompt_for_token_estimation = request.prompt + (request.system_prompt or "")
+            input_tokens = await self._estimate_tokens(prompt_for_token_estimation)
+            output_tokens = await self._estimate_tokens(text_content) # Base on text only for now
             total_tokens = input_tokens + output_tokens
 
             # Calculate cost estimate
             cost_estimate = self.estimate_cost(input_tokens, output_tokens)
 
             return GenerationResponse(
-                text=content,
+                text=text_content,
+                tool_calls=tool_calls if tool_calls else None,
                 model_used=model,
                 tokens_used=total_tokens,
                 cost_estimate=cost_estimate,
@@ -106,7 +139,7 @@ class AnthropicProvider(ExternalLLMProvider):
                     "stop_reason": response.stop_reason,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
-                    "usage": getattr(response, "usage", None),  # Some models return usage
+                    "usage": getattr(response, "usage", None),
                 },
             )
         except Exception as e:
@@ -118,7 +151,7 @@ class AnthropicProvider(ExternalLLMProvider):
         if not self._client:
             await self._setup_client()
 
-        model = request.model or self.config.get("model", "claude-3-5-sonnet-20241022")
+        model = request.model or self.config.get("model", "claude-3-5-sonnet-20240620")
 
         messages = [{"role": "user", "content": request.prompt}]
 
@@ -159,7 +192,7 @@ class AnthropicProvider(ExternalLLMProvider):
         try:
             # Make a minimal API call to check health
             response = await self._client.messages.create(
-                model=self.config.get("model", "claude-3-5-sonnet-20241022"),
+                model=self.config.get("model", "claude-3-5-sonnet-20240620"),
                 messages=[{"role": "user", "content": "hi"}],
                 max_tokens=1,
             )
@@ -169,11 +202,11 @@ class AnthropicProvider(ExternalLLMProvider):
 
     def get_default_model(self) -> str:
         """Get the default model for this provider."""
-        return self.config.get("model", "claude-3-5-sonnet-20241022")
+        return self.config.get("model", "claude-3-5-sonnet-20240620")
 
     def supports_function_calling(self) -> bool:
         """Check if this provider supports function calling."""
-        return False
+        return True
 
     def get_rate_limits(self) -> dict[str, int | None]:
         """Get rate limits for this provider."""

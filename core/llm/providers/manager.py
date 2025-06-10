@@ -72,25 +72,37 @@ class ExternalLLMManager:
         """
         await self.initialize_all()
 
-        primary_provider = prefer_provider or self._config.get("primary_provider", "openai")
-        fallback_provider = self._config.get("fallback_provider", "anthropic")
+        # 1. Try the specifically preferred provider first
+        if prefer_provider:
+            preferred_instance = await self._get_provider_by_name(prefer_provider)
+            if preferred_instance and await preferred_instance.is_available():
+                print(f"✅ Using preferred provider: {prefer_provider}")
+                return preferred_instance
+            else:
+                print(f"⚠️ Preferred provider '{prefer_provider}' not available, checking primary.")
 
-        # Try primary provider first
-        primary_provider_instance = await self._get_provider_by_name(primary_provider)
-        if primary_provider_instance and await primary_provider_instance.is_available():
-            return primary_provider_instance
+        # 2. Fallback to the primary provider from config
+        primary_provider_name = self._config.get("primary_provider")
+        if primary_provider_name:
+            primary_instance = await self._get_provider_by_name(primary_provider_name)
+            if primary_instance and await primary_instance.is_available():
+                # Avoid using the same provider if it was the failed preferred one
+                if not (prefer_provider and prefer_provider == primary_provider_name):
+                    print(f"✅ Using primary provider: {primary_provider_name}")
+                    return primary_instance
 
-        # Try fallback provider
-        if fallback_provider != primary_provider:
-            fallback_provider_instance = await self._get_provider_by_name(fallback_provider)
-            if fallback_provider_instance and await fallback_provider_instance.is_available():
-                return fallback_provider_instance
-
-        # Try any available provider as last resort
+        # 3. As a last resort, try any other available provider
         for provider in self._providers.values():
             if await provider.is_available():
+                # Avoid providers that have already been checked
+                if (prefer_provider and provider.provider_type.value == prefer_provider) or \
+                   (primary_provider_name and provider.provider_type.value == primary_provider_name):
+                    continue
+                
+                print(f"✅ Using available fallback: {provider.provider_type.value}")
                 return provider
 
+        print("❌ No healthy external LLM provider found.")
         return None
 
     async def get_provider(self, provider_type: ProviderType) -> ExternalLLMProvider | None:

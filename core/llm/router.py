@@ -7,12 +7,14 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
+import time
 
 from core.config import config
 
 # TODO: Remove direct identity import - should be passed from entity
 # from ..identity import identity
 from core.llm.providers import ExternalLLMManager
+from core.llm.providers.base import GenerationRequest
 
 from .confidence_calibrator import calibrator
 from .fast_llm import FastLLM
@@ -36,6 +38,7 @@ class TaskContext:
     prompt: str
     max_tokens: int = 512
     temperature: float = 0.7
+    tools: list[dict[str, Any]] | None = None  # Add tools here
     requires_deep_reasoning: bool = False
     is_creative: bool = False
     needs_latest_knowledge: bool = False
@@ -69,7 +72,12 @@ class LLMRouter:
             "llm_instructions": "You are a helpful AI assistant."
         }
 
-        self.local_llm = LocalLLM(identity_config=self.identity_config)
+        self.local_llm = None
+        # Only initialize local LLM if it's not explicitly disabled
+        operational_guidelines = self.identity_config.get("operational_guidelines", {})
+        if operational_guidelines.get("enable_local_llm", True):
+            self.local_llm = LocalLLM(identity_config=self.identity_config)
+
         self.utility_llm = FastLLM(identity_config=self.identity_config)  # Pass identity config
         self.external_manager = ExternalLLMManager(providers_config=self.identity_config.get("external_llms"))
         self.use_calibrator = True  # Enable calibrated routing
@@ -125,7 +133,7 @@ class LLMRouter:
         """Make routing decision for a task."""
         try:
             # Check if local model is available
-            local_available = await self.local_llm.is_available()
+            local_available = self.local_llm and await self.local_llm.is_available()
             
             # Only check external availability if we might actually need it
             # This avoids unnecessary health check API calls during LOCAL routing
@@ -172,25 +180,61 @@ class LLMRouter:
     async def _apply_routing_heuristics(self, task: TaskContext) -> RouteDecision:
         """Apply routing heuristics to make decision using fast LLM routing oracle."""
 
+        # Rule 0: Check if external LLM is preferred in identity config
+        # Try multiple possible config locations for routing preferences
+        
+        # Location 1: operational_guidelines.routing_policy (current agent configs)
+        operational_guidelines = self.identity_config.get("operational_guidelines", {})
+        routing_policy = operational_guidelines.get("routing_policy", {})
+        prefer_external = routing_policy.get("prefer_external", False)
+        use_for_coding = routing_policy.get("use_for_coding", False) or routing_policy.get("use_for_analysis", False)
+        
+        # Location 1b: also check thresholds substructure (Vasya's config structure)
+        if not prefer_external:
+            thresholds = routing_policy.get("thresholds", {})
+            prefer_external = thresholds.get("prefer_external", False)
+            use_for_coding = thresholds.get("use_for_coding", False) or thresholds.get("use_for_implementation", False)
+        
+        # Location 2: external_llms.routing_preferences (alternative location) 
+        if not prefer_external:
+            external_prefs = self.identity_config.get("external_llms", {}).get("routing_preferences", {})
+            prefer_external = external_prefs.get("prefer_external", False)
+            use_for_coding = external_prefs.get("use_for_coding", False)
+        
+        # If external is preferred and available, use it
+        if prefer_external:
+            print(f"🎯 External LLM preferred in config (prefer_external: {prefer_external})")
+            return RouteDecision.EXTERNAL
+            
+        # Check for coding tasks if configured
+        if use_for_coding and self._is_coding_task(task.prompt):
+            print("🎯 Coding task detected, using external LLM as configured")
+            return RouteDecision.EXTERNAL
+
         # Rule 1: Basic sanity checks first
-        estimated_tokens = await self.local_llm.count_tokens(task.prompt)
-        total_estimated_tokens = estimated_tokens + task.max_tokens
+        if self.local_llm:
+            estimated_tokens = await self.local_llm.count_tokens(task.prompt)
+            total_estimated_tokens = estimated_tokens + task.max_tokens
 
-        # Rule 1a: Token threshold check - use identity configuration
-        routing_threshold = self.identity_config["routing_threshold"]
-        if estimated_tokens > routing_threshold:
-            print(f"🎯 Token threshold exceeded ({estimated_tokens} > {routing_threshold})")
-            return RouteDecision.EXTERNAL
+            # Rule 1a: Token threshold check - use from identity config or default
+            routing_threshold = self.identity_config.get("routing_threshold", 1000)
+            if estimated_tokens > routing_threshold:
+                print(f"🎯 Token threshold exceeded ({estimated_tokens} > {routing_threshold})")
+                return RouteDecision.EXTERNAL
 
-        # Rule 1b: Very long outputs
-        if task.max_tokens > 1500:
-            print(f"🎯 Large output requested ({task.max_tokens} tokens)")
-            return RouteDecision.EXTERNAL
+            # Rule 1b: Very long outputs
+            if task.max_tokens > 1500:
+                print(f"🎯 Large output requested ({task.max_tokens} tokens)")
+                return RouteDecision.EXTERNAL
 
-        # Rule 1c: Context size check
-        local_context = self.local_llm.get_context_size()
-        if total_estimated_tokens > local_context * 0.8:  # 80% threshold
-            print(f"🎯 Context limit approaching ({total_estimated_tokens} / {local_context})")
+            # Rule 1c: Context size check
+            local_context = self.local_llm.get_context_size()
+            if total_estimated_tokens > local_context * 0.8:  # 80% threshold
+                print(f"🎯 Context limit approaching ({total_estimated_tokens} / {local_context})")
+                return RouteDecision.EXTERNAL
+        else:
+            # If no local llm, all checks that would route to external are effectively true
+            print("➡️ No local LLM, routing to external.")
             return RouteDecision.EXTERNAL
 
         # Rule 1d: Explicit requirements
@@ -263,8 +307,21 @@ class LLMRouter:
             print("🔧 Fallback: Defaulting to local")
             return RouteDecision.LOCAL
 
+    def _is_coding_task(self, prompt: str) -> bool:
+        """Check if the task involves coding or implementation."""
+        coding_keywords = [
+            "создай файл", "create file", "функция", "function", "код", "code",
+            "программа", "program", "скрипт", "script", "реализуй", "implement",
+            "напиши", "write", "debug", "отладка", "тест", "test", "обертка",
+            "wrapper", "timestamp", "добавить", "создать обертку", "написать обертку",
+            "расширить функциональность", "автоматизировать", "automate"
+        ]
+        prompt_lower = prompt.lower()
+        return any(keyword in prompt_lower for keyword in coding_keywords)
+
     async def execute_task(self, task: TaskContext) -> dict[str, Any]:
         """Execute a task using the appropriate LLM."""
+        print(f'[LLMRouter DEBUG] execute_task: task.tools = {getattr(task, "tools", None)}')
         start_time = asyncio.get_event_loop().time()
         route_used = None
         local_confidence = None
@@ -285,6 +342,9 @@ class LLMRouter:
                 print(f"🔀 Router: {route.value} selected")
 
             if route == RouteDecision.LOCAL:
+                if not self.local_llm:
+                    msg = "Routing decision is LOCAL but no local LLM is available."
+                    raise RuntimeError(msg)
                 # Execute locally
                 print("🔧 LocalLLM: Using English system instructions")
                 structured_result = await self.local_llm.generate_structured(
@@ -309,10 +369,20 @@ class LLMRouter:
                 consultation_metadata = None
 
             else:
-                # Execute externally
-                external_llm = await self.external_manager.get_best_available()
+                # Determine preferred provider
+                preferred_provider = self._get_preferred_provider(task)
+                print(f"▶️ Preferred provider: {preferred_provider or 'any'}")
+                
+                # Get the best available provider, respecting preference
+                external_llm = await self.external_manager.get_best_available(
+                    prefer_provider=preferred_provider
+                )
+                
                 if not external_llm:
                     print("⚠️ External LLM unavailable, falling back to local")
+                    if not self.local_llm:
+                        msg = "External LLM is unavailable and no local LLM for fallback."
+                        raise RuntimeError(msg)
                     # Fallback to local
                     structured_result = await self.local_llm.generate_structured(
                         prompt=task.prompt,
@@ -334,12 +404,32 @@ class LLMRouter:
                     enhanced_prompt = await self._prepare_external_prompt(task)
 
                     # Use external LLM with enhanced context
-                    raw_response = await external_llm.generate(
+                    print(f"[LLMRouter DEBUG] task.tools = {task.tools}")
+                    request = GenerationRequest(
                         prompt=enhanced_prompt,
                         max_tokens=task.max_tokens,
                         temperature=task.temperature,
-                        system_prompt=self._get_external_system_prompt(task)
+                        model=external_llm.get_model_info().get("model"),
+                        system_prompt=self._get_external_system_prompt(task),
+                        tools=task.tools,
+                        extra_params=external_llm.get_model_info().get("extra_params", {})
                     )
+                    response_obj = await external_llm._generate_text(request)
+                    print(f"[LLMRouter] response_obj: text={getattr(response_obj, 'text', None)[:200]}, tool_calls={getattr(response_obj, 'tool_calls', None)}")
+
+                    # IMPORTANT: Check for tool calls here as well
+                    if response_obj.tool_calls:
+                        print(f"🛠️ Detected tool calls: {response_obj.tool_calls}")
+                        return {
+                            "result": "", # No text response when tools are called
+                            "tool_calls": response_obj.tool_calls,
+                            "route_used": "external_tools",
+                            "execution_time": time.time() - start_time,
+                            "estimated_cost": response_obj.cost_estimate,
+                            "consultation_metadata": response_obj.provider_metadata
+                        }
+
+                    raw_response = response_obj.text
 
                     print(f"📋 Consultation received: {len(raw_response)} chars analysis, 5 memory points")
 
@@ -436,14 +526,47 @@ class LLMRouter:
 
             raise
 
+    def _get_preferred_provider(self, task: TaskContext) -> str | None:
+        """Get preferred external provider based on config and task type."""
+        
+        external_prefs = self.identity_config.get("external_llms", {}).get("routing_preferences", {})
+        
+        # Check for task-specific provider
+        if self._is_coding_task(task.prompt):
+            coding_provider = external_prefs.get("primary_for_implementation") or external_prefs.get("primary_for_coding")
+            if coding_provider:
+                print(f"✅ Preferred provider for coding: {coding_provider}")
+                return coding_provider
+        
+        # Fallback to primary provider
+        primary_provider = self.identity_config.get("external_llms", {}).get("primary_provider")
+        if primary_provider:
+            return primary_provider
+            
+        return None
+
     async def _prepare_external_prompt(self, task: TaskContext) -> str:
         """Prepare a consultation request for external LLM."""
 
         # Build entity's self-description for the consultation using identity config
-        entity_intro = f"I am {self.identity_config['name']}, {self.identity_config['personality']['summary']}."
-
-        # Get key personality traits
-        personality_traits = ", ".join(self.identity_config["personality"]["personality"][:3]) if self.identity_config["personality"]["personality"] else "technically precise, analytical"
+        try:
+            name = self.identity_config.get('name', 'AI Assistant')
+            identity = self.identity_config.get('identity', {})
+            summary = identity.get('summary', 'helpful AI assistant')
+            personality_traits = identity.get('personality', [])
+            
+            entity_intro = f"I am {name}, {summary}."
+            
+            # Get key personality traits with fallback
+            if personality_traits:
+                traits_text = ", ".join(personality_traits[:3])
+            else:
+                traits_text = "technically precise, analytical"
+                
+        except Exception as e:
+            print(f"⚠️ Error accessing personality config: {e}")
+            entity_intro = f"I am {self.identity_config.get('name', 'AI Assistant')}, a helpful AI assistant."
+            traits_text = "technically precise, analytical"
 
         # Detect language for response format
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in task.prompt.lower())
@@ -459,7 +582,7 @@ class LLMRouter:
         # Build the consultation prompt with comprehensive context
         consultation_prompt = f"""{entity_intro}
 
-My key traits: {personality_traits}
+My key traits: {traits_text}
 
 """
 
@@ -630,8 +753,23 @@ Your role is to be a knowledgeable consultant, not to impersonate the requesting
             ))
 
         # Create a personality filter prompt using English core identity for better model understanding
-        core_traits = ", ".join(self.identity_config["personality"]["personality"][:3])
-        core_values = ", ".join(self.identity_config["core_values"][:2])
+        try:
+            name = self.identity_config.get('name', 'AI Assistant')
+            identity = self.identity_config.get('identity', {})
+            summary = identity.get('summary', 'helpful AI assistant')
+            personality_traits = identity.get('personality', [])
+            
+            core_traits = ", ".join(personality_traits[:3]) if personality_traits else "helpful, analytical, precise"
+            
+            core_values = self.identity_config.get('core_values', [])
+            core_values_text = ", ".join(core_values[:2]) if core_values else "accuracy, helpfulness"
+            
+        except Exception as e:
+            print(f"⚠️ Error accessing config in filter: {e}")
+            core_traits = "helpful, analytical, precise"
+            core_values_text = "accuracy, helpfulness"
+            name = "AI Assistant"
+            summary = "helpful AI assistant"
 
         # Add conversation flow instruction
         flow_instruction = ""
@@ -645,13 +783,13 @@ Your role is to be a knowledgeable consultant, not to impersonate the requesting
 
 External system response: {external_response}
 
-Reframe this response as {self.identity_config['name']} - {self.identity_config['personality']['summary']}. Important personality traits: {core_traits}. Core principles: {core_values}.
+Reframe this response as {name} - {summary}. Important personality traits: {core_traits}. Core principles: {core_values_text}.
 
 Requirements:
 1. Maintain my personality and traits listed above
 2. Keep all useful information from the response
 3. Make the response natural according to my character
-4. Don't mention ChatGPT or other systems - you are {self.identity_config['name']}
+4. Don't mention ChatGPT or other systems - you are {name}
 5. Respond in Russian with natural grammar and cultural context
 6. Follow my core principles
 {flow_instruction}
@@ -662,13 +800,13 @@ Response in Russian:"""
 
 External system response: {external_response}
 
-Reframe this response as {self.identity_config['name']} - {self.identity_config['personality']['summary']}. Important personality traits: {core_traits}. Core principles: {core_values}.
+Reframe this response as {name} - {summary}. Important personality traits: {core_traits}. Core principles: {core_values_text}.
 
 Requirements:
 1. Maintain my personality and traits listed above
 2. Keep all useful information from the response
 3. Make the response natural according to my character
-4. Don't mention ChatGPT or other systems - you are {self.identity_config['name']}
+4. Don't mention ChatGPT or other systems - you are {name}
 5. Respond in English
 6. Follow my core principles
 {flow_instruction}
@@ -690,9 +828,17 @@ Response:"""
             print(f"Error filtering response: {e}")
             # Fallback: return external response with identity disclaimer
             if is_russian:
-                return f"[От {self.identity_config['name']}] {external_response}", {}
+                return f"[От {name}] {external_response}", {}
             else:
-                return f"[From {self.identity_config['name']}] {external_response}", {}
+                return f"[From {name}] {external_response}", {}
+
+        except Exception as e:
+            print(f"Error filtering response: {e}")
+            # Fallback: return external response with identity disclaimer
+            if is_russian:
+                return f"[От {name}] {external_response}", {}
+            else:
+                return f"[From {name}] {external_response}", {}
 
     def get_routing_stats(self) -> dict[str, Any]:
         """Get routing statistics including calibrator metrics."""
@@ -712,7 +858,7 @@ Response:"""
 
     async def health_check(self) -> dict[str, Any]:
         """Check health of local and external LLMs."""
-        local_available = await self.local_llm.is_available()
+        local_available = self.local_llm and await self.local_llm.is_available()
         external_available = await self.external_manager.get_best_available() is not None
 
         # Get available providers without triggering async calls

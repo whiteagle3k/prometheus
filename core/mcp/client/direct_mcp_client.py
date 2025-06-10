@@ -420,3 +420,18 @@ async def get_direct_mcp_client() -> DirectMCPClient:
         _direct_mcp_client = DirectMCPClient()
         await _direct_mcp_client.initialize()
     return _direct_mcp_client 
+
+if __name__ == "__main__":
+    import asyncio
+    async def main():
+        client = DirectMCPClient()
+        await client.initialize()
+        result = await client.execute_capability(
+            "filesystem_write_file",
+            {
+                "path": "utils/timestamp_print.py",
+                "content": "import datetime\n\ndef timestamped_print(*args, **kwargs):\n    current_time = datetime.datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")\n    print(f\"[{{current_time}}]\", *args, **kwargs)"
+            }
+        )
+        print(result)
+    asyncio.run(main()) 

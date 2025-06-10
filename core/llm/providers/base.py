@@ -33,11 +33,12 @@ class ProviderCapabilities:
 class GenerationRequest:
     """Request for text generation."""
     prompt: str
-    max_tokens: int = 1000
-    temperature: float = 0.7
+    max_tokens: int = 4096
+    temperature: float = 0.2
     system_prompt: str | None = None
     model: str | None = None
     stream: bool = False
+    tools: list[dict[str, Any]] | None = None
     extra_params: dict[str, Any] | None = None
 
 
@@ -45,9 +46,10 @@ class GenerationRequest:
 class GenerationResponse:
     """Response from text generation."""
     text: str
-    model_used: str
-    tokens_used: int
-    cost_estimate: float
+    tool_calls: list[dict[str, Any]] | None = None
+    model_used: str | None = None
+    tokens_used: int | None = None
+    cost_estimate: float | None = None
     provider_metadata: dict[str, Any] | None = None
 
 
