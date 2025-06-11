@@ -7,6 +7,8 @@ Uses universal registry system to share entity instances across interfaces.
 
 import asyncio
 import signal
+import re
+import sys
 
 from .runtime.registry import get_agent
 
@@ -54,6 +56,10 @@ async def run_shell(default_entity: str = "aletheia") -> int:
     if hasattr(signal, "SIGINT"):
         signal.signal(signal.SIGINT, lambda s, f: signal_handler())
 
+    # Redirect llama.cpp output to silence it
+    # Backup original stdout
+    original_stdout = sys.stdout
+    
     try:
         # Get agent instance for the specified entity
         agent = await get_agent(default_entity)
@@ -79,10 +85,32 @@ async def run_shell(default_entity: str = "aletheia") -> int:
 
                 # Extract answer text
                 answer = str(response)
-                if isinstance(response, dict) and "result" in response:
-                    answer = response["result"]
+                if isinstance(response, dict):
+                    if "response" in response:
+                        answer = response["response"]
+                    elif "result" in response:
+                        answer = response["result"]
+                
+                # Extract execution details for clean output
+                route_info = ""
+                if isinstance(response, dict) and "execution_details" in response:
+                    details = response["execution_details"]
+                    route = details.get("route_used", "unknown").upper()
+                    exec_time = details.get("execution_time", 0)
+                    metadata = details.get("consultation_metadata", {})
+                    provider = metadata.get("provider", "")
+                    
+                    # Format route info string
+                    route_str = f"Route: {route}"
+                    if provider:
+                        route_str += f" ({provider})"
+                    route_str += f", Time: {exec_time:.1f}s"
+                    route_info = route_str
 
+                # Clean output and print response
                 print(f"\n🤖 {default_entity.title()}: {answer}")
+                if route_info:
+                    print(f"{route_info}")
 
             except KeyboardInterrupt:
                 await graceful_shutdown()

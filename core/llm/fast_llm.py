@@ -197,98 +197,63 @@ class FastLLM:
                 "threads": 1,  # Single thread for simplicity
                 "use_metal": False,
                 "use_cuda": False,
-                "verbose": False
+                "verbose": False  # Always disable verbose mode
             }
 
     async def _load_model(self) -> None:
-        """Load the model with comprehensive error logging."""
-        print("🔍 DEBUG: _load_model called")
-        
+        """Load the utility model for fast classification tasks."""
         if self.model_loaded or not Llama:
-            print(f"🔍 DEBUG: Early return - model_loaded: {self.model_loaded}, Llama available: {Llama is not None}")
             return
 
-        self._performance_stats["load_attempts"] += 1
-        
+        # Find best model
         model_path = self._find_best_utility_model()
         if not model_path:
-            print("⚠️ No model files found. Fast LLM will use rule-based fallbacks.")
-            self._fallback_mode = True
-            return
+            raise RuntimeError("No suitable utility model found")
+
+        # Get utility performance config
+        utility_config = self._get_utility_config()
+
+        # Redirect stdout temporarily to suppress llama.cpp output
+        import sys
+        import os
+        original_stdout = sys.stdout
+        sys.stdout = open(os.devnull, 'w')
 
         try:
-            # Configure model parameters based on hardware and identity config
-            utility_config = self._get_utility_config()
-            
             # Basic model kwargs
             model_kwargs = {
                 "model_path": str(model_path),
                 "n_ctx": utility_config.get("context_size", 2048),  # Sufficient for routing
                 "n_batch": utility_config.get("batch_size", 512),
-                "verbose": utility_config.get("verbose", False),
+                "verbose": False,  # Always disable verbose mode
+                "n_threads": 1,  # Single thread to reduce output
+                "log_level": "error",  # Only show errors
+                "offload_kqv": True,  # Reduce initialization messages
+                "embedding": False,  # Disable embedding initialization messages
+                "print_details": False  # Suppress model details printing
             }
-            
-            # Add appropriate GPU acceleration
-            use_metal = utility_config.get("use_metal", False)
-            use_cuda = utility_config.get("use_cuda", False)
-            if use_metal:
-                gpu_layers = utility_config.get("gpu_layers", 1)
-                model_kwargs["n_gpu_layers"] = gpu_layers
-                print(f"🚀 Using Metal acceleration with {gpu_layers} GPU layers")
-            elif use_cuda:
-                gpu_layers = utility_config.get("gpu_layers", 1)
-                model_kwargs["n_gpu_layers"] = gpu_layers
-                print(f"🚀 Using CUDA acceleration with {gpu_layers} GPU layers")
-            else:
-                model_kwargs["n_gpu_layers"] = 0
-                print("💻 Using CPU-only mode")
-            
-            print(f"🔄 Loading utility model: {model_path}")
-            print(f"🔧 Model parameters: {model_kwargs}")
-            
-            # Load model asynchronously to avoid blocking
-            try:
-                # This wraps the model initialization in a thread pool
-                self.model = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: Llama(**model_kwargs)
-                )
-                
-                # Verify model is properly initialized
-                if self.model:
-                    print("✅ Utility model loaded successfully")
-                    print(f"Model info: {self.get_model_info()}")
-                    self.model_loaded = True
-                    load_time = time.time() - self._performance_stats["start_time"]
-                    print(f"✅ Utility model loaded in {load_time:.2f}s")
-                else:
-                    print("❌ Model initialization returned None")
-                    self._fallback_mode = True
-            except Exception as e:
-                print(f"❌ Error initializing model: {e}")
-                import traceback
-                traceback.print_exc()
-                self._fallback_mode = True
-                
+
+            # Load model in thread pool
+            self.model = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: Llama(**model_kwargs)
+            )
+            self.model_loaded = True
+            print("✅ FastLLM model loaded successfully")
+
         except Exception as e:
-            print(f"❌ Error loading model: {e}")
-            import traceback
-            traceback.print_exc()
-            self._fallback_mode = True
+            print(f"❌ Failed to load FastLLM model: {e}")
+            raise RuntimeError(f"Could not load FastLLM model at {model_path}") from e
+        finally:
+            # Restore stdout
+            sys.stdout = original_stdout
 
     async def ensure_loaded(self) -> None:
         """Ensure model is loaded, thread-safe with better error handling."""
-        print("🔍 DEBUG: ensure_loaded called")
         if not self.model_loaded and not self._fallback_mode:
             try:
                 async with self._init_lock:
                     if not self.model_loaded and not self._fallback_mode:
-                        print("🔍 DEBUG: Model not loaded yet, calling _load_model()")
                         await self._load_model()
-                        if self.model_loaded:
-                            print("✅ Model loaded successfully")
-                            print(f"🔍 DEBUG: Model info: {self.get_model_info()}")
-                        else:
-                            print("⚠️ Model not loaded after _load_model()")
             except Exception as e:
                 print(f"❌ Error loading model: {e}")
                 import traceback
@@ -395,36 +360,6 @@ Query:"""
         # This is a fallback for when the model might be unreliable
         lower_query = query.lower()
         
-        # Check for simple conversational patterns (route to LOCAL)
-        if any(pattern in lower_query for pattern in [
-            "hello", "hi", "hey", "greetings", "привет", 
-            "how are you", "как дела", "what's up", 
-            "chat", "talk", "поболтаем", "weather", "joke",
-            "nice to meet you", "what's your name", "what is your name",
-            "who are you", "кто ты", "как тебя зовут", "как звать"
-        ]):
-            print("🔍 DEBUG: Simple pattern match - routing to LOCAL")
-            return {
-                "route": "LOCAL",
-                "confidence": "high",
-                "complexity": 2,
-                "reasoning": "Simple greeting or conversational query"
-            }
-            
-        # Check for complex technical patterns (route to EXTERNAL)
-        if any(pattern in lower_query for pattern in [
-            "quantum", "algorithm", "machine learning", "ai model", "neural network",
-            "programming", "code", "write a", "explain", "analyze", 
-            "physics", "thermodynamics", "mathematics", "philosophy",
-            "ethics", "research", "academic", "technical", "paper", "analysis"
-        ]):
-            print("🔍 DEBUG: Complex pattern match - routing to EXTERNAL")
-            return {
-                "route": "EXTERNAL",
-                "confidence": "high",
-                "complexity": 8,
-                "reasoning": "Complex technical or academic query"
-            }
             
         # Check if we should use rule-based routing
         if self._use_rule_based_routing:

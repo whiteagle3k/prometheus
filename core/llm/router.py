@@ -131,188 +131,87 @@ class LLMRouter:
             print(f"⚠️ Could not log routing decision: {e}")
 
     async def route_task(self, task: TaskContext) -> RouteDecision:
-        """Make routing decision for a task."""
-        try:
-            # Check if local model is available
-            local_available = self.local_llm and await self.local_llm.is_available()
-            
-            # Only check external availability if we might actually need it
-            # This avoids unnecessary health check API calls during LOCAL routing
-            external_available = False
-            if not local_available:
-                # Only do expensive health checks if local is not available
-                external_available = await self.external_manager.get_best_available() is not None
-            else:
-                # Quick check without health calls - just see if any providers are configured
-                external_available = len(self.external_manager.list_available_providers()) > 0
-
-            # If only one option available, use it
-            if not external_available:
-                if local_available:
-                    self._routing_stats["local_routes"] += 1
-                    return RouteDecision.LOCAL
-                else:
-                    msg = "No LLMs available"
-                    raise RuntimeError(msg)
-
-            if not local_available:
-                self._routing_stats["external_routes"] += 1
-                return RouteDecision.EXTERNAL
-
-            # Both available - apply routing heuristics
-            decision = await self._apply_routing_heuristics(task)
-
-            if decision == RouteDecision.LOCAL:
-                self._routing_stats["local_routes"] += 1
-            else:
-                self._routing_stats["external_routes"] += 1
-
-            return decision
-
-        except Exception as e:
-            self._routing_stats["routing_errors"] += 1
-            print(f"Routing error: {e}")
-            # Fallback to local if available
-            if self.local_llm and await self.local_llm.is_available():
-                return RouteDecision.LOCAL
-            else:
-                return RouteDecision.EXTERNAL
-
-    async def _apply_routing_heuristics(self, task: TaskContext) -> RouteDecision:
-        """Apply routing heuristics to make decision using fast LLM routing oracle."""
+        """Route task to appropriate LLM based on task characteristics."""
         start_time = time.time()
-        route_used = "unknown"  # Ensure this is always defined for error handling
-        
-        # Rule 0: Check if external LLM is preferred in identity config
-        # Try multiple possible config locations for routing preferences
-        
-        # Location 1: operational_guidelines.routing_policy (current agent configs)
-        operational_guidelines = self.identity_config.get("operational_guidelines", {})
-        routing_policy = operational_guidelines.get("routing_policy", {})
-        prefer_external = routing_policy.get("prefer_external", False)
-        use_for_coding = routing_policy.get("use_for_coding", False) or routing_policy.get("use_for_analysis", False)
-        
-        # Location 1b: also check thresholds substructure (Vasya's config structure)
-        if not prefer_external:
-            thresholds = routing_policy.get("thresholds", {})
-            prefer_external = thresholds.get("prefer_external", False)
-            use_for_coding = thresholds.get("use_for_coding", False) or thresholds.get("use_for_implementation", False)
-        
-        # Location 2: external_llms.routing_preferences (alternative location) 
-        if not prefer_external:
-            external_prefs = self.identity_config.get("external_llms", {}).get("routing_preferences", {})
-            prefer_external = external_prefs.get("prefer_external", False)
-            use_for_coding = external_prefs.get("use_for_coding", False)
-        
-        # If external is preferred and available, use it
-        if prefer_external:
-            print(f"🎯 External LLM preferred in config (prefer_external: {prefer_external})")
-            return RouteDecision.EXTERNAL
-            
-        # Check for coding tasks if configured
-        if use_for_coding and self._is_coding_task(task.prompt):
-            print("🎯 Coding task detected, using external LLM as configured")
-            return RouteDecision.EXTERNAL
 
         # Rule 1: Basic sanity checks first
         if self.local_llm:
             estimated_tokens = await self.local_llm.count_tokens(task.prompt)
             total_estimated_tokens = estimated_tokens + task.max_tokens
 
-            # Rule 1a: Token threshold check - use from identity config or default
+            # Rule 1a: Token threshold check
             routing_threshold = self.identity_config.get("routing_threshold", 1000)
             if estimated_tokens > routing_threshold:
-                print(f"🎯 Token threshold exceeded ({estimated_tokens} > {routing_threshold})")
                 return RouteDecision.EXTERNAL
 
             # Rule 1b: Very long outputs
             if task.max_tokens > 1500:
-                print(f"🎯 Large output requested ({task.max_tokens} tokens)")
                 return RouteDecision.EXTERNAL
 
             # Rule 1c: Context size check
             local_context = self.local_llm.get_context_size()
             if total_estimated_tokens > local_context * 0.8:  # 80% threshold
-                print(f"🎯 Context limit approaching ({total_estimated_tokens} / {local_context})")
                 return RouteDecision.EXTERNAL
         else:
-            # If no local llm, all checks that would route to external are effectively true
-            print("➡️ No local LLM, routing to external.")
             return RouteDecision.EXTERNAL
 
         # Rule 1d: Explicit requirements
         if task.needs_latest_knowledge:
-            print("🎯 Latest knowledge required")
             return RouteDecision.EXTERNAL
 
         if task.is_creative and total_estimated_tokens > 2000:
-            print("🎯 Creative task with large output")
             return RouteDecision.EXTERNAL
 
         if task.latency_sensitive and not task.cost_sensitive:
-            print("🎯 Latency-sensitive task")
             return RouteDecision.LOCAL
 
-        # Rule 2: Fast LLM Routing Oracle (NEW!)
-        # This replaces the old self-assessment logic with unbiased routing
-        print("🔧 Fast LLM: Making routing decision...")
+        # Rule 2: Fast LLM Routing Oracle with Confidence Calibration
         try:
-            # Build assessment context for the oracle
+            # Get routing decision from FastLLM
             oracle_result = await self.utility_llm.decide_routing(task)
             
-            # Actually use the routing decision from FastLLM
+            # Extract key metrics for calibration
             route_value = oracle_result.get("route", "").upper()
-            if route_value == "EXTERNAL":
-                print(f"🎯 FastLLM recommends EXTERNAL route with complexity: {oracle_result.get('complexity', 'unknown')}")
-                print(f"🧠 Reasoning: {oracle_result.get('reasoning', 'No reasoning provided')}")
-                return RouteDecision.EXTERNAL
-
-            # Rule 2b: Use calibrator for confidence-based routing
-            if self.use_calibrator and self.local_llm:
-                self._routing_stats["calibrator_predictions"] += 1
-                should_use_local, _ = calibrator.predict_should_use_local(
-                    entropy=oracle_result.get("entropy", 0.5), # Assuming FastLLM provides entropy
-                    query=task.prompt,
-                    local_confidence=oracle_result.get("confidence", "low")
-                )
-                if not should_use_local:
-                    print("🎯 Calibrator recommends external route")
-                    return RouteDecision.EXTERNAL
-
-            # Rule 2c: Fallback based on complexity
+            confidence = oracle_result.get("confidence", "low")
             complexity = oracle_result.get("complexity", 5)
-            # Ensure complexity is treated as a number
-            if isinstance(complexity, str):
-                try:
-                    complexity = int(complexity)
-                except ValueError:
-                    complexity = 5  # Default if conversion fails
             
-            if complexity > 7:
-                print(f"🎯 High complexity ({complexity}/10), routing to external")
+            # Calculate entropy from complexity (normalized to 0-1 range)
+            entropy = min(max(complexity / 10.0, 0.0), 1.0)
+            
+            # Use confidence calibrator if enabled
+            if self.use_calibrator:
+                self._routing_stats["calibrator_predictions"] += 1
+                should_use_local, calibration_confidence = calibrator.predict_should_use_local(
+                    entropy=entropy,
+                    query=task.prompt,
+                    local_confidence=confidence
+                )
+                
+                # Log the decision for training
+                await calibrator.log_decision(
+                    query=task.prompt,
+                    entropy=entropy,
+                    local_confidence=confidence,
+                    route_used=route_value.lower(),
+                    is_correct=True,  # Will be updated with actual feedback
+                    execution_time=time.time() - start_time
+                )
+                
+                if not should_use_local:
+                    return RouteDecision.EXTERNAL
+                else:
+                    return RouteDecision.LOCAL
+            
+            # Fallback to direct FastLLM decision if calibrator is disabled
+            if route_value == "EXTERNAL":
                 return RouteDecision.EXTERNAL
+
+            return RouteDecision.LOCAL
 
         except Exception as e:
             execution_time = time.time() - start_time
-            # Log the error for debugging
             print(f"⚠️ Error in routing decision: {e}")
-            
-            # Log error but return a valid RouteDecision enum
-            self._log_routing_decision(
-                query=task.prompt,
-                route_decision="error",
-                oracle_result={"error": str(e)},
-                execution_time=execution_time,
-                actual_route="external", # Default to external on error
-                success=False,
-                error_details=str(e)
-            )
-            
-            # Return a fallback decision (preferring EXTERNAL for safety)
             return RouteDecision.EXTERNAL
-
-        # Default to local if no other rule applies
-        return RouteDecision.LOCAL
 
     def _is_coding_task(self, prompt: str) -> bool:
         """Check if the prompt is a coding-related task."""
@@ -336,24 +235,32 @@ class LLMRouter:
 
             response = ""
             consultation_metadata = {}
+            memory_points = []
 
             # 2. Execute based on route
             if route == RouteDecision.LOCAL:
                 if not self.local_llm:
                     raise RuntimeError("Local LLM not available")
 
-                # Retrieve memories if retriever is provided
+                # For local LLM, retrieve and use memories
                 memories = await task.memory_retriever() if task.memory_retriever else []
                 local_context = self._build_local_context(task.prompt, memories)
 
                 # Generate response
                 structured_result = await self.local_llm.generate_structured(
                     prompt=task.prompt,
-                    max_tokens=1024,  # Increased to handle longer responses
+                    max_tokens=1024,
                     temperature=0.7,
                     context=local_context
                 )
                 response = structured_result.get("answer", "")
+                
+                # Local LLM handles its own memory storage
+                if "memory_points" in structured_result:
+                    try:
+                        await self.local_llm.store_memory_points(structured_result["memory_points"])
+                    except Exception as e:
+                        print(f"⚠️ Local LLM failed to store memory points: {e}")
 
             elif route == RouteDecision.EXTERNAL:
                 # Get the provider name
@@ -366,7 +273,7 @@ class LLMRouter:
                 if not provider_instance:
                     raise RuntimeError(f"Provider {provider_name} not available")
 
-                # Prepare external prompt that includes conversation context
+                # For external LLM, only use current conversation context
                 prepared_prompt = await self._prepare_external_prompt(task)
                 
                 # Use the provider instance to generate a response
@@ -384,7 +291,14 @@ class LLMRouter:
                 consultation_metadata = consultation_metadata or {}
                 consultation_metadata["provider"] = provider_name
 
-            # 3. Log successful execution
+                # External LLM handles its own memory storage
+                if "memory_points" in consultation_metadata:
+                    try:
+                        await provider_instance.store_memory_points(consultation_metadata["memory_points"])
+                    except Exception as e:
+                        print(f"⚠️ External LLM failed to store memory points: {e}")
+
+            # 4. Log successful execution
             execution_time = time.time() - start_time
             self._log_routing_decision(
                 query=task.prompt,
@@ -405,7 +319,7 @@ class LLMRouter:
             }
 
         except Exception as e:
-            # 4. Log error and return a safe response
+            # 5. Log error and return a safe response
             execution_time = time.time() - start_time
             print(f"❌ Error during task execution: {e}")
             self._log_routing_decision(
@@ -458,8 +372,7 @@ class LLMRouter:
         return None
 
     async def _prepare_external_prompt(self, task: TaskContext) -> str:
-        """Prepare a consultation request for external LLM."""
-
+        """Prepare a consultation request for external LLM, using only current context."""
         # Build entity's self-description for the consultation using identity config
         try:
             name = self.identity_config.get('name', 'AI Assistant')
@@ -484,8 +397,7 @@ class LLMRouter:
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in task.prompt.lower())
         response_language = "Russian" if is_russian else "English"
 
-        # Check if this is an ongoing conversation (has context with previous exchanges)
-        # Use generic conversation markers that don't depend on specific entity names
+        # Check if this is an ongoing conversation
         is_ongoing_conversation = False
         if task.conversation_context and isinstance(task.conversation_context, str):
             is_ongoing_conversation = bool(task.conversation_context.strip() and any(
@@ -493,14 +405,14 @@ class LLMRouter:
                 for marker in ["👤 You:", "🧠", "User:", "Assistant:", "Human:", "AI:"]
             ))
 
-        # Build the consultation prompt with comprehensive context
+        # Build the consultation prompt with current context only
         consultation_prompt = f"""{entity_intro}
 
 My key traits: {traits_text}
 
 """
 
-        # Add comprehensive conversation context if available
+        # Add current conversation context if available
         if task.conversation_context and isinstance(task.conversation_context, str) and task.conversation_context.strip():
             consultation_prompt += f"""CONVERSATION CONTEXT:
 {task.conversation_context}

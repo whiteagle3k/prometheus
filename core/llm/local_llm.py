@@ -3,19 +3,49 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Union
+import os
+import sys
+import time
+import logging
+import json
+
+# Set environment variable to quiet llama.cpp
+os.environ["LLAMA_DEBUG"] = "0"
+
+# Optional: Redirect stderr during import of llama_cpp
+# This will silence output during model loading
+import contextlib
+
+# Create null file descriptor
+class NullWriter:
+    def write(self, x): pass
+    def flush(self): pass
+
+# Temporarily redirect stderr during model loading
+old_stderr = sys.stderr
+sys.stderr = NullWriter()
 
 try:
+    # Import llama_cpp with reduced output
     from llama_cpp import Llama
+    from llama_cpp.llama_chat_format import get_chat_format
 except ImportError:
-    print("Warning: llama-cpp-python not installed. Local LLM will not work.")
     Llama = None
+    get_chat_format = None
+    print("⚠️ llama_cpp not installed. Local models will not work.")
+
+# Restore stderr
+sys.stderr = old_stderr
 
 from core.config import config
 
 # TODO: Remove direct identity import - should be passed from entity
 # from ..identity import identity
 from core.processing.pipeline import create_simple_response_pipeline
+from core.processing.filters import ContaminationFilter
+
+logger = logging.getLogger(__name__)
 
 
 class LocalLLM:
@@ -66,11 +96,7 @@ class LocalLLM:
                 f"Model not found at {model_path}. "
                 "Run scripts/download_models.sh first."
             )
-            raise FileNotFoundError(
-                msg
-            )
-
-        print(f"🔄 Loading local model: {model_path}")
+            raise FileNotFoundError(msg)
 
         # Get performance config from identity if available
         try:
@@ -78,46 +104,47 @@ class LocalLLM:
         except:
             performance_config = {}
 
-        # Configure hardware acceleration with optimizations
-        model_kwargs = {
-            "model_path": str(model_path),
-            "n_ctx": performance_config.get("context_size", config.local_model_context_size),
-            "n_batch": performance_config.get("batch_size", 512),
-            "n_threads": performance_config.get("threads", None),
-            "use_mmap": True,
-            "use_mlock": True,
-            "f16_kv": True,
-            "verbose": True,  # Keep verbose for now to monitor loading
-        }
+        # Redirect stdout temporarily to suppress llama.cpp output
+        import sys
+        import os
+        original_stdout = sys.stdout
+        sys.stdout = open(os.devnull, 'w')
 
-        # Special handling for Phi-4 models
-        is_phi4 = "phi-4" in model_path.name.lower()
-        if is_phi4:
-            print("🔧 Detected Phi-4 model, applying special configuration")
-            model_kwargs.update({
-                "gqa": 4,
-                "rope_freq_base": 250000.0,
-                "rope_freq_scale": 1.0,
-            })
-
-        # Hardware-specific optimizations
-        if config.use_metal:
-            gpu_layers = performance_config.get("gpu_layers", config.local_model_gpu_layers)
-            model_kwargs["n_gpu_layers"] = gpu_layers
-            print(f"🚀 Using Metal acceleration with {gpu_layers} GPU layers")
-        elif config.use_cuda:
-            gpu_layers = performance_config.get("gpu_layers", config.local_model_gpu_layers)
-            model_kwargs["n_gpu_layers"] = gpu_layers
-            print(f"🚀 Using CUDA acceleration with {gpu_layers} GPU layers")
-        else:
-            model_kwargs["n_gpu_layers"] = 0
-            print("💻 Using CPU-only mode")
-
-        # Load model in thread pool to avoid blocking
         try:
+            # Configure hardware acceleration with optimizations
+            model_kwargs = {
+                "model_path": str(model_path),
+                "n_ctx": performance_config.get("context_size", config.local_model_context_size),
+                "n_batch": performance_config.get("batch_size", 512),
+                "n_threads": 1,  # Single thread to reduce output
+                "use_mmap": True,
+                "use_mlock": True,
+                "f16_kv": True,
+                "verbose": False,  # Disable verbose mode
+                "log_level": "error",  # Only show errors
+                "offload_kqv": True,  # Reduce initialization messages
+                "embedding": False,  # Disable embedding initialization messages
+                "print_details": False  # Suppress model details printing
+            }
+
+            # Hardware-specific optimizations
+            if config.use_metal:
+                gpu_layers = performance_config.get("gpu_layers", config.local_model_gpu_layers)
+                model_kwargs["n_gpu_layers"] = gpu_layers
+                print(f"🚀 Using Metal acceleration with {gpu_layers} GPU layers")
+            elif config.use_cuda:
+                gpu_layers = performance_config.get("gpu_layers", config.local_model_gpu_layers)
+                model_kwargs["n_gpu_layers"] = gpu_layers
+                print(f"🚀 Using CUDA acceleration with {gpu_layers} GPU layers")
+            else:
+                print("💻 Using CPU-only mode")
+
+            # Load model in thread pool to avoid blocking
             self.model = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: Llama(**model_kwargs)
             )
+            self.model_loaded = True
+            print("✅ Local model loaded successfully")
         except Exception as e:
             print(f"❌ Failed to load local model: {e}")
             if "GGML_ASSERT" in str(e):
@@ -125,9 +152,9 @@ class LocalLLM:
                 print("   with the current version of llama-cpp-python or if the model file is corrupt.")
                 print("   Try rebuilding llama-cpp-python or re-downloading the model.")
             raise RuntimeError(f"Could not load local model at {model_path}") from e
-
-        self.model_loaded = True
-        print("✅ Local model loaded successfully")
+        finally:
+            # Restore stdout
+            sys.stdout = original_stdout
 
     async def ensure_loaded(self) -> None:
         """Ensure model is loaded, thread-safe."""
@@ -461,7 +488,6 @@ Respond naturally in the user's language.<|end|>
         """Parse structured response from local LLM using processing pipeline."""
 
         # Use contamination filter for basic cleanup first
-        from core.processing.filters import ContaminationFilter
         filter_processor = ContaminationFilter()
         filter_result = filter_processor.process(raw_response)
         response = filter_result.data if filter_result.success else raw_response.strip()

@@ -4,6 +4,7 @@ import warnings
 from collections.abc import AsyncGenerator
 import asyncio
 import time
+import logging
 
 try:
     import openai
@@ -20,6 +21,8 @@ from .base import (
     ProviderCapabilities,
     ProviderType,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAIProvider(ExternalLLMProvider):
@@ -181,3 +184,33 @@ class OpenAIProvider(ExternalLLMProvider):
             "requests_per_minute": self.capabilities.rate_limit_rpm,
             "tokens_per_minute": self.capabilities.rate_limit_tpm,
         }
+        
+    async def store_memory_points(self, memory_points: list[str]) -> bool:
+        """
+        Store memory points from LLM responses in the memory system.
+        
+        Args:
+            memory_points: List of memory points to store
+            
+        Returns:
+            Success status
+        """
+        try:
+            if not memory_points:
+                return True
+                
+            logger.debug(f"Storing {len(memory_points)} memory points from OpenAI")
+            
+            # This is a placeholder implementation
+            # In a full implementation, you would:
+            # 1. Process the memory points 
+            # 2. Store them in the appropriate memory system
+            
+            for point in memory_points:
+                logger.debug(f"Memory point: {point}")
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to store memory points: {e}")
+            return False

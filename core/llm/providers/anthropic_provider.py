@@ -2,15 +2,19 @@
 
 import warnings
 from collections.abc import AsyncGenerator
+from typing import Any, Dict, List, Optional, Tuple
+import logging
+import time
+import asyncio
 import json
+
+from core.config import config
 
 try:
     import anthropic
 except ImportError:
     print("Warning: anthropic not installed. Anthropic provider will not work.")
     anthropic = None
-
-from core.config import config
 
 from .base import (
     ExternalLLMProvider,
@@ -19,6 +23,8 @@ from .base import (
     ProviderCapabilities,
     ProviderType,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicProvider(ExternalLLMProvider):
@@ -29,160 +35,325 @@ class AnthropicProvider(ExternalLLMProvider):
         return ProviderType.ANTHROPIC
 
     def _get_capabilities(self) -> ProviderCapabilities:
-        """Get Anthropic provider capabilities from configuration."""
+        """Get the provider capabilities."""
         return ProviderCapabilities(
-            max_context_size=self.config.get("context_size", 200_000),
-            supports_streaming=True,
-            supports_system_prompt=True,
-            supports_function_calling=True,  # Claude 3 models support tool use (June 2024)
-            cost_per_1k_input_tokens=self.config.get("cost_per_1k_input", 0.003),
-            cost_per_1k_output_tokens=self.config.get("cost_per_1k_output", 0.015),
-            rate_limit_rpm=self.config.get("rate_limit_rpm"),
-            rate_limit_tpm=self.config.get("rate_limit_tpm"),
+            streaming=True,
+            json_mode=True,
+            tools=True,
+            vision=True,
+            function_calling=True
         )
 
-    async def _setup_client(self) -> None:
-        """Setup Anthropic client."""
+    def _build_system_prompt(self, system_prompt: str) -> str:
+        """
+        Format the system prompt for Anthropic.
+        Claude takes system prompts as-is.
+        """
+        return system_prompt
+
+    async def _get_client(self) -> Any:
+        """
+        Get an Anthropic client instance.
+        
+        Returns:
+            An initialized Anthropic client
+        """
         if not anthropic:
-            msg = "anthropic package not installed"
-            raise RuntimeError(msg)
+            raise RuntimeError("anthropic package not installed")
+            
+        # Get API key from config
+        api_key = self._get_api_key()
+        if not api_key:
+            raise ValueError("No Anthropic API key found in configuration")
+            
+        # Create client
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+        return client
 
-        if not config.anthropic_api_key:
-            msg = "ANTHROPIC_API_KEY not configured"
-            raise RuntimeError(msg)
-
+    async def store_memory_points(self, memory_points: List[Dict[str, Any]]) -> None:
+        """
+        Store memory points for future retrieval.
+        This is a stub method to maintain compatibility with OpenAI provider.
+        Anthropic doesn't have memory points storage yet.
+        
+        Args:
+            memory_points: List of memory points to store
+        """
+        # This is just a stub method - does nothing in the Anthropic provider
+        # but maintains interface compatibility with OpenAI provider
+        pass
+        
+    async def _generate_completion(
+        self, 
+        request: GenerationRequest
+    ) -> GenerationResponse:
+        """
+        Generate a completion from Anthropic.
+        
+        Args:
+            request: Generation request parameters
+            
+        Returns:
+            Response with text and metadata
+        """
+        start_time = time.time()
+        
         try:
-            # Suppress warnings for compatibility issues
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                self._client = anthropic.AsyncAnthropic(api_key=config.anthropic_api_key)
-        except Exception as e:
-            msg = f"Failed to setup Anthropic client: {e}"
-            raise RuntimeError(msg)
-
-    async def _generate_text(self, request: GenerationRequest) -> GenerationResponse:
-        """Generate text using Anthropic API."""
-        if not self._client:
-            await self._setup_client()
-
-        model = request.model or self.config.get("model", "claude-3-5-sonnet-20240620")
-
-        messages = [{"role": "user", "content": request.prompt}]
-
-        request_kwargs = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": request.max_tokens,
-            "temperature": request.temperature,
-        }
-
-        # Anthropic uses separate system parameter
-        if request.system_prompt:
-            request_kwargs["system"] = request.system_prompt
-
-        # Add tools if available (for function calling)
-        if request.tools:
-            formatted_tools = []
-            for tool in request.tools:
-                formatted_tools.append({
-                    "name": tool.get("name"),
-                    "description": tool.get("description"),
-                    "input_schema": tool.get("parameters", {"type": "object", "properties": {}})
-                })
-            request_kwargs["tools"] = formatted_tools
-
-        # Add any extra parameters from the request
-        if request.extra_params:
-            request_kwargs.update(request.extra_params)
-
-        # DEBUG: print outgoing request
-        print(f"[ANTHROPIC REQUEST] model={model}, tools={request_kwargs.get('tools')}, prompt={request.prompt[:200]}")
-
-        try:
-            response = await self._client.messages.create(**request_kwargs)
-            print(f"[ANTHROPIC RAW RESPONSE] {response}")
-
-            text_content = ""
-            tool_calls = []
-
-            if response.stop_reason == "tool_use":
-                for content_block in response.content:
-                    if content_block.type == "tool_use":
-                        tool_calls.append({
-                            "jsonrpc": "2.0",
-                            "method": f"filesystem_{content_block.name}",
-                            "params": content_block.input,
-                            "id": content_block.id
-                        })
+            client = await self._get_client()
+            
+            # Determine which model to use
+            model = request.model or config.anthropic_model or "claude-3-opus-20240229"
+            
+            # Build message content
+            if request.system_prompt:
+                system = request.system_prompt
             else:
-                # Handle standard text response
-                text_content = response.content[0].text if response.content and response.content[0].type == "text" else ""
-
-            # Estimate tokens
-            # We estimate based on text content for now, tool use token cost is complex
-            prompt_for_token_estimation = request.prompt + (request.system_prompt or "")
-            input_tokens = await self._estimate_tokens(prompt_for_token_estimation)
-            output_tokens = await self._estimate_tokens(text_content) # Base on text only for now
-            total_tokens = input_tokens + output_tokens
-
-            # Calculate cost estimate
-            cost_estimate = self.estimate_cost(input_tokens, output_tokens)
-
+                system = "You are a helpful, harmless, and honest AI assistant."
+            
+            # Extract image data if present
+            messages = []
+            if request.image_data:
+                content = [{"type": "text", "text": request.prompt}]
+                
+                # Add each image
+                for i, image_data in enumerate(request.image_data):
+                    if isinstance(image_data, str) and image_data.startswith(("http://", "https://")):
+                        # URL-based image
+                        content.append({
+                            "type": "image", 
+                            "source": {"type": "url", "url": image_data}
+                        })
+                    elif isinstance(image_data, bytes) or (isinstance(image_data, str) and image_data.startswith("data:")):
+                        # Base64 encoded image
+                        if isinstance(image_data, bytes):
+                            import base64
+                            image_b64 = base64.b64encode(image_data).decode('utf-8')
+                            media_type = "image/jpeg"  # Assume JPEG if not specified
+                        else:
+                            # Extract from data URL
+                            media_type = image_data.split(";")[0].split(":")[1]
+                            image_b64 = image_data.split(",")[1]
+                            
+                        content.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": image_b64
+                            }
+                        })
+                messages = [{"role": "user", "content": content}]
+            else:
+                # Text-only message
+                messages = [{"role": "user", "content": request.prompt}]
+            
+            # Handle tools/function calling
+            request_kwargs = {
+                "model": model,
+                "system": system,
+                "messages": messages,
+                "max_tokens": request.max_tokens or 1024,
+                "temperature": request.temperature or 0.7,
+            }
+            
+            if request.tools:
+                request_kwargs["tools"] = request.tools
+                
+            # Debug: print outgoing request
+            print(f"[ANTHROPIC REQUEST] model={model}, tools={request_kwargs.get('tools')}, prompt={request.prompt[:200]}")
+                
+            # Make the API call
+            response = await client.messages.create(**request_kwargs)
+            
+            # Parse the response
+            generated_text = response.content[0].text
+            
+            # Handle tools/function calling
+            tool_calls = []
+            if response.model_extra and "tool_use" in response.model_extra:
+                tool_use = response.model_extra["tool_use"]
+                if tool_use:
+                    tool_call = {
+                        "name": tool_use["name"],
+                        "arguments": json.loads(tool_use["input"])
+                    }
+                    tool_calls.append(tool_call)
+                    
+            # Debug: print raw response
+            if config.debug_mode:
+                print(f"[ANTHROPIC RAW RESPONSE] {response}")
+                    
+            elapsed_time = time.time() - start_time
             return GenerationResponse(
-                text=text_content,
-                tool_calls=tool_calls if tool_calls else None,
-                model_used=model,
-                tokens_used=total_tokens,
-                cost_estimate=cost_estimate,
-                provider_metadata={
-                    "response_id": response.id,
-                    "stop_reason": response.stop_reason,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "usage": getattr(response, "usage", None),
-                },
+                text=generated_text,
+                raw_response=response,
+                finish_reason=response.stop_reason,
+                usage={"prompt_tokens": response.usage.input_tokens, "completion_tokens": response.usage.output_tokens},
+                provider="anthropic",
+                model=model,
+                elapsed_time=elapsed_time,
+                tool_calls=tool_calls
             )
+            
         except Exception as e:
-            msg = f"Anthropic API error: {e}"
-            raise RuntimeError(msg)
+            elapsed_time = time.time() - start_time
+            logger.error(f"Error in Anthropic provider: {e}")
+            return GenerationResponse(
+                text=f"Error: {str(e)}",
+                raw_response={"error": str(e)},
+                finish_reason="error",
+                usage={"prompt_tokens": 0, "completion_tokens": 0},
+                provider="anthropic",
+                model=request.model,
+                elapsed_time=elapsed_time,
+                error=str(e)
+            )
 
-    async def _generate_stream(self, request: GenerationRequest) -> AsyncGenerator[str, None]:
-        """Generate text with streaming using Anthropic API."""
-        if not self._client:
-            await self._setup_client()
-
-        model = request.model or self.config.get("model", "claude-3-5-sonnet-20240620")
-
-        messages = [{"role": "user", "content": request.prompt}]
-
-        request_kwargs = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": request.max_tokens,
-            "temperature": request.temperature,
-            "stream": True,
-        }
-
-        # Anthropic uses separate system parameter
-        if request.system_prompt:
-            request_kwargs["system"] = request.system_prompt
-
-        # Add any extra parameters from the request
-        if request.extra_params:
-            request_kwargs.update(request.extra_params)
-
+    async def _generate_completion_stream(
+        self, 
+        request: GenerationRequest
+    ) -> AsyncGenerator[GenerationResponse, None]:
+        """
+        Generate a streaming completion from Anthropic.
+        
+        Args:
+            request: Generation request parameters
+            
+        Yields:
+            Streaming response with partial text and metadata
+        """
+        start_time = time.time()
+        
         try:
-            async with self._client.messages.stream(**request_kwargs) as stream:
-                async for text in stream.text_stream:
-                    yield text
+            client = await self._get_client()
+            
+            # Determine which model to use
+            model = request.model or config.anthropic_model or "claude-3-opus-20240229"
+            
+            # Build message content
+            if request.system_prompt:
+                system = request.system_prompt
+            else:
+                system = "You are a helpful, harmless, and honest AI assistant."
+            
+            # Extract image data if present
+            messages = []
+            if request.image_data:
+                content = [{"type": "text", "text": request.prompt}]
+                
+                # Add each image
+                for i, image_data in enumerate(request.image_data):
+                    if isinstance(image_data, str) and image_data.startswith(("http://", "https://")):
+                        # URL-based image
+                        content.append({
+                            "type": "image", 
+                            "source": {"type": "url", "url": image_data}
+                        })
+                    elif isinstance(image_data, bytes) or (isinstance(image_data, str) and image_data.startswith("data:")):
+                        # Base64 encoded image
+                        if isinstance(image_data, bytes):
+                            import base64
+                            image_b64 = base64.b64encode(image_data).decode('utf-8')
+                            media_type = "image/jpeg"  # Assume JPEG if not specified
+                        else:
+                            # Extract from data URL
+                            media_type = image_data.split(";")[0].split(":")[1]
+                            image_b64 = image_data.split(",")[1]
+                            
+                        content.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": image_b64
+                            }
+                        })
+                messages = [{"role": "user", "content": content}]
+            else:
+                # Text-only message
+                messages = [{"role": "user", "content": request.prompt}]
+            
+            # Handle tools/function calling
+            request_kwargs = {
+                "model": model,
+                "system": system,
+                "messages": messages,
+                "max_tokens": request.max_tokens or 1024,
+                "temperature": request.temperature or 0.7,
+                "stream": True
+            }
+            
+            if request.tools:
+                request_kwargs["tools"] = request.tools
+            
+            # Make the API call
+            stream = await client.messages.create(**request_kwargs)
+            
+            # Return streaming responses
+            buffer = ""
+            usage = {"prompt_tokens": 0, "completion_tokens": 0}
+            
+            async for chunk in stream:
+                delta = ""
+                if hasattr(chunk, 'delta') and chunk.delta and hasattr(chunk.delta, 'text'):
+                    delta = chunk.delta.text or ""
+                elif hasattr(chunk, 'content') and chunk.content and len(chunk.content) > 0:
+                    # If we have content blocks, extract text
+                    for content_block in chunk.content:
+                        if content_block.type == "text":
+                            delta = content_block.text
+                
+                buffer += delta
+                
+                # Update token usage if available
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    usage = {
+                        "prompt_tokens": getattr(chunk.usage, 'input_tokens', 0),
+                        "completion_tokens": getattr(chunk.usage, 'output_tokens', 0)
+                    }
+                
+                elapsed_time = time.time() - start_time
+                yield GenerationResponse(
+                    text=buffer,
+                    raw_response=chunk,
+                    finish_reason=None,
+                    usage=usage,
+                    provider="anthropic",
+                    model=model,
+                    elapsed_time=elapsed_time,
+                    is_chunk=True,
+                    delta=delta
+                )
+            
+            # Final response with complete data
+            elapsed_time = time.time() - start_time
+            
+            yield GenerationResponse(
+                text=buffer,
+                raw_response={"message": buffer},
+                finish_reason="stop",
+                usage=usage,
+                provider="anthropic",
+                model=model,
+                elapsed_time=elapsed_time,
+                is_chunk=False,
+                delta=""
+            )
+            
         except Exception as e:
-            msg = f"Anthropic streaming error: {e}"
-            raise RuntimeError(msg)
-
-    async def _estimate_tokens(self, text: str) -> int:
-        """Estimate token count for Anthropic models."""
-        # Claude: roughly 3.5 characters per token
-        return int(len(text) / 3.5)
+            elapsed_time = time.time() - start_time
+            logger.error(f"Error in Anthropic streaming: {e}")
+            
+            yield GenerationResponse(
+                text=f"Error: {str(e)}",
+                raw_response={"error": str(e)},
+                finish_reason="error",
+                usage={"prompt_tokens": 0, "completion_tokens": 0},
+                provider="anthropic",
+                model=model,
+                elapsed_time=elapsed_time,
+                error=str(e)
+            )
 
     async def _health_check(self) -> bool:
         """Check if Anthropic API is healthy."""

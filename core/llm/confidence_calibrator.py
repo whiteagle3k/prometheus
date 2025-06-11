@@ -40,11 +40,11 @@ class ConfidenceCalibrator:
 
         self.model: LogisticRegression | None = None
         self.is_trained = False
-        self.fallback_threshold = 0.25  # Original threshold as fallback
+        self.fallback_threshold = 0.45  # Increased threshold to favor external routing
 
         # Training parameters
-        self.min_samples_for_training = 100
-        self.retrain_interval = 50  # Retrain every N new samples
+        self.min_samples_for_training = 50  # Reduced to allow faster adaptation
+        self.retrain_interval = 25  # Retrain more frequently
         self.sample_count = 0
 
         # Initialize CSV file
@@ -248,15 +248,11 @@ class ConfidenceCalibrator:
         query: str,
         local_confidence: str
     ) -> tuple[bool, float]:
-        """Predict whether to use local LLM based on learned calibration.
-
-        Returns:
-            Tuple of (should_use_local, confidence_score)
-        """
+        """Predict whether to use local LLM based on learned calibration."""
         if not self.is_trained or not self.model or not SKLEARN_AVAILABLE:
-            # Fallback to original threshold logic
-            should_use_local = entropy > self.fallback_threshold
-            confidence = entropy if entropy > self.fallback_threshold else 1.0 - entropy
+            # Fallback to threshold logic with FastLLM bias
+            should_use_local = entropy < self.fallback_threshold  # Inverted comparison
+            confidence = 1.0 - entropy if entropy < self.fallback_threshold else entropy
             return should_use_local, confidence
 
         try:
@@ -271,17 +267,22 @@ class ConfidenceCalibrator:
             prediction = self.model.predict(features)[0]
             probability = self.model.predict_proba(features)[0]
 
+            # Add bias towards FastLLM's recommendation
+            if entropy > 0.6:  # If FastLLM suggests high complexity
+                prediction = False  # Route to external
+                probability = np.array([0.3, 0.7])  # Bias probabilities
+
             # prediction=True means local should be used
             should_use_local = bool(prediction)
-            confidence_score = max(probability)  # Confidence in the prediction
+            confidence_score = max(probability)
 
             return should_use_local, confidence_score
 
         except Exception as e:
             logger.error(f"❌ Prediction failed: {e}")
-            # Fallback to threshold
-            should_use_local = entropy > self.fallback_threshold
-            confidence = entropy if entropy > self.fallback_threshold else 1.0 - entropy
+            # Fallback to threshold with FastLLM bias
+            should_use_local = entropy < self.fallback_threshold
+            confidence = 1.0 - entropy if entropy < self.fallback_threshold else entropy
             return should_use_local, confidence
 
     def get_stats(self) -> dict[str, Any]:

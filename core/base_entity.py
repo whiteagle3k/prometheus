@@ -171,36 +171,25 @@ class BaseEntity(ABC):
 
             # Process through the entity's thinking pipeline
             result = await self._process_input(user_text, user_id=user_id)
-            print(f"[BaseEntity] _process_input result: {result}")
             tool_calls = result.get("tool_calls", [])
-            print(f"[BaseEntity] Initial tool_calls: {tool_calls}")
 
-            # --- PATCH: обработка tool_calls ---
-            print(f"[BaseEntity] Initial tool_calls: {result.get('tool_calls', [])}")
+            # Handle tool calls if present
             tool_call_results = []
             max_tool_iters = 5
             while tool_calls and max_tool_iters > 0:
-                print(f"[BaseEntity] Entering tool_calls loop: {tool_calls}")
                 for tool_call in tool_calls:
-                    print(f"[BaseEntity] Executing tool call: {tool_call}")
-                    print(f"[BaseEntity] Available MCP capabilities: {list(self.mcp_capabilities.keys())}")
                     method = tool_call["method"]
                     if method.count('_') > 2:
                         parts = method.split('_')
                         method = '_'.join([parts[0]] + parts[-2:])
-                        print(f"[BaseEntity] Fixed method name: {method}")
-                    print(f"[BaseEntity] CALLING execute_capability: {method} {tool_call['params']}")
                     mcp_result = await self.mcp_client.execute_capability(
                         method,
                         tool_call["params"]
                     )
-                    print(f"[BaseEntity] MCP result: {mcp_result}")
                     tool_call_results.append(mcp_result)
                 result = await self._process_input(user_text, user_id=user_id)
                 tool_calls = result.get("tool_calls", [])
-                print(f"[BaseEntity] tool_calls after iteration: {tool_calls}")
                 max_tool_iters -= 1
-            # --- END PATCH ---
 
             # Extract response and execution details
             response = result.get("response", "")
@@ -483,68 +472,21 @@ class BaseEntity(ABC):
         approach = execution_details.get("approach", "unknown")
         fast_track = execution_details.get("fast_track", False)
 
-        # Route-specific debug info
-        if route_used == "local":
-            print(f"🎯 Route: Local LLM | Approach: {approach}")
-        elif route_used == "external":
-            if fast_track:
-                print(f"🚀 Route: External LLM (Fast-track) | Approach: {approach}")
-            else:
-                print(f"🌐 Route: External LLM | Approach: {approach}")
-            # Show consultation metadata if available
-            consultation_metadata = execution_details.get("consultation_metadata")
-            if consultation_metadata:
-                provider = consultation_metadata.get("provider", "unknown")
-                model = consultation_metadata.get("model", "unknown")
-                print(f"📡 External: {provider} ({model})")
-        elif route_used == "user_profile":
-            print("📊 Route: User Profile Store | Instant Response")
-        elif route_used == "mcp":
-            print("🔌 Route: MCP External Tool | Direct Execution")
-        else:
-            print(f"🔀 Route: {route_used} | Approach: {approach}")
-
+        # Get provider info if available
+        consultation_metadata = execution_details.get("consultation_metadata", {})
+        provider = consultation_metadata.get("provider", "")
+        
         # Performance metrics
         execution_time = execution_details.get("execution_time", 0)
-        estimated_cost = execution_details.get("estimated_cost", 0)
-
-        # Additional context information
-        context_info = []
-        if execution_details.get("episodes_used"):
-            context_info.append(f"Episodes: {execution_details['episodes_used']}")
-        if execution_details.get("user_profile_used"):
-            context_info.append("Profile: ✓")
-        if execution_details.get("memories_used") is not None:
-            memories_count = execution_details["memories_used"]
-            if fast_track:
-                context_info.append(f"Memories: {memories_count} (fast-track bypass)")
-            else:
-                context_info.append(f"Memories: {memories_count}")
-        if execution_details.get("mcp_capabilities_used"):
-            context_info.append(f"MCP: {execution_details['mcp_capabilities_used']}")
-        if fast_track:
-            context_info.append("⚡ Fast-track enabled")
-
-        context_str = " | ".join(context_info) if context_info else "No additional context"
-
-        # Format performance summary
-        performance_parts = [f"Total: {total_time:.1f}s"]
-        if execution_time > 0:
-            performance_parts.append(f"LLM: {execution_time:.1f}s")
-        if estimated_cost > 0:
-            performance_parts.append(f"Cost: ${estimated_cost:.4f}")
-
-        performance_str = " | ".join(performance_parts)
-
-        # Final summary line
-        print(f"💭 {performance_str} | {context_str}")
-
-        # Clean response confirmation
-        response = result.get("response", "")
-        if response and not any(marker in response for marker in ["ANSWER:", "CONFIDENCE:", "REASONING:"]):
-            print("✅ Clean response: No technical contamination")
-        elif any(marker in response for marker in ["ANSWER:", "CONFIDENCE:", "REASONING:"]):
-            print("⚠️ Response contains technical markers - check parsing")
+        
+        # Format route info
+        route_str = f"{route_used.upper()}"
+        if provider:
+            route_str += f" ({provider})"
+            
+        # Clean format for output - only show response in shell UI
+        # All other debug info is logged but not displayed
+        # print(f"Route: {route_str}, Time: {execution_time:.1f}s")
 
     async def autonomous_loop(self) -> None:
         """
