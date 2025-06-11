@@ -259,6 +259,13 @@ class LLMRouter:
         try:
             # Build assessment context for the oracle
             oracle_result = await self.utility_llm.decide_routing(task)
+            
+            # Actually use the routing decision from FastLLM
+            route_value = oracle_result.get("route", "").upper()
+            if route_value == "EXTERNAL":
+                print(f"🎯 FastLLM recommends EXTERNAL route with complexity: {oracle_result.get('complexity', 'unknown')}")
+                print(f"🧠 Reasoning: {oracle_result.get('reasoning', 'No reasoning provided')}")
+                return RouteDecision.EXTERNAL
 
             # Rule 2b: Use calibrator for confidence-based routing
             if self.use_calibrator and self.local_llm:
@@ -342,7 +349,7 @@ class LLMRouter:
                 # Generate response
                 structured_result = await self.local_llm.generate_structured(
                     prompt=task.prompt,
-                    max_tokens=task.max_tokens,
+                    max_tokens=1024,  # Increased to handle longer responses
                     temperature=0.7,
                     context=local_context
                 )

@@ -74,7 +74,9 @@ class FastLLM:
             "total_calls": 0,
             "failed_calls": 0,
             "rule_based_routing_calls": 0,
-            "model_classification_calls": 0
+            "model_classification_calls": 0,
+            "load_attempts": 0,
+            "start_time": time.time()
         }
 
         # Performance optimization flags
@@ -181,7 +183,10 @@ class FastLLM:
                 "gpu_layers": utility_config.get("gpu_layers", 32),  # More GPU layers for small models
                 "context_size": utility_config.get("context_size", 512),  # Small context for speed
                 "batch_size": utility_config.get("batch_size", 32),   # Small batch for speed
-                "threads": utility_config.get("threads", 1)  # Single thread for small models
+                "threads": utility_config.get("threads", 1),  # Single thread for small models
+                "use_metal": utility_config.get("use_metal", False),
+                "use_cuda": utility_config.get("use_cuda", False),
+                "verbose": utility_config.get("verbose", False)
             }
         else:
             # Default configuration optimized for small utility models
@@ -189,84 +194,111 @@ class FastLLM:
                 "gpu_layers": 32,   # Small models can fit entirely on GPU
                 "context_size": 512,  # Minimal context for speed
                 "batch_size": 32,   # Small batch for speed
-                "threads": 1  # Single thread for simplicity
+                "threads": 1,  # Single thread for simplicity
+                "use_metal": False,
+                "use_cuda": False,
+                "verbose": False
             }
 
     async def _load_model(self) -> None:
-        """Enhanced model loading with debugging information."""
+        """Load the model with comprehensive error logging."""
         print("🔍 DEBUG: _load_model called")
-        """Load the utility model with optimized settings for speed."""
-        load_start = time.time()
-
-        print("🔍 DEBUG: Checking model loading conditions")
-        print(f"🔍 DEBUG: self.model_loaded = {self.model_loaded}")
-        print(f"🔍 DEBUG: Llama available = {Llama is not None}")
-        print(f"🔍 DEBUG: self.model_path = {self.model_path}")
-        if self.model_loaded or not Llama or not self.model_path:
-            self._fallback_mode = True
-            print("🔍 DEBUG: Setting fallback_mode to True")
+        
+        if self.model_loaded or not Llama:
+            print(f"🔍 DEBUG: Early return - model_loaded: {self.model_loaded}, Llama available: {Llama is not None}")
             return
 
-        if not self.model_path.exists():
-            print("💡 Utility model not found - using fast rule-based heuristics")
+        self._performance_stats["load_attempts"] += 1
+        
+        model_path = self._find_best_utility_model()
+        if not model_path:
+            print("⚠️ No model files found. Fast LLM will use rule-based fallbacks.")
             self._fallback_mode = True
-            print("🔍 DEBUG: Setting fallback_mode to True")
             return
-
-        model_size_mb = self._get_model_size_mb(self.model_path)
-
-        print(f"⚡ Loading utility model: {self.model_path.name} ({model_size_mb:.1f}MB)")
-
-        # Optimized settings for small, fast model
-        model_kwargs = {
-            "model_path": str(self.model_path),
-            "n_ctx": self.utility_config["context_size"],
-            "verbose": False,
-            "n_batch": self.utility_config["batch_size"],
-            "n_threads": self.utility_config["threads"],
-            # Speed optimizations
-            "use_mmap": True,
-            "use_mlock": model_size_mb < 500,  # Lock small models in memory
-            "f16_kv": True,
-        }
-
-        # Hardware acceleration with configurable layers
-        gpu_layers = self.utility_config["gpu_layers"]
-        if config.use_metal:
-            model_kwargs["n_gpu_layers"] = gpu_layers
-        elif config.use_cuda:
-            model_kwargs["n_gpu_layers"] = gpu_layers
-        else:
-            model_kwargs["n_gpu_layers"] = 0
 
         try:
-            # Load model in thread pool
-            self.model = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: Llama(**model_kwargs)
-            )
-
-            self.model_loaded = True
-            load_time = time.time() - load_start
-            self._performance_stats["load_time"] = load_time
-
-            print(f"✅ Utility model loaded in {load_time:.2f}s")
-
+            # Configure model parameters based on hardware and identity config
+            utility_config = self._get_utility_config()
+            
+            # Basic model kwargs
+            model_kwargs = {
+                "model_path": str(model_path),
+                "n_ctx": utility_config.get("context_size", 2048),  # Sufficient for routing
+                "n_batch": utility_config.get("batch_size", 512),
+                "verbose": utility_config.get("verbose", False),
+            }
+            
+            # Add appropriate GPU acceleration
+            use_metal = utility_config.get("use_metal", False)
+            use_cuda = utility_config.get("use_cuda", False)
+            if use_metal:
+                gpu_layers = utility_config.get("gpu_layers", 1)
+                model_kwargs["n_gpu_layers"] = gpu_layers
+                print(f"🚀 Using Metal acceleration with {gpu_layers} GPU layers")
+            elif use_cuda:
+                gpu_layers = utility_config.get("gpu_layers", 1)
+                model_kwargs["n_gpu_layers"] = gpu_layers
+                print(f"🚀 Using CUDA acceleration with {gpu_layers} GPU layers")
+            else:
+                model_kwargs["n_gpu_layers"] = 0
+                print("💻 Using CPU-only mode")
+            
+            print(f"🔄 Loading utility model: {model_path}")
+            print(f"🔧 Model parameters: {model_kwargs}")
+            
+            # Load model asynchronously to avoid blocking
+            try:
+                # This wraps the model initialization in a thread pool
+                self.model = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: Llama(**model_kwargs)
+                )
+                
+                # Verify model is properly initialized
+                if self.model:
+                    print("✅ Utility model loaded successfully")
+                    print(f"Model info: {self.get_model_info()}")
+                    self.model_loaded = True
+                    load_time = time.time() - self._performance_stats["start_time"]
+                    print(f"✅ Utility model loaded in {load_time:.2f}s")
+                else:
+                    print("❌ Model initialization returned None")
+                    self._fallback_mode = True
+            except Exception as e:
+                print(f"❌ Error initializing model: {e}")
+                import traceback
+                traceback.print_exc()
+                self._fallback_mode = True
+                
         except Exception as e:
-            print(f"⚠️  Model loading failed: {e}")
+            print(f"❌ Error loading model: {e}")
             import traceback
             traceback.print_exc()
-            print("   Using rule-based heuristics as fallback")
             self._fallback_mode = True
-            print("🔍 DEBUG: Setting fallback_mode to True")
 
     async def ensure_loaded(self) -> None:
-        """Ensure model is loaded with debugging info."""
+        """Ensure model is loaded, thread-safe with better error handling."""
         print("🔍 DEBUG: ensure_loaded called")
-        """Ensure model is loaded, thread-safe."""
         if not self.model_loaded and not self._fallback_mode:
-            async with self._init_lock:
-                if not self.model_loaded and not self._fallback_mode:
-                    await self._load_model()
+            try:
+                async with self._init_lock:
+                    if not self.model_loaded and not self._fallback_mode:
+                        print("🔍 DEBUG: Model not loaded yet, calling _load_model()")
+                        await self._load_model()
+                        if self.model_loaded:
+                            print("✅ Model loaded successfully")
+                            print(f"🔍 DEBUG: Model info: {self.get_model_info()}")
+                        else:
+                            print("⚠️ Model not loaded after _load_model()")
+            except Exception as e:
+                print(f"❌ Error loading model: {e}")
+                import traceback
+                traceback.print_exc()
+                self._fallback_mode = True
+        else:
+            if self.model_loaded:
+                print("🔍 DEBUG: Model already loaded")
+            else:
+                print("🔍 DEBUG: In fallback mode, not loading model")
 
     async def classify_query(self, query: str) -> str:
         """Classify user query into semantic categories."""
@@ -344,90 +376,159 @@ Query:"""
         """Classify memory content into semantic categories."""
         # This can still be a simple classification
         return await self.classify_prompt(content, "memory")
+    
+    async def make_routing_decision(self, query: str, context: str = None) -> dict[str, Any]:
+        return await self.decide_routing(query, context)
 
     async def decide_routing(self, task_context) -> dict[str, Any]:
-        """Enhanced routing decision with debugging information."""
+        """Make routing decision for task using FastLLM."""
         print("🔍 DEBUG: decide_routing called")
-        """
-        Make a routing decision based on the TaskContext.
-        This now accepts the full context object.
-        """
-        print(">>> FASTLLM decide_routing executing from:", __file__)
-        print(">>> FASTLLM decide_routing: about to set start_time")
         start_time = time.time()
         
-        # Safely extract the prompt from task_context
-        # Handle both string and object types to avoid 'dict' object has no attribute 'value' error
+        # Extract query from task context
         if hasattr(task_context, 'prompt'):
-            # Task context is an object
             query = task_context.prompt
         else:
-            # Handle case where task_context might be a dict or other type
-            print("⚠️ Warning: task_context is not the expected TaskContext object")
-            if isinstance(task_context, dict) and 'prompt' in task_context:
-                query = task_context['prompt']
-            else:
-                print("❌ Error: Could not extract prompt from task_context")
-                query = str(task_context)  # Fallback
+            query = str(task_context)
+            
+        # Apply a simple rule-based pre-filter for very common patterns
+        # This is a fallback for when the model might be unreliable
+        lower_query = query.lower()
         
-        # For now, we'll primarily use the query for routing.
-        # The full context is available for future, more complex routing rules.
-
+        # Check for simple conversational patterns (route to LOCAL)
+        if any(pattern in lower_query for pattern in [
+            "hello", "hi", "hey", "greetings", "привет", 
+            "how are you", "как дела", "what's up", 
+            "chat", "talk", "поболтаем", "weather", "joke",
+            "nice to meet you", "what's your name", "what is your name",
+            "who are you", "кто ты", "как тебя зовут", "как звать"
+        ]):
+            print("🔍 DEBUG: Simple pattern match - routing to LOCAL")
+            return {
+                "route": "LOCAL",
+                "confidence": "high",
+                "complexity": 2,
+                "reasoning": "Simple greeting or conversational query"
+            }
+            
+        # Check for complex technical patterns (route to EXTERNAL)
+        if any(pattern in lower_query for pattern in [
+            "quantum", "algorithm", "machine learning", "ai model", "neural network",
+            "programming", "code", "write a", "explain", "analyze", 
+            "physics", "thermodynamics", "mathematics", "philosophy",
+            "ethics", "research", "academic", "technical", "paper", "analysis"
+        ]):
+            print("🔍 DEBUG: Complex pattern match - routing to EXTERNAL")
+            return {
+                "route": "EXTERNAL",
+                "confidence": "high",
+                "complexity": 8,
+                "reasoning": "Complex technical or academic query"
+            }
+            
+        # Check if we should use rule-based routing
         if self._use_rule_based_routing:
-            # Optimized rule-based routing remains very effective
             self._performance_stats["rule_based_routing_calls"] += 1
             return self._optimized_rule_based_routing(query)
-
-        # Fallback to model-based classification if rules are disabled
-        print("🔍 DEBUG: Using model-based routing (rule-based routing is disabled)")
-        print("🔍 DEBUG: About to ensure model is loaded")
+            
+        # Load the model if needed
         await self.ensure_loaded()
-        print(f"🔍 DEBUG: After ensure_loaded - model_loaded: {self.model_loaded}, fallback_mode: {self._fallback_mode}")
         self._performance_stats["model_classification_calls"] += 1
-
-        print("🔍 DEBUG: Checking if we need to use fallback routing")
-        print(f"🔍 DEBUG: self._fallback_mode = {self._fallback_mode}")
-        print(f"🔍 DEBUG: self.model exists = {self.model is not None}")
+        
+        # Fallback if model isn't available
         if self._fallback_mode or not self.model:
+            print("⚠️ Using fallback routing (model unavailable)")
             return self._fallback_routing_decision(query)
-
+            
         try:
-            # Build a simple prompt for the routing oracle
-            instruction = "Analyze the user query and determine if it requires a powerful external model or can be handled by a smaller, local model. Consider complexity, need for real-time data, and reasoning depth. Respond with a JSON object containing 'confidence' (high/medium/low for local), 'complexity' (1-10), and 'reasoning'."
-            prompt = f"{instruction}\n\nUser Query: {query}"
+            # Improved prompt with better focus on identifying complex queries
+            prompt = f"""<|im_start|>system
+You are a classifier that must decide whether a query needs a powerful EXTERNAL model or can be handled by a simpler LOCAL model.
+
+CRITERIA FOR EXTERNAL ROUTING:
+- Scientific topics (physics, chemistry, biology, etc.)
+- Technical subjects (programming, mathematics, algorithms)
+- Academic analysis (papers, research, theories)
+- Creative writing (poems, stories, essays)
+- Complex reasoning or problem-solving
+
+CRITERIA FOR LOCAL ROUTING:
+- Greetings and casual conversation
+- Simple factual questions
+- Weather inquiries
+- Basic assistance or information
+- Jokes or chitchat
+
+Route to EXTERNAL by default if you're unsure.
+<|im_end|>
+
+<|im_start|>user
+Analyze this query: "{query}"
+
+Should this be routed to EXTERNAL (complex) or LOCAL (simple)?
+Respond with EXACTLY one word: EXTERNAL or LOCAL
+<|im_end|>
+
+<|im_start|>assistant
+"""
+                
+            print(f"🔍 DEBUG: Model inference starting for: {query[:50]}...")
+            inference_start = time.time()
             
             response = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: self.model(
                     prompt,
-                    max_tokens=128,
+                    max_tokens=16,
                     temperature=0.1,
-                    stop=["\n"]
+                    stop=["<|im_end|>", "<|im_start|>"]
                 )
             )
             
-            # Simplified parsing logic
-            text_response = response.get("choices", [{}])[0].get("text", "{}")
-            try:
-                # Assuming the model returns a clean JSON string
-                parsed_response = json.loads(text_response)
-            except json.JSONDecodeError:
-                # Fallback if the model returns a non-JSON string
-                parsed_response = {"reasoning": text_response, "confidence": "low", "complexity": 5}
-
+            inference_time = time.time() - inference_start
+            print(f"🔍 DEBUG: Model inference completed in {inference_time:.2f}s")
+            
+            # Extract the answer - should be just "LOCAL" or "EXTERNAL"
+            model_text = response.get("choices", [{}])[0].get("text", "").strip().upper()
+            print(f"🔍 DEBUG: Model response: '{model_text}'")
+            
+            # Make decision based on model response
+            if "LOCAL" in model_text:
+                result = {
+                    "route": "LOCAL",
+                    "confidence": "medium", 
+                    "complexity": 3,
+                    "reasoning": "Simple conversational query or basic information request"
+                }
+                print(f"🎯 FastLLM recommends LOCAL route")
+            else:
+                # Default to EXTERNAL if response is unclear
+                result = {
+                    "route": "EXTERNAL",
+                    "confidence": "medium",
+                    "complexity": 7,
+                    "reasoning": "Complex or technical query requiring advanced processing"
+                }
+                print(f"🎯 FastLLM recommends EXTERNAL route")
+                
+            # Update stats
             execution_time = time.time() - start_time
             self._performance_stats["total_calls"] += 1
             self._performance_stats["avg_inference_time"] = (
                 self._performance_stats["avg_inference_time"] * (self._performance_stats["total_calls"] - 1) + execution_time
             ) / self._performance_stats["total_calls"]
-
-            return parsed_response
-
+            
+            return result
+            
         except Exception as e:
             self._performance_stats["failed_calls"] += 1
-            print(f"⚠️  FastLLM routing failed: {e}")
+            print(f"❌ ERROR in FastLLM inference: {str(e)}")
+            import traceback
+            traceback.print_exc()
             # Fallback to rule-based on error
-            return self._fallback_routing_decision(query)
+            fallback_result = self._fallback_routing_decision(query)
+            print(f"⚠️ Using fallback routing decision: {fallback_result}")
+            return fallback_result
 
     async def classify_prompt(self, prompt: str, classification_type: str) -> dict[str, Any]:
         """General-purpose classification method for Self-RAG components."""
@@ -550,7 +651,7 @@ Query:"""
 
         # Default to local for moderate complexity (most queries)
         return {
-            "route": "LOCAL",
+            "route": "LOCAL",  # Explicitly marked as local
             "confidence": "medium",
             "reasoning": "General query, using local model",
             "complexity": "moderate"

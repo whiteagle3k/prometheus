@@ -123,18 +123,18 @@ class TestAletheiaEntity:
 
         # Mock the router to avoid requiring actual models
         with patch.object(entity, "router") as mock_router:
-            # Set up the route method to return a proper response
-            mock_route = mock_router.route
-            mock_route.return_value = {
+            # Set up the execute_task method to return a proper response
+            mock_execute_task = mock_router.execute_task
+            mock_execute_task.return_value = {
                 "response": "Test response", 
                 "confidence": "high",
                 "reasoning": "Test reasoning"
             }
             
             # Make the mock awaitable
-            async def mock_awaitable():
-                return mock_route.return_value
-            mock_route.side_effect = mock_awaitable
+            async def mock_awaitable(*args, **kwargs):
+                return mock_execute_task.return_value
+            mock_execute_task.side_effect = mock_awaitable
 
             response = await entity.think("Hello")
 
@@ -158,18 +158,18 @@ class TestIntegration:
 
         # Mock the internal components to avoid requiring models
         with patch.object(entity, "router") as mock_router:
-            # Set up the route method to return a proper response
-            mock_route = mock_router.route
-            mock_route.return_value = {
+            # Set up the execute_task method to return a proper response
+            mock_execute_task = mock_router.execute_task
+            mock_execute_task.return_value = {
                 "response": "Здравствуйте! Меня зовут Алетейя.",
                 "confidence": "high",
                 "reasoning": "Simple greeting response"
             }
             
             # Make the mock awaitable
-            async def mock_awaitable():
-                return mock_route.return_value
-            mock_route.side_effect = mock_awaitable
+            async def mock_awaitable(*args, **kwargs):
+                return mock_execute_task.return_value
+            mock_execute_task.side_effect = mock_awaitable
 
             response = await entity.think("Привет")
 
@@ -207,13 +207,13 @@ class TestIntegration:
 
         # Test with mocked router that raises an exception
         with patch.object(entity, "router") as mock_router:
-            # Set up the route method to raise an exception
-            mock_route = mock_router.route
+            # Set up the execute_task method to raise an exception
+            mock_execute_task = mock_router.execute_task
             
             # Make the mock awaitable that raises an exception
-            async def mock_awaitable_error():
+            async def mock_awaitable_error(*args, **kwargs):
                 raise Exception("Test error")
-            mock_route.side_effect = mock_awaitable_error
+            mock_execute_task.side_effect = mock_awaitable_error
 
             # Should handle error gracefully, not crash
             try:

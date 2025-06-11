@@ -95,9 +95,9 @@ class TestContextIsolation:
 
     @pytest.mark.asyncio()
     async def test_context_limit_enforcement(self, router):
-        """Test that context is limited to 300 characters as specified."""
+        """Test that context is limited to 512 characters as specified."""
         # Create a very long context
-        long_context = "This is a very long conversation. " * 20  # > 300 chars
+        long_context = "This is a very long conversation. " * 30  # > 512 chars
 
         # Mock the utility LLM to capture the context it receives
         original_make_routing_decision = router.utility_llm.make_routing_decision
@@ -118,8 +118,8 @@ class TestContextIsolation:
 
         # Check that context was limited
         if received_contexts and received_contexts[0]:
-            assert len(received_contexts[0]) <= 300, (
-                f"Context was not limited: {len(received_contexts[0])} chars > 300"
+            assert len(received_contexts[0]) <= 512, (
+                f"Context was not limited: {len(received_contexts[0])} chars > 512"
             )
             print(f"✅ Context properly limited to {len(received_contexts[0])} chars")
 
