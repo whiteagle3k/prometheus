@@ -167,6 +167,7 @@ dmypy.json
 *~
 .DS_Store
 Thumbs.db
+tests_local/
 
 # OS generated files
 .DS_Store

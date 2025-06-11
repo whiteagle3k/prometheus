@@ -48,6 +48,7 @@ class TaskContext:
     conversation_context: str | None = None
     user_name: str | None = None
     session_context: dict | None = None
+    memory_retriever: callable = None
 
 
 class LLMRouter:
@@ -172,14 +173,16 @@ class LLMRouter:
             self._routing_stats["routing_errors"] += 1
             print(f"Routing error: {e}")
             # Fallback to local if available
-            if await self.local_llm.is_available():
+            if self.local_llm and await self.local_llm.is_available():
                 return RouteDecision.LOCAL
             else:
                 return RouteDecision.EXTERNAL
 
     async def _apply_routing_heuristics(self, task: TaskContext) -> RouteDecision:
         """Apply routing heuristics to make decision using fast LLM routing oracle."""
-
+        start_time = time.time()
+        route_used = "unknown"  # Ensure this is always defined for error handling
+        
         # Rule 0: Check if external LLM is preferred in identity config
         # Try multiple possible config locations for routing preferences
         
@@ -252,279 +255,181 @@ class LLMRouter:
 
         # Rule 2: Fast LLM Routing Oracle (NEW!)
         # This replaces the old self-assessment logic with unbiased routing
+        print("🔧 Fast LLM: Making routing decision...")
         try:
-            print("🔧 Fast LLM: Making routing decision...")
+            # Build assessment context for the oracle
+            oracle_result = await self.utility_llm.decide_routing(task)
 
-            # Build clean context for routing decision - only recent relevant context
-            routing_context = None
-            if task.conversation_context:
-                # Extract only the most recent, relevant parts for routing decision
-                # This prevents context contamination while providing necessary information
-                context_lines = task.conversation_context.strip().split("\n")
+            # Rule 2b: Use calibrator for confidence-based routing
+            if self.use_calibrator and self.local_llm:
+                self._routing_stats["calibrator_predictions"] += 1
+                should_use_local, _ = calibrator.predict_should_use_local(
+                    entropy=oracle_result.get("entropy", 0.5), # Assuming FastLLM provides entropy
+                    query=task.prompt,
+                    local_confidence=oracle_result.get("confidence", "low")
+                )
+                if not should_use_local:
+                    print("🎯 Calibrator recommends external route")
+                    return RouteDecision.EXTERNAL
 
-                # Take last 3-4 exchanges maximum, limit total length
-                relevant_lines = []
-                for line in context_lines[-8:]:  # Last 8 lines max (4 exchanges)
-                    if line.strip() and not line.startswith("[") and len(line) < 150:
-                        relevant_lines.append(line.strip())
-
-                # Limit routing context to prevent Fast LLM from being overwhelmed
-                if relevant_lines:
-                    routing_context = "\n".join(relevant_lines[-4:])  # Max 4 lines
-                    if len(routing_context) > 300:  # Max 300 chars for routing
-                        routing_context = routing_context[-300:]
-
-            # Get routing decision from fast LLM with clean, focused context
-            routing_result = await self.utility_llm.make_routing_decision(
-                query=task.prompt,
-                context=routing_context  # Clean, focused context only
-            )
-
-            route = routing_result.get("route", "LOCAL")
-            confidence = routing_result.get("confidence", "medium")
-            reasoning = routing_result.get("reasoning", "No reasoning provided")
-            complexity = routing_result.get("complexity", "moderate")
-
-            print(f"🔧 Fast LLM routing: {route} (confidence: {confidence}, complexity: {complexity})")
-            print(f"🔧 Reasoning: {reasoning}")
-
-            # Follow fast LLM decision
-            if route == "EXTERNAL":
+            # Rule 2c: Fallback based on complexity
+            complexity = oracle_result.get("complexity", 5)
+            # Ensure complexity is treated as a number
+            if isinstance(complexity, str):
+                try:
+                    complexity = int(complexity)
+                except ValueError:
+                    complexity = 5  # Default if conversion fails
+            
+            if complexity > 7:
+                print(f"🎯 High complexity ({complexity}/10), routing to external")
                 return RouteDecision.EXTERNAL
-            else:
-                return RouteDecision.LOCAL
 
         except Exception as e:
-            print(f"⚠️ Fast LLM routing failed: {e}")
+            execution_time = time.time() - start_time
+            # Log the error for debugging
+            print(f"⚠️ Error in routing decision: {e}")
+            
+            # Log error but return a valid RouteDecision enum
+            self._log_routing_decision(
+                query=task.prompt,
+                route_decision="error",
+                oracle_result={"error": str(e)},
+                execution_time=execution_time,
+                actual_route="external", # Default to external on error
+                success=False,
+                error_details=str(e)
+            )
+            
+            # Return a fallback decision (preferring EXTERNAL for safety)
+            return RouteDecision.EXTERNAL
 
-            # Rule 3: Fallback to basic keyword detection if fast LLM fails
-            prompt_lower = task.prompt.lower()
-            if any(keyword in prompt_lower for keyword in config.deep_reasoning_keywords):
-                print("🔧 Fallback: Deep reasoning keywords detected")
-                return RouteDecision.EXTERNAL
-
-            # Default: use local for efficiency
-            print("🔧 Fallback: Defaulting to local")
-            return RouteDecision.LOCAL
+        # Default to local if no other rule applies
+        return RouteDecision.LOCAL
 
     def _is_coding_task(self, prompt: str) -> bool:
-        """Check if the task involves coding or implementation."""
-        coding_keywords = [
-            "создай файл", "create file", "функция", "function", "код", "code",
-            "программа", "program", "скрипт", "script", "реализуй", "implement",
-            "напиши", "write", "debug", "отладка", "тест", "test", "обертка",
-            "wrapper", "timestamp", "добавить", "создать обертку", "написать обертку",
-            "расширить функциональность", "автоматизировать", "automate"
-        ]
-        prompt_lower = prompt.lower()
-        return any(keyword in prompt_lower for keyword in coding_keywords)
+        """Check if the prompt is a coding-related task."""
+        # Simple keyword-based check for now
+        coding_keywords = ["code", "python", "javascript", "typescript", "java", "c++", "rust", "golang", "php", "html", "css", "sql", "docker", "kubernetes", "terraform"]
+        return any(keyword in prompt.lower() for keyword in coding_keywords)
 
-    async def execute_task(self, task: TaskContext) -> dict[str, Any]:
-        """Execute a task using the appropriate LLM."""
-        print(f'[LLMRouter DEBUG] execute_task: task.tools = {getattr(task, "tools", None)}')
-        start_time = asyncio.get_event_loop().time()
-        route_used = None
-        local_confidence = None
-        entropy = None
-        routing_result = {}  # Initialize to avoid undefined variable error
-        is_correct = False  # Initialize success tracking
-
+    async def execute_task(self, task: "TaskContext") -> dict[str, Any]:
+        """
+        Execute a task using the appropriate LLM, with robust error handling.
+        This method is rewritten to be simple and correct.
+        """
+        start_time = time.time()
+        route_used = "unknown"
+        
         try:
-            # Make routing decision
+            # 1. Get routing decision
             route = await self.route_task(task)
+            route_used = route.value
+            print(f"🎯 Router: {route.name} LLM selected")
 
-            # Show routing decision
-            if route == RouteDecision.LOCAL:
-                print("🎯 Router: Local LLM selected")
-            elif route == RouteDecision.EXTERNAL:
-                print("🌐 Router: External LLM selected")
-            else:
-                print(f"🔀 Router: {route.value} selected")
+            response = ""
+            consultation_metadata = {}
 
+            # 2. Execute based on route
             if route == RouteDecision.LOCAL:
                 if not self.local_llm:
-                    msg = "Routing decision is LOCAL but no local LLM is available."
-                    raise RuntimeError(msg)
-                # Execute locally
-                print("🔧 LocalLLM: Using English system instructions")
+                    raise RuntimeError("Local LLM not available")
+
+                # Retrieve memories if retriever is provided
+                memories = await task.memory_retriever() if task.memory_retriever else []
+                local_context = self._build_local_context(task.prompt, memories)
+
+                # Generate response
                 structured_result = await self.local_llm.generate_structured(
                     prompt=task.prompt,
                     max_tokens=task.max_tokens,
                     temperature=0.7,
-                    context=task.conversation_context
+                    context=local_context
                 )
-
                 response = structured_result.get("answer", "")
-                local_confidence = structured_result.get("confidence", "medium")
 
-                # Show local model response generation
-                user_language = "Russian" if any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in task.prompt.lower()) else "English"
-                print(f"🔧 LocalLLM: Generating {user_language} response")
+            elif route == RouteDecision.EXTERNAL:
+                # Get the provider name
+                provider_name = self._get_preferred_provider(task)
+                if not provider_name:
+                    raise RuntimeError("No external provider available")
 
-                # Calculate entropy for calibrator logging
-                confidence_to_entropy = {"high": 0.8, "medium": 0.5, "low": 0.2}
-                entropy = confidence_to_entropy.get(local_confidence, 0.5)
+                # Get the actual provider instance
+                provider_instance = await self.external_manager.get_provider_by_name(provider_name)
+                if not provider_instance:
+                    raise RuntimeError(f"Provider {provider_name} not available")
 
-                route_used = "local"
-                consultation_metadata = None
-
-            else:
-                # Determine preferred provider
-                preferred_provider = self._get_preferred_provider(task)
-                print(f"▶️ Preferred provider: {preferred_provider or 'any'}")
+                # Prepare external prompt that includes conversation context
+                prepared_prompt = await self._prepare_external_prompt(task)
                 
-                # Get the best available provider, respecting preference
-                external_llm = await self.external_manager.get_best_available(
-                    prefer_provider=preferred_provider
+                # Use the provider instance to generate a response
+                external_response = await provider_instance.generate(
+                    prompt=prepared_prompt,
+                    max_tokens=task.max_tokens,
+                    temperature=task.temperature,
+                    system_prompt=self._get_external_system_prompt(task)
                 )
                 
-                if not external_llm:
-                    print("⚠️ External LLM unavailable, falling back to local")
-                    if not self.local_llm:
-                        msg = "External LLM is unavailable and no local LLM for fallback."
-                        raise RuntimeError(msg)
-                    # Fallback to local
-                    structured_result = await self.local_llm.generate_structured(
-                        prompt=task.prompt,
-                        max_tokens=task.max_tokens,
-                        temperature=0.7,
-                        context=task.conversation_context
-                    )
+                # Filter and get metadata
+                response, consultation_metadata = await self._filter_external_response(
+                    external_response, task.prompt, task
+                )
+                consultation_metadata = consultation_metadata or {}
+                consultation_metadata["provider"] = provider_name
 
-                    response = structured_result.get("answer", "")
-                    local_confidence = structured_result.get("confidence", "medium")
-                    entropy = confidence_to_entropy.get(local_confidence, 0.5)
-
-                    route_used = "local_fallback"
-                    consultation_metadata = None
-                else:
-                    print(f"📡 Consulting external: {external_llm.provider_type.value}")
-
-                    # Enhance prompt with context for external LLM
-                    enhanced_prompt = await self._prepare_external_prompt(task)
-
-                    # Use external LLM with enhanced context
-                    print(f"[LLMRouter DEBUG] task.tools = {task.tools}")
-                    request = GenerationRequest(
-                        prompt=enhanced_prompt,
-                        max_tokens=task.max_tokens,
-                        temperature=task.temperature,
-                        model=external_llm.get_model_info().get("model"),
-                        system_prompt=self._get_external_system_prompt(task),
-                        tools=task.tools,
-                        extra_params=external_llm.get_model_info().get("extra_params", {})
-                    )
-                    response_obj = await external_llm._generate_text(request)
-                    print(f"[LLMRouter] response_obj: text={getattr(response_obj, 'text', None)[:200]}, tool_calls={getattr(response_obj, 'tool_calls', None)}")
-
-                    # IMPORTANT: Check for tool calls here as well
-                    if response_obj.tool_calls:
-                        print(f"🛠️ Detected tool calls: {response_obj.tool_calls}")
-                        return {
-                            "result": "", # No text response when tools are called
-                            "tool_calls": response_obj.tool_calls,
-                            "route_used": "external_tools",
-                            "execution_time": time.time() - start_time,
-                            "estimated_cost": response_obj.cost_estimate,
-                            "consultation_metadata": response_obj.provider_metadata
-                        }
-
-                    raw_response = response_obj.text
-
-                    print(f"📋 Consultation received: {len(raw_response)} chars analysis, 5 memory points")
-
-                    # Parse structured response to extract user response for clean delivery
-                    response, consultation_metadata = await self._filter_external_response(raw_response, task.prompt, task)
-
-                    # Enhance consultation metadata with provider information
-                    model_info = external_llm.get_model_info()
-
-                    if consultation_metadata is None:
-                        consultation_metadata = {}
-
-                    consultation_metadata.update({
-                        "provider": external_llm.provider_type.value,
-                        "model": model_info.get("model", "unknown_model"),
-                        "external_llm_type": external_llm.__class__.__name__,
-                        "context_size": model_info.get("capabilities", {}).get("max_context_size", 0),
-                        "cost_info": model_info.get("costs", {}),
-                    })
-
-                    route_used = "external"
-                    # For external routes, we don't have local confidence data
-                    local_confidence = "unknown"
-                    entropy = 0.0
-
-            execution_time = asyncio.get_event_loop().time() - start_time
-
-            result = {
-                "result": response,
-                "route_used": route_used,
-                "execution_time": execution_time,
-                "estimated_cost": 0,  # TODO: Calculate actual cost
-            }
-
-            # Add consultation metadata if available
-            if consultation_metadata:
-                result["consultation_metadata"] = consultation_metadata
-
-            # Log routing decision for calibrator learning (async, non-blocking)
-            if self.use_calibrator and local_confidence and entropy is not None:
-                # TODO: In a real system, we'd need user feedback to determine if the routing was correct
-                # For now, we'll use heuristics: local routes are "correct" if confidence was medium/high
-                # and external routes are "correct" if they were triggered by low confidence or other rules
-                is_correct = self._estimate_routing_correctness(route_used, local_confidence, response)
-
-                # Log asynchronously
-                asyncio.create_task(calibrator.log_decision(
-                    query=task.prompt,
-                    entropy=entropy,
-                    local_confidence=local_confidence,
-                    route_used=route_used,
-                    is_correct=is_correct,
-                    execution_time=execution_time
-                ))
-
-            # Log routing decision to CSV
+            # 3. Log successful execution
+            execution_time = time.time() - start_time
             self._log_routing_decision(
                 query=task.prompt,
                 route_decision=route.value,
-                oracle_result=routing_result,
+                oracle_result=consultation_metadata,
                 execution_time=execution_time,
                 actual_route=route_used,
-                success=is_correct,
-                error_details=""
+                success=True
             )
-
-            return result
+            
+            return {
+                "response": response,
+                "execution_details": {
+                    "route_used": route_used,
+                    "execution_time": execution_time,
+                    "consultation_metadata": consultation_metadata,
+                }
+            }
 
         except Exception as e:
-            execution_time = asyncio.get_event_loop().time() - start_time
-
-            # Log failed routing for calibrator
-            if self.use_calibrator and local_confidence and entropy is not None:
-                asyncio.create_task(calibrator.log_decision(
-                    query=task.prompt,
-                    entropy=entropy,
-                    local_confidence=local_confidence,
-                    route_used=route_used or "error",
-                    is_correct=False,
-                    user_feedback=f"Error: {e!s}",
-                    execution_time=execution_time
-                ))
-
-            # Log routing decision to CSV
+            # 4. Log error and return a safe response
+            execution_time = time.time() - start_time
+            print(f"❌ Error during task execution: {e}")
             self._log_routing_decision(
                 query=task.prompt,
                 route_decision="error",
-                oracle_result=routing_result,  # Now always defined
+                oracle_result={"error": str(e)},
                 execution_time=execution_time,
-                actual_route=route_used or "error",
+                actual_route=route_used,
                 success=False,
                 error_details=str(e)
             )
+            return {
+                "response": "An error occurred while processing your request.",
+                "error": str(e),
+                "execution_details": {
+                    "route_used": "error",
+                    "execution_time": execution_time,
+                    "error_details": str(e),
+                }
+            }
 
-            raise
+    def _build_local_context(self, prompt: str, memories: list[dict]) -> str:
+        """Build the context string for the local model from memories."""
+        if not memories:
+            return None # No extra context
+
+        context_str = "Relevant past conversations:\n"
+        for mem in memories:
+            context_str += f"- {mem['content']}\n"
+        
+        return context_str
 
     def _get_preferred_provider(self, task: TaskContext) -> str | None:
         """Get preferred external provider based on config and task type."""
@@ -574,10 +479,12 @@ class LLMRouter:
 
         # Check if this is an ongoing conversation (has context with previous exchanges)
         # Use generic conversation markers that don't depend on specific entity names
-        is_ongoing_conversation = bool(task.conversation_context and task.conversation_context.strip() and any(
-            marker in task.conversation_context
-            for marker in ["👤 You:", "🧠", "User:", "Assistant:", "Human:", "AI:"]
-        ))
+        is_ongoing_conversation = False
+        if task.conversation_context and isinstance(task.conversation_context, str):
+            is_ongoing_conversation = bool(task.conversation_context.strip() and any(
+                marker in task.conversation_context
+                for marker in ["👤 You:", "🧠", "User:", "Assistant:", "Human:", "AI:"]
+            ))
 
         # Build the consultation prompt with comprehensive context
         consultation_prompt = f"""{entity_intro}
@@ -587,7 +494,7 @@ My key traits: {traits_text}
 """
 
         # Add comprehensive conversation context if available
-        if task.conversation_context and task.conversation_context.strip():
+        if task.conversation_context and isinstance(task.conversation_context, str) and task.conversation_context.strip():
             consultation_prompt += f"""CONVERSATION CONTEXT:
 {task.conversation_context}
 
@@ -746,7 +653,7 @@ Your role is to be a knowledgeable consultant, not to impersonate the requesting
 
         # Check if this is an ongoing conversation using generic markers
         is_ongoing_conversation = False
-        if task and task.conversation_context:
+        if task and task.conversation_context and isinstance(task.conversation_context, str):
             is_ongoing_conversation = bool(task.conversation_context.strip() and any(
                 marker in task.conversation_context
                 for marker in ["👤 You:", "🧠", "User:", "Assistant:", "Human:", "AI:"]
@@ -824,14 +731,6 @@ Response:"""
                 "filtered_response": filtered_response
             }
             return filtered_response, consultation_metadata
-        except Exception as e:
-            print(f"Error filtering response: {e}")
-            # Fallback: return external response with identity disclaimer
-            if is_russian:
-                return f"[От {name}] {external_response}", {}
-            else:
-                return f"[From {name}] {external_response}", {}
-
         except Exception as e:
             print(f"Error filtering response: {e}")
             # Fallback: return external response with identity disclaimer

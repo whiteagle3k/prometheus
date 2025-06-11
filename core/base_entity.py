@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Dict, Optional
+import json
 
 from .config import config
 from .context.context_manager import ConversationContext
@@ -572,61 +573,27 @@ class BaseEntity(ABC):
                 await asyncio.sleep(5)  # Brief pause before retrying
 
     async def _process_input(self, user_input: str, user_id: str | None = None) -> dict[str, Any]:
-        """Core input processing logic - can be extended by entities."""
+        """
+        Processes user input through the routing and execution pipeline.
+        This is the core of the entity's thinking process after initial MCP checks.
+        """
+        # Create a task context for the router
+        # This now includes a callable for deferred memory retrieval
+        task_context = self.context.create_task_context(
+            user_input, 
+            self.mcp_capabilities,
+            lambda: self._retrieve_relevant_memories(user_input)
+        )
 
-        # Fast-track check for external-only agents
-        has_tools = getattr(self, '_tools', None)
-        should_fast_track = self._should_use_external_fast_track(user_input)
-        if should_fast_track and not has_tools:
-            print("🚀 Fast-track: External-only agent, skipping memory processing...")
-            return await self._handle_external_fast_track(user_input, user_id)
-
-        # User data handling
-        user_name = self.context.user_name
-        if user_name:
-            # Check for data providing vs querying
-            is_providing_info = self.user_profile_store.extractor.is_information_providing(user_input)
-
-            if is_providing_info:
-                print("📊 Detected user providing information - extracting data...")
-                await self.user_profile_store.update_user_data(
-                    user_name, user_input,
-                    context=f"Session {self.session_id}, Task #{len(self.task_history) + 1}"
-                )
-            elif await self.user_profile_store.is_data_query(user_input):
-                print("🔍 Detected user data query - providing profile summary...")
-                summary = await self.user_profile_store.get_user_data_summary(user_name)
-                return {
-                    "type": "user_data_query",
-                    "response": summary,
-                    "execution_details": {
-                        "route_used": "user_profile",
-                        "execution_time": 0.0,
-                        "estimated_cost": 0,
-                        "data_source": "user_profile_store"
-                    },
-                    "approach": "user_data_retrieval"
-                }
-
-        # Retrieve relevant memories
-        relevant_memories = await self._retrieve_relevant_memories(user_input)
-
-        # Determine if planning is needed
-        needs_planning = self.context.should_plan_task(user_input)
-
-        if needs_planning:
-            result = await self._handle_complex_task(user_input, relevant_memories)
-        else:
-            result = await self._handle_simple_task(user_input, relevant_memories)
-        # Проброс tool_calls на верхний уровень
-        out = dict(result)
-        if "tool_calls" in result and result["tool_calls"]:
-            out["tool_calls"] = result["tool_calls"]
-        return out
+        # Execute the task through the router
+        # The router will decide when/if to call the memory_retriever
+        result = await self.router.execute_task(task_context)
+        return result
 
     def _should_use_external_fast_track(self, user_input: str) -> bool:
         """
-        Check if this agent should use external fast-track routing.
+        Determines if the task is simple enough for a direct external API call,
+        bypassing the full local routing and memory pipeline.
         
         Returns True if:
         1. Agent has prefer_external: true in config
@@ -789,82 +756,36 @@ class BaseEntity(ABC):
         return "\n".join(context_parts) if context_parts else ""
 
     async def _retrieve_relevant_memories(self, user_input: str) -> list[dict[str, Any]]:
-        """Retrieve relevant memories for context."""
+        """
+        Retrieve relevant memories for context using a simplified, robust method.
+        """
         try:
-            # Use the fast LLM for query preprocessing if available
-            if hasattr(self.router, "utility_llm") and await self.router.utility_llm.is_available():
-                print("🔧 Utility model: Classifying query for memory filtering...")
+            # 1. Get top 8 memories from vector store
+            vector_memories = await self.vector_store.search_memories(user_input, n_results=8)
+            print(f"📂 Found {len(vector_memories)} memories from vector store.")
 
-                # Preprocess the query for better memory matching
-                query_category = await self.router.utility_llm.classify_query(user_input)
-                print(f"🔧 Query categorized as: {query_category}")
+            # 2. Get last 3 conversational episodes
+            recent_episodes = self.context.search_relevant_episodes(user_input, max_episodes=3)
+            print(f"📚 Found {len(recent_episodes)} recent episodes.")
 
-                expanded_concepts = await self.router.utility_llm.expand_query_concepts(user_input)
+            # 3. Combine and deduplicate
+            all_items = vector_memories + recent_episodes
+            unique_items = []
+            seen_ids = set()
 
-                # Create enhanced query for vector search
-                enhanced_query = f"{user_input} {' '.join(expanded_concepts)}"
-            else:
-                enhanced_query = user_input
-                query_category = "general"
-                print("⚡ Using direct query (utility model not available)")
+            for item in all_items:
+                item_id = item.get("id") or item.get("interaction_id")
+                if item_id and item_id not in seen_ids:
+                    unique_items.append(item)
+                    seen_ids.add(item_id)
+                elif not item_id:
+                    unique_items.append(item) # Add items without an ID
 
-            # Retrieve memories from vector store
-            memories = await self.vector_store.search_memories(enhanced_query, n_results=8)
+            # 4. Sort by relevance (if available) and return top 8
+            unique_items.sort(key=lambda x: x.get("distance", 1.0)) # Lower distance is better
+            final_memories = unique_items[:8]
 
-            if not memories:
-                print("📂 No memories found for current query")
-                return []
-
-            print(f"📂 Found {len(memories)} memories, filtering for relevance...")
-
-            # Filter and rank memories by semantic relevance
-            relevant_memories = []
-
-            # Use utility model for memory categorization if available
-            if hasattr(self.router, "utility_llm") and await self.router.utility_llm.is_available():
-                print("🔧 Utility model: Categorizing memories...")
-
-                memory_categories = []
-                for i, memory in enumerate(memories):
-                    memory_category = await self.router.utility_llm.classify_memory_content(memory["content"])
-                    memory_categories.append(memory_category)
-
-                # Show categorization results
-                category_summary = {}
-                for cat in memory_categories:
-                    category_summary[cat] = category_summary.get(cat, 0) + 1
-
-                category_str = ", ".join([f"{cat}: {count}" for cat, count in category_summary.items()])
-                print(f"🔧 Memory categories: {category_str}")
-            else:
-                memory_categories = ["general"] * len(memories)
-
-            # Calculate relevance and filter
-            for i, memory in enumerate(memories):
-                distance = memory.get("distance", 1.0)
-                memory_category = memory_categories[i]
-
-                # Calculate semantic relevance
-                relevance_score = self._calculate_semantic_relevance(query_category, memory_category, distance)
-
-                # Include memory if it meets relevance threshold
-                if relevance_score >= 0.15:  # FIXED: Lower threshold from 0.3 to 0.15 to find more relevant memories
-                    memory["relevance_score"] = relevance_score
-                    memory["query_category"] = query_category
-                    memory["memory_category"] = memory_category
-                    relevant_memories.append(memory)
-
-            # Sort by relevance score
-            relevant_memories.sort(key=lambda x: x["relevance_score"], reverse=True)
-
-            # Limit to top 5 most relevant
-            final_memories = relevant_memories[:5]
-
-            if final_memories:
-                print(f"🔧 Utility model: Filtering complete. {len(final_memories)}/{len(memories)} memories passed filtering")
-            else:
-                print("📂 No memories met relevance threshold")
-
+            print(f"🔧 Filtering complete. Selected {len(final_memories)} unique memories.")
             return final_memories
 
         except Exception as e:
@@ -885,7 +806,6 @@ class BaseEntity(ABC):
 
         # Combine scores
         return min(1.0, base_score + category_bonus)
-
 
     async def _handle_complex_task(self, user_input: str, memories: list[dict[str, Any]]) -> dict[str, Any]:
         """Handle complex tasks requiring planning."""

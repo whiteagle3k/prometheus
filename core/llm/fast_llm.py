@@ -13,6 +13,7 @@ Optimized based on performance testing:
 
 import asyncio
 import time
+import json
 from pathlib import Path
 from typing import Any
 
@@ -41,12 +42,18 @@ class FastLLM:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
+            # Store the identity_config for use in __init__
+            cls._instance._pending_identity_config = identity_config
         return cls._instance
 
     def __init__(self, identity_config: dict | None = None) -> None:
         """Initialize the utility LLM (singleton pattern)."""
         if hasattr(self, '_initialized') and self._initialized:
             return  # Already initialized
+            
+        # Use pending identity_config if available (from __new__)
+        if identity_config is None and hasattr(self, '_pending_identity_config'):
+            identity_config = self._pending_identity_config
             
         self.model: Llama | None = None
         self.model_loaded = False
@@ -71,11 +78,13 @@ class FastLLM:
         }
 
         # Performance optimization flags
-        self._use_rule_based_routing = True  # Use intelligent model-based routing with rule-based fallback
+        self._use_rule_based_routing = False  # Use intelligent model-based routing with rule-based fallback
         self._classification_threshold = 1.0  # Switch to fallback if model is too slow
         
         self._initialized = True
-        print("🎯 FastLLM: Using singleton instance (prevents multiple model loads)")
+        if not hasattr(self, '_printed_init_message'):
+            print("🎯 FastLLM: Using singleton instance (prevents multiple model loads)")
+            self._printed_init_message = True
 
     def _find_best_utility_model(self) -> Path | None:
         """Find the best available utility model using identity configuration."""
@@ -184,16 +193,24 @@ class FastLLM:
             }
 
     async def _load_model(self) -> None:
+        """Enhanced model loading with debugging information."""
+        print("🔍 DEBUG: _load_model called")
         """Load the utility model with optimized settings for speed."""
         load_start = time.time()
 
+        print("🔍 DEBUG: Checking model loading conditions")
+        print(f"🔍 DEBUG: self.model_loaded = {self.model_loaded}")
+        print(f"🔍 DEBUG: Llama available = {Llama is not None}")
+        print(f"🔍 DEBUG: self.model_path = {self.model_path}")
         if self.model_loaded or not Llama or not self.model_path:
             self._fallback_mode = True
+            print("🔍 DEBUG: Setting fallback_mode to True")
             return
 
         if not self.model_path.exists():
             print("💡 Utility model not found - using fast rule-based heuristics")
             self._fallback_mode = True
+            print("🔍 DEBUG: Setting fallback_mode to True")
             return
 
         model_size_mb = self._get_model_size_mb(self.model_path)
@@ -236,10 +253,15 @@ class FastLLM:
 
         except Exception as e:
             print(f"⚠️  Model loading failed: {e}")
-            print("   Using rule-based heuristics (often just as good!)")
+            import traceback
+            traceback.print_exc()
+            print("   Using rule-based heuristics as fallback")
             self._fallback_mode = True
+            print("🔍 DEBUG: Setting fallback_mode to True")
 
     async def ensure_loaded(self) -> None:
+        """Ensure model is loaded with debugging info."""
+        print("🔍 DEBUG: ensure_loaded called")
         """Ensure model is loaded, thread-safe."""
         if not self.model_loaded and not self._fallback_mode:
             async with self._init_lock:
@@ -250,8 +272,13 @@ class FastLLM:
         """Classify user query into semantic categories."""
         classify_start = time.time()
 
+        print("🔍 DEBUG: About to ensure model is loaded")
         await self.ensure_loaded()
+        print(f"🔍 DEBUG: After ensure_loaded - model_loaded: {self.model_loaded}, fallback_mode: {self._fallback_mode}")
 
+        print("🔍 DEBUG: Checking if we need to use fallback routing")
+        print(f"🔍 DEBUG: self._fallback_mode = {self._fallback_mode}")
+        print(f"🔍 DEBUG: self.model exists = {self.model is not None}")
         if self._fallback_mode or not self.model:
             result = self._fallback_classify_query(query)
             classify_time = time.time() - classify_start
@@ -314,103 +341,103 @@ Query:"""
             return fallback_result
 
     async def classify_memory_content(self, content: str) -> str:
-        """Classify memory content for semantic matching."""
-        # For memory content, always use fast classification
-        content_to_classify = content
-        if content.startswith("Task:"):
-            lines = content.split("\n")
-            task_line = next((line for line in lines if line.startswith("Task:")), "")
-            content_to_classify = task_line.replace("Task:", "").strip()
+        """Classify memory content into semantic categories."""
+        # This can still be a simple classification
+        return await self.classify_prompt(content, "memory")
 
-        return await self.classify_query(content_to_classify)
-
-    async def make_routing_decision(self, query: str, context: str | None = None) -> dict[str, Any]:
+    async def decide_routing(self, task_context) -> dict[str, Any]:
+        """Enhanced routing decision with debugging information."""
+        print("🔍 DEBUG: decide_routing called")
         """
-        Make a routing decision for the query.
-
-        OPTIMIZED: Uses rule-based routing (100% accuracy, instant performance)
-        based on comparison testing results.
+        Make a routing decision based on the TaskContext.
+        This now accepts the full context object.
         """
-        routing_start = time.time()
+        print(">>> FASTLLM decide_routing executing from:", __file__)
+        print(">>> FASTLLM decide_routing: about to set start_time")
+        start_time = time.time()
+        
+        # Safely extract the prompt from task_context
+        # Handle both string and object types to avoid 'dict' object has no attribute 'value' error
+        if hasattr(task_context, 'prompt'):
+            # Task context is an object
+            query = task_context.prompt
+        else:
+            # Handle case where task_context might be a dict or other type
+            print("⚠️ Warning: task_context is not the expected TaskContext object")
+            if isinstance(task_context, dict) and 'prompt' in task_context:
+                query = task_context['prompt']
+            else:
+                print("❌ Error: Could not extract prompt from task_context")
+                query = str(task_context)  # Fallback
+        
+        # For now, we'll primarily use the query for routing.
+        # The full context is available for future, more complex routing rules.
 
-        # Use optimized rule-based routing (proven 100% accurate and instant)
         if self._use_rule_based_routing:
-            result = self._optimized_rule_based_routing(query)
-            routing_time = time.time() - routing_start
+            # Optimized rule-based routing remains very effective
             self._performance_stats["rule_based_routing_calls"] += 1
-            print(f"⚡ FastLLM routing (rule-based): {routing_time:.3f}s -> {result['route']}")
-            return result
+            return self._optimized_rule_based_routing(query)
 
-        # Fallback to model-based routing (if needed for special cases)
+        # Fallback to model-based classification if rules are disabled
+        print("🔍 DEBUG: Using model-based routing (rule-based routing is disabled)")
+        print("🔍 DEBUG: About to ensure model is loaded")
         await self.ensure_loaded()
+        print(f"🔍 DEBUG: After ensure_loaded - model_loaded: {self.model_loaded}, fallback_mode: {self._fallback_mode}")
+        self._performance_stats["model_classification_calls"] += 1
 
+        print("🔍 DEBUG: Checking if we need to use fallback routing")
+        print(f"🔍 DEBUG: self._fallback_mode = {self._fallback_mode}")
+        print(f"🔍 DEBUG: self.model exists = {self.model is not None}")
         if self._fallback_mode or not self.model:
-            result = self._fallback_routing_decision(query)
-            routing_time = time.time() - routing_start
-            print(f"⚡ FastLLM routing (heuristic): {routing_time:.3f}s -> {result['route']}")
-            return result
-
-        # Model-based routing (intelligent content understanding)
-        system_prompt = """Analyze the query and route to LOCAL or EXTERNAL:
-
-EXTERNAL for:
-- Current events, news, today's information
-- Scientific topics (astronomy, physics, medicine, biology)
-- Complex technical explanations
-- Recent research or developments
-- Specialized knowledge requiring up-to-date data
-
-LOCAL for:
-- Simple greetings and conversation
-- Basic personal questions
-- General chat without specific expertise needs
-
-Think about what knowledge is required, not just keywords.
-
-Query type:"""
-
-        formatted_prompt = f"<|system|>{system_prompt}<|end|>\n<|user|>Query: {query[:100]}<|end|>\n<|assistant|>"
+            return self._fallback_routing_decision(query)
 
         try:
-            inference_start = time.time()
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: self.model(
-                    formatted_prompt,
-                    max_tokens=10,
+            # Build a simple prompt for the routing oracle
+            instruction = "Analyze the user query and determine if it requires a powerful external model or can be handled by a smaller, local model. Consider complexity, need for real-time data, and reasoning depth. Respond with a JSON object containing 'confidence' (high/medium/low for local), 'complexity' (1-10), and 'reasoning'."
+            prompt = f"{instruction}\n\nUser Query: {query}"
+            
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self.model(
+                    prompt,
+                    max_tokens=128,
                     temperature=0.1,
-                    stop=["<|end|>", "<|user|>", "\n"],
-                    echo=False,
+                    stop=["\n"]
                 )
             )
-            inference_time = time.time() - inference_start
+            
+            # Simplified parsing logic
+            text_response = response.get("choices", [{}])[0].get("text", "{}")
+            try:
+                # Assuming the model returns a clean JSON string
+                parsed_response = json.loads(text_response)
+            except json.JSONDecodeError:
+                # Fallback if the model returns a non-JSON string
+                parsed_response = {"reasoning": text_response, "confidence": "low", "complexity": 5}
 
-            # Fix: llama-cpp-python response format, not OpenAI format
-            response = result["choices"][0]["text"].strip().upper()
+            execution_time = time.time() - start_time
+            self._performance_stats["total_calls"] += 1
+            self._performance_stats["avg_inference_time"] = (
+                self._performance_stats["avg_inference_time"] * (self._performance_stats["total_calls"] - 1) + execution_time
+            ) / self._performance_stats["total_calls"]
 
-            route = "LOCAL"
-            if "EXTERNAL" in response:
-                route = "EXTERNAL"
+            return parsed_response
 
-            total_time = time.time() - routing_start
-            print(f"⚡ FastLLM routing (model): {total_time:.3f}s -> {route}")
-
-            return {
-                "route": route,
-                "confidence": "medium",
-                "complexity": "simple" if route == "LOCAL" else "complex",
-                "reasoning": f"Model decision: {response[:30]}"
-            }
-
-        except Exception:
-            result = self._fallback_routing_decision(query)
-            total_time = time.time() - routing_start
-            print(f"⚠️ Model routing failed, using fallback: {total_time:.3f}s -> {result['route']}")
-            return result
+        except Exception as e:
+            self._performance_stats["failed_calls"] += 1
+            print(f"⚠️  FastLLM routing failed: {e}")
+            # Fallback to rule-based on error
+            return self._fallback_routing_decision(query)
 
     async def classify_prompt(self, prompt: str, classification_type: str) -> dict[str, Any]:
         """General-purpose classification method for Self-RAG components."""
+        print("🔍 DEBUG: About to ensure model is loaded")
         await self.ensure_loaded()
+        print(f"🔍 DEBUG: After ensure_loaded - model_loaded: {self.model_loaded}, fallback_mode: {self._fallback_mode}")
 
+        print("🔍 DEBUG: Checking if we need to use fallback routing")
+        print(f"🔍 DEBUG: self._fallback_mode = {self._fallback_mode}")
+        print(f"🔍 DEBUG: self.model exists = {self.model is not None}")
         if self._fallback_mode or not self.model:
             return {"classification": f"Rule-based classification for {classification_type}", "model_used": "fallback"}
 
@@ -569,12 +596,16 @@ Query type:"""
             clean_word = word.strip('.,!?:;()[]{}"\'-')
             if len(clean_word) > 2 and clean_word.lower() not in ["the", "and", "or", "but", "что", "как", "это"]:
                 topic_words.append(clean_word)
-                if len(" ".join(topic_words)) >= max_length - 10:
+                # Make sure to convert max_length to int if it might be a string
+                max_length_int = int(max_length) if not isinstance(max_length, int) else max_length
+                if topic_words and len(" ".join(topic_words)) >= max_length_int - 10:
                     break
 
         topic = " ".join(topic_words)
-        if len(topic) > max_length:
-            topic = topic[:max_length-3] + "..."
+        # Ensure max_length is used as an integer
+        max_length_int = int(max_length) if not isinstance(max_length, int) else max_length
+        if len(topic) > max_length_int:
+            topic = topic[:max_length_int-3] + "..."
 
         return topic if topic else "general_topic"
 

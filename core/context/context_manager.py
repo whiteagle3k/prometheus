@@ -9,6 +9,7 @@ from core.processing.cleaners import ChainOfThoughtExtractor
 from core.processing.config import get_processor_config
 from core.processing.detectors import ComplexityDetector
 from core.processing.extractors import EntityExtractor, NameExtractor
+from ..llm.router import TaskContext
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +195,21 @@ class ConversationContext:
         if len(self.episodes) > self.max_episodes:
             self.episodes = self.episodes[-self.max_episodes:]
             logger.debug(f"📚 Trimmed episodes to {len(self.episodes)}")
+
+    def create_task_context(
+        self,
+        user_input: str,
+        tools: list[dict] | None = None,
+        memory_retriever: callable = None,
+    ) -> "TaskContext":
+        """Create a TaskContext object for the router."""
+        return TaskContext(
+            prompt=user_input,
+            tools=tools,
+            conversation_context=self.get_context_summary(),
+            user_name=self.current_user_id,
+            memory_retriever=memory_retriever,
+        )
 
     def should_retrieve_episodes(self, user_input: str) -> bool:
         """Determine if we should retrieve episodes for context (for complex queries)."""

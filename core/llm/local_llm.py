@@ -82,14 +82,23 @@ class LocalLLM:
         model_kwargs = {
             "model_path": str(model_path),
             "n_ctx": performance_config.get("context_size", config.local_model_context_size),
-            "verbose": False,
-            "n_batch": performance_config.get("batch_size", 512),  # Default to 512 for better balance
-            "n_threads": performance_config.get("threads", None),  # Auto-detect or use configured
-            # Performance optimizations
-            "use_mmap": True,  # Memory-map model file for faster loading
-            "use_mlock": True,  # Lock model in memory to prevent swapping
-            "f16_kv": True,  # Use fp16 for key/value cache
+            "n_batch": performance_config.get("batch_size", 512),
+            "n_threads": performance_config.get("threads", None),
+            "use_mmap": True,
+            "use_mlock": True,
+            "f16_kv": True,
+            "verbose": True,  # Keep verbose for now to monitor loading
         }
+
+        # Special handling for Phi-4 models
+        is_phi4 = "phi-4" in model_path.name.lower()
+        if is_phi4:
+            print("🔧 Detected Phi-4 model, applying special configuration")
+            model_kwargs.update({
+                "gqa": 4,
+                "rope_freq_base": 250000.0,
+                "rope_freq_scale": 1.0,
+            })
 
         # Hardware-specific optimizations
         if config.use_metal:
@@ -105,9 +114,17 @@ class LocalLLM:
             print("💻 Using CPU-only mode")
 
         # Load model in thread pool to avoid blocking
-        self.model = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: Llama(**model_kwargs)
-        )
+        try:
+            self.model = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: Llama(**model_kwargs)
+            )
+        except Exception as e:
+            print(f"❌ Failed to load local model: {e}")
+            if "GGML_ASSERT" in str(e):
+                print("💡 GGML assertion failed. This can happen if the model is not compatible")
+                print("   with the current version of llama-cpp-python or if the model file is corrupt.")
+                print("   Try rebuilding llama-cpp-python or re-downloading the model.")
+            raise RuntimeError(f"Could not load local model at {model_path}") from e
 
         self.model_loaded = True
         print("✅ Local model loaded successfully")
@@ -136,15 +153,27 @@ class LocalLLM:
             msg = "Local model not available"
             raise RuntimeError(msg)
 
-        # Format prompt for Phi-3 chat format
+        # Check if we're using Phi-4
+        is_phi4 = False
+        if hasattr(self, "model") and self.model:
+            model_info = self.model.model_path
+            is_phi4 = "phi-4" in str(model_info)
+            
+        # Format prompt for Phi-3/Phi-4 chat format
         formatted_prompt = self._format_chat_prompt(prompt, system_prompt)
+
+        # Select appropriate stop tokens based on model
+        if is_phi4:
+            default_stop = ["<|im_end|>", "<|im_start|>"]  # Phi-4 stop tokens
+        else:
+            default_stop = ["<|end|>", "<|user|>"]  # Phi-3 stop tokens
 
         # Prepare generation parameters
         generate_kwargs = {
             "max_tokens": max_tokens,
             "temperature": temperature,
             "top_p": top_p,
-            "stop": stop or ["<|end|>", "<|user|>"],  # Add chat format stop tokens
+            "stop": stop or default_stop,
             "echo": False,
             **kwargs,
         }
@@ -161,7 +190,18 @@ class LocalLLM:
         response = pipeline_result["processed_text"]
 
         # Basic cleanup that's still needed
-        response = response.replace("<|end|>", "").replace("<|assistant|>", "").strip()
+        # Check if we're using Phi-4 (again) for proper token cleanup
+        is_phi4 = False
+        if hasattr(self, "model") and self.model:
+            model_info = self.model.model_path
+            is_phi4 = "phi-4" in str(model_info)
+            
+        if is_phi4:
+            # Phi-4 format cleanup
+            response = response.replace("<|im_end|>", "").strip()
+        else:
+            # Phi-3 format cleanup
+            response = response.replace("<|end|>", "").replace("<|assistant|>", "").strip()
 
         # Detect language for fallback
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in prompt.lower())
@@ -186,10 +226,16 @@ class LocalLLM:
             return "Hello! I'm an AI assistant. How can I help you?"
 
     def _format_chat_prompt(self, prompt: str, system_prompt: str | None = None) -> str:
-        """Format prompt for Phi-3 chat format using identity configuration."""
+        """Format prompt for Phi-3/Phi-4 chat format using identity configuration."""
 
         # Detect language of the prompt
         is_russian = any(char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for char in prompt.lower())
+        
+        # Check if we're using Phi-4
+        is_phi4 = False
+        if hasattr(self, "model") and self.model:
+            model_info = self.model.model_path
+            is_phi4 = "phi-4" in str(model_info)
 
         formatted = ""
 
@@ -202,8 +248,16 @@ class LocalLLM:
             # For user-facing responses, use language-specific prompts (for gender forms)
             final_system_prompt = self.identity_config["system_prompts"][language]
 
-        formatted += f"<|system|>{final_system_prompt}<|end|>\n"
-        formatted += f"<|user|>{prompt}<|end|>\n<|assistant|>"
+        # Use different chat templates for Phi-3 vs Phi-4
+        if is_phi4:
+            # Phi-4 format uses <|im_start|> and <|im_end|>
+            formatted += f"<|im_start|>system\n{final_system_prompt}<|im_end|>\n"
+            formatted += f"<|im_start|>user\n{prompt}<|im_end|>\n"
+            formatted += f"<|im_start|>assistant\n"
+        else:
+            # Phi-3 format uses <|system|> and <|end|>
+            formatted += f"<|system|>{final_system_prompt}<|end|>\n"
+            formatted += f"<|user|>{prompt}<|end|>\n<|assistant|>"
 
         return formatted
 

@@ -36,7 +36,7 @@ poetry env use python3.11
 
 # 4.  Clone & build llama.cpp with cuBLAS
 LLAMA_DIR="models/llama.cpp"
-[[ -d $LLAMA_DIR ]] || git clone https://github.com/ggerganov/llama.cpp.git "$LLAMA_DIR"
+[[ -d $LLAMA_DIR ]] || git clone https://github.com/ggml-org/llama.cpp.git "$LLAMA_DIR"
 log "Building llama.cpp (cuBLAS)…"
 cmake -B "$LLAMA_DIR/build" -S "$LLAMA_DIR" -DLLAMA_CUBLAS=on \
       -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_TESTS=OFF \

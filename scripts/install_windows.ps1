@@ -44,7 +44,7 @@ poetry env use python3.11
 
 # 6.  llama.cpp build (cuBLAS)
 $llama = ".\models\llama.cpp"
-if (-not (Test-Path $llama)) { git clone https://github.com/ggerganov/llama.cpp.git $llama }
+if (-not (Test-Path $llama)) { git clone https://github.com/ggml-org/llama.cpp.git $llama }
 Write-Info "Building llama.cpp (cuBLAS) …"
 cmake -B "$llama\build" -S $llama -DLLAMA_CUBLAS=on -DCMAKE_BUILD_TYPE=Release `
       -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_BENCHMARKS=OFF

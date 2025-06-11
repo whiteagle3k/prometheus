@@ -101,7 +101,7 @@ LLAMA_DIR="./models/llama.cpp"
 
 if [ ! -d "$LLAMA_DIR" ]; then
     print_status "Cloning llama.cpp..."
-    git clone https://github.com/ggerganov/llama.cpp.git "$LLAMA_DIR"
+    git clone https://github.com/ggml-org/llama.cpp.git "$LLAMA_DIR"
 else
     print_status "llama.cpp directory exists, pulling latest changes..."
     cd "$LLAMA_DIR"
