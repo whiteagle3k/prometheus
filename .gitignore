@@ -52,6 +52,7 @@ data/chroma_db/
 data/vector_store/
 data/memories/
 data/cache/
+data/snapshots/
 *.db
 *.db-shm
 *.db-wal
